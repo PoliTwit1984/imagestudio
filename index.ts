@@ -1,51 +1,83 @@
 // Image Studio — Luna & Holly image generation web app
-// Bun server: serves UI + calls Grok img2img + sends to Telegram/Discord
+// Bun server with Supabase backend (storage + db)
 
 const PORT = process.env.PORT || 3000;
+const SUPABASE_URL = "https://ykbazffnruyitblyxyog.supabase.co";
 
 function env(key: string, fallback?: string): string {
   return process.env[key] || Bun.env[key] || fallback || "";
 }
 
-function getSelfUrl(): string {
-  const domain = env("RAILWAY_PUBLIC_DOMAIN");
-  // Local dev: use holly-image-pipeline on Railway for HTTPS ref hosting
-  return domain ? `https://${domain}` : "https://image-studio-production.up.railway.app";
-}
-
 const REALISM_TAGS =
   "raw unfiltered amateur iPhone photo, realistic skin texture with visible pores, candid r/gonewild energy, no filters";
-
-const CHARACTERS: Record<string, { ref: string; prefix: string }> = {
-  luna: {
-    ref: "luna-grok-ref.jpeg",
-    prefix:
-      "same face and body, purplish pink hair dark roots fading to magenta-violet, but",
-  },
-  holly: {
-    ref: "holly-grok-ref.jpeg",
-    prefix: "same face and body but",
-  },
-};
-
-// Serve static files
-const indexHtml = Bun.file("./public/index.html");
-const lunaRef = Bun.file("./refs/luna-grok-ref.jpeg");
-const hollyRef = Bun.file("./refs/holly-grok-ref.jpeg");
 
 function checkAuth(req: Request): boolean {
   const auth = req.headers.get("Authorization");
   return auth === `Bearer ${env("BEARER_TOKEN", "studio-2026")}`;
 }
 
+function supaHeaders() {
+  return {
+    apikey: env("SUPABASE_ANON_KEY"),
+    Authorization: `Bearer ${env("SUPABASE_ANON_KEY")}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation",
+  };
+}
+
+// --- Supabase helpers ---
+
+async function getCharacters() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/characters?order=created_at`, {
+    headers: supaHeaders(),
+  });
+  return res.json();
+}
+
+async function getCharacter(name: string) {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/characters?name=eq.${name}&limit=1`,
+    { headers: supaHeaders() }
+  );
+  const rows = await res.json();
+  return rows[0] || null;
+}
+
+async function saveGeneration(gen: any) {
+  await fetch(`${SUPABASE_URL}/rest/v1/generations`, {
+    method: "POST",
+    headers: supaHeaders(),
+    body: JSON.stringify(gen),
+  });
+}
+
+async function getGenerations(limit = 50) {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/generations?order=created_at.desc&limit=${limit}`,
+    { headers: supaHeaders() }
+  );
+  return res.json();
+}
+
+async function updateGeneration(id: string, fields: any) {
+  await fetch(`${SUPABASE_URL}/rest/v1/generations?id=eq.${id}`, {
+    method: "PATCH",
+    headers: supaHeaders(),
+    body: JSON.stringify(fields),
+  });
+}
+
+// --- Image generation ---
+
 async function generateImage(
-  character: string,
+  character: any,
   scene: string,
   model: string
 ): Promise<{ url: string; revisedPrompt: string }> {
-  const char = CHARACTERS[character] || CHARACTERS.luna;
-  const refUrl = `${getSelfUrl()}/ref/${char.ref}`;
-  const prompt = `${char.prefix} ${scene}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
+  const refUrl = character.ref_image_url;
+  const prefix = character.prompt_prefix || "same face and body but";
+  const suffix = character.prompt_suffix || "";
+  const prompt = `${prefix} ${scene}${suffix ? ", " + suffix : ""}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
 
   const res = await fetch("https://api.x.ai/v1/images/edits", {
     method: "POST",
@@ -73,35 +105,28 @@ async function generateImage(
   };
 }
 
+// --- Static files ---
+const indexHtml = Bun.file("./public/index.html");
+
 const server = Bun.serve({
   port: Number(PORT),
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Static files
+    // Static
     if (url.pathname === "/" || url.pathname === "/index.html") {
       return new Response(indexHtml, { headers: { "Content-Type": "text/html" } });
     }
 
-    // Ref images (public — Grok needs to fetch these)
-    if (url.pathname === "/ref/luna-grok-ref.jpeg") {
-      return new Response(lunaRef, { headers: { "Content-Type": "image/jpeg" } });
-    }
-    if (url.pathname === "/ref/holly-grok-ref.jpeg") {
-      return new Response(hollyRef, { headers: { "Content-Type": "image/jpeg" } });
-    }
-
     // Health
     if (url.pathname === "/health") {
-      const xk = env("XAI_API_KEY");
-      return Response.json({
-        status: "ok",
-        service: "image-studio",
-        xai_key_len: xk.length,
-        xai_key_prefix: xk.slice(0, 4),
-        self_url: getSelfUrl(),
-        env_keys: Object.keys(process.env).filter(k => k.startsWith("XAI") || k.startsWith("RAIL") || k.startsWith("BEAR")).sort(),
-      });
+      return Response.json({ status: "ok", service: "image-studio" });
+    }
+
+    // --- Public API: get characters (for UI) ---
+    if (url.pathname === "/api/characters" && req.method === "GET") {
+      const chars = await getCharacters();
+      return Response.json(chars);
     }
 
     // --- Auth required below ---
@@ -111,13 +136,98 @@ const server = Bun.serve({
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
       try {
         const body = await req.json();
-        const character = body.character || "luna";
+        const charName = body.character || "luna";
         const scene = body.scene || "";
         const model = body.model || "pro";
         if (!scene) return Response.json({ error: "scene required" }, { status: 400 });
 
+        const character = await getCharacter(charName);
+        if (!character) return Response.json({ error: "character not found" }, { status: 404 });
+
         const result = await generateImage(character, scene, model);
-        return Response.json({ ok: true, ...result });
+
+        // Save to generations table
+        await saveGeneration({
+          character_id: character.id,
+          character_name: charName,
+          scene,
+          model,
+          image_url: result.url,
+          revised_prompt: result.revisedPrompt,
+        });
+
+        return Response.json({ ok: true, ...result, character: charName });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
+    // Get generation history
+    if (url.pathname === "/api/generations" && req.method === "GET") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      const limit = parseInt(url.searchParams.get("limit") || "50");
+      const gens = await getGenerations(limit);
+      return Response.json(gens);
+    }
+
+    // Upload new ref image
+    if (url.pathname === "/api/characters/upload-ref" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const formData = await req.formData();
+        const file = formData.get("file") as File;
+        const charName = formData.get("name") as string;
+        const displayName = formData.get("display_name") as string || charName;
+        const promptPrefix = formData.get("prompt_prefix") as string || "same face and body but";
+        const description = formData.get("description") as string || "";
+
+        if (!file || !charName) {
+          return Response.json({ error: "file and name required" }, { status: 400 });
+        }
+
+        const fileName = `refs/${charName}-ref.jpeg`;
+        const bytes = await file.arrayBuffer();
+
+        // Upload to Supabase Storage
+        const uploadRes = await fetch(
+          `${SUPABASE_URL}/storage/v1/object/image-studio/${fileName}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${env("SUPABASE_ANON_KEY")}`,
+              "Content-Type": file.type || "image/jpeg",
+              "x-upsert": "true",
+            },
+            body: bytes,
+          }
+        );
+
+        if (!uploadRes.ok) {
+          const err = await uploadRes.text();
+          throw new Error(`Storage upload failed: ${err}`);
+        }
+
+        const refUrl = `${SUPABASE_URL}/storage/v1/object/public/image-studio/${fileName}`;
+
+        // Upsert character
+        await fetch(`${SUPABASE_URL}/rest/v1/characters`, {
+          method: "POST",
+          headers: {
+            ...supaHeaders(),
+            Prefer: "resolution=merge-duplicates",
+          },
+          body: JSON.stringify({
+            name: charName,
+            display_name: displayName,
+            description,
+            ref_image_path: fileName,
+            ref_image_url: refUrl,
+            prompt_prefix: promptPrefix,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+
+        return Response.json({ ok: true, name: charName, ref_url: refUrl });
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
       }
@@ -141,6 +251,7 @@ const server = Bun.serve({
           }
         );
         const data = await res.json();
+        if (body.generation_id) await updateGeneration(body.generation_id, { sent_telegram: true });
         return Response.json({ ok: data.ok });
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
@@ -167,6 +278,7 @@ const server = Bun.serve({
           }
         );
         const data = await res.json();
+        if (body.generation_id) await updateGeneration(body.generation_id, { sent_discord: true });
         return Response.json({ ok: !!data.id });
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
@@ -178,4 +290,3 @@ const server = Bun.serve({
 });
 
 console.log(`Image Studio running on port ${server.port}`);
-// v2

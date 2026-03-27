@@ -19,27 +19,34 @@
   #auth-screen button { background: #222; border: 1px solid #444; color: #e0e0e0; padding: 12px 32px; border-radius: 8px; cursor: pointer; font-size: 1rem; }
   #auth-screen button:hover { background: #333; }
 
-  /* Main app */
   #app { display: none; }
 
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+  .tab { padding: 8px 18px; background: #151515; border: 1px solid #222; border-radius: 8px 8px 0 0; cursor: pointer; color: #666; font-size: 0.85rem; }
+  .tab.active { background: #1a1a1a; border-bottom-color: #1a1a1a; color: #e0e0e0; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
   /* Character selector */
-  .char-row { display: flex; gap: 12px; margin-bottom: 20px; }
+  .char-row { display: flex; gap: 12px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 4px; }
   .char-card {
-    flex: 1; padding: 16px; background: #151515; border: 2px solid #222; border-radius: 12px;
-    cursor: pointer; transition: all 0.2s; text-align: center;
+    min-width: 120px; padding: 14px; background: #151515; border: 2px solid #222; border-radius: 12px;
+    cursor: pointer; transition: all 0.2s; text-align: center; flex-shrink: 0;
   }
   .char-card:hover { border-color: #444; }
   .char-card.active { border-color: #c850c0; }
-  .char-card.active.holly { border-color: #e07050; }
-  .char-card img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
-  .char-card .name { font-size: 1.1rem; font-weight: 600; }
-  .char-card .sub { font-size: 0.75rem; color: #666; margin-top: 4px; }
+  .char-card img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
+  .char-card .name { font-size: 1rem; font-weight: 600; }
+  .char-card .sub { font-size: 0.7rem; color: #555; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100px; }
+  .char-card.add-new { border-style: dashed; border-color: #333; }
+  .char-card.add-new:hover { border-color: #666; }
+  .char-card.add-new .name { color: #666; }
 
   /* Scene input */
-  .scene-wrap { margin-bottom: 16px; }
   textarea {
     width: 100%; background: #151515; border: 1px solid #333; color: #e0e0e0; padding: 14px;
-    border-radius: 10px; font-size: 1rem; resize: vertical; min-height: 80px; font-family: inherit;
+    border-radius: 10px; font-size: 1rem; resize: vertical; min-height: 80px; font-family: inherit; margin-bottom: 16px;
   }
   textarea:focus { outline: none; border-color: #c850c0; }
   textarea::placeholder { color: #555; }
@@ -52,7 +59,7 @@
   }
   .preset:hover { background: #252525; color: #e0e0e0; border-color: #555; }
 
-  /* Controls row */
+  /* Controls */
   .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; }
   .gen-btn {
     flex: 1; padding: 14px; background: linear-gradient(135deg, #c850c0, #4158d0);
@@ -71,20 +78,14 @@
   /* Loading */
   .loading { text-align: center; padding: 60px 0; display: none; }
   .loading.active { display: block; }
-  .spinner {
-    width: 40px; height: 40px; border: 3px solid #333; border-top-color: #c850c0;
-    border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px;
-  }
+  .spinner { width: 40px; height: 40px; border: 3px solid #333; border-top-color: #c850c0; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-text { color: #666; font-size: 0.9rem; }
 
   /* Result */
   .result { display: none; margin-bottom: 24px; }
   .result.active { display: block; }
-  .result img {
-    width: 100%; border-radius: 12px; margin-bottom: 12px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-  }
+  .result img { width: 100%; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
   .result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .action-btn {
     background: #1a1a1a; border: 1px solid #333; color: #ccc; padding: 8px 16px;
@@ -97,102 +98,120 @@
 
   /* History */
   .history-label { font-size: 0.75rem; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .history { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; }
+  .history { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; flex-wrap: wrap; }
   .history::-webkit-scrollbar { height: 4px; }
   .history::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-  .history img {
-    width: 80px; height: 100px; object-fit: cover; border-radius: 8px;
-    cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; flex-shrink: 0;
+  .hist-item { position: relative; }
+  .hist-item img {
+    width: 100px; height: 130px; object-fit: cover; border-radius: 8px;
+    cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s;
   }
-  .history img:hover { border-color: #c850c0; }
+  .hist-item img:hover { border-color: #c850c0; }
+  .hist-item .hist-char { position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #ccc; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; }
 
   /* Error */
   .error { background: #2a1515; border: 1px solid #5a2020; color: #e08080; padding: 12px; border-radius: 8px; margin-bottom: 16px; display: none; }
   .error.active { display: block; }
 
   /* Toast */
-  .toast {
-    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: #222; border: 1px solid #444; color: #e0e0e0; padding: 10px 24px;
-    border-radius: 8px; font-size: 0.9rem; opacity: 0; transition: opacity 0.3s; pointer-events: none;
-  }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222; border: 1px solid #444; color: #e0e0e0; padding: 10px 24px; border-radius: 8px; font-size: 0.9rem; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; }
   .toast.show { opacity: 1; }
+
+  /* Modal */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 50; align-items: center; justify-content: center; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: #151515; border: 1px solid #333; border-radius: 16px; padding: 24px; width: 90%; max-width: 500px; }
+  .modal h2 { font-size: 1.1rem; margin-bottom: 16px; font-weight: 500; }
+  .modal label { display: block; color: #888; font-size: 0.8rem; margin-bottom: 4px; margin-top: 12px; }
+  .modal input[type="text"], .modal input[type="file"] {
+    width: 100%; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 10px;
+    border-radius: 8px; font-size: 0.9rem; font-family: inherit;
+  }
+  .modal input:focus { outline: none; border-color: #c850c0; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
+  .modal-actions button { padding: 10px 20px; border-radius: 8px; font-size: 0.9rem; cursor: pointer; border: 1px solid #333; }
+  .modal-actions .btn-cancel { background: #1a1a1a; color: #aaa; }
+  .modal-actions .btn-save { background: linear-gradient(135deg, #c850c0, #4158d0); border: none; color: white; font-weight: 600; }
 </style>
 </head>
 <body>
 
-<!-- Auth screen -->
 <div id="auth-screen">
   <h1><span>Image Studio</span></h1>
   <input type="password" id="token-input" placeholder="Token" autofocus>
   <button onclick="authenticate()">Enter</button>
 </div>
 
-<!-- Main app -->
 <div id="app">
   <h1><span>Image Studio</span></h1>
 
-  <!-- Character selector -->
-  <div class="char-row">
-    <div class="char-card active" data-char="luna" onclick="selectChar('luna')">
-      <img src="/ref/luna-grok-ref.jpeg" alt="Luna">
-      <div class="name">Luna</div>
-      <div class="sub">purplish pink hair, green-hazel eyes</div>
-    </div>
-    <div class="char-card" data-char="holly" onclick="selectChar('holly')">
-      <img src="/ref/holly-grok-ref.jpeg" alt="Holly">
-      <div class="name">Holly</div>
-      <div class="sub">dark hair, dark eyes, athletic</div>
-    </div>
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('generate')">Generate</div>
+    <div class="tab" onclick="switchTab('history')">History</div>
   </div>
 
-  <!-- Scene input -->
-  <div class="scene-wrap">
+  <!-- Generate tab -->
+  <div class="tab-content active" id="tab-generate">
+    <div class="char-row" id="char-row"></div>
+
     <textarea id="scene" placeholder="Describe the scene... e.g. lying on white sheets, morning light, black silk slip"></textarea>
-  </div>
 
-  <!-- Presets -->
-  <div class="presets">
-    <div class="preset" onclick="addPreset('lying in bed, warm lamplight, black silk slip')">bedroom</div>
-    <div class="preset" onclick="addPreset('standing in kitchen doorway, morning light, white robe')">kitchen</div>
-    <div class="preset" onclick="addPreset('sitting on the edge of the couch, oversized t-shirt, soft natural light')">couch</div>
-    <div class="preset" onclick="addPreset('standing in front of a mirror, black lace lingerie, dim warm light')">lingerie</div>
-    <div class="preset" onclick="addPreset('stepping out of the shower, wet skin, towel loosely held, steam')">shower</div>
-    <div class="preset" onclick="addPreset('leaning against a doorframe, jeans and unbuttoned white shirt')">casual</div>
-    <div class="preset" onclick="addPreset('artistic black and white, dramatic shadows, fine art nude, Newton inspired')">b&w art</div>
-    <div class="preset" onclick="addPreset('on a balcony at sunset, sundress, golden hour light')">golden hour</div>
-    <div class="preset" onclick="addPreset('lying on stomach on the floor, barefoot, reading, panties and tank top')">lazy day</div>
-  </div>
+    <div class="presets">
+      <div class="preset" onclick="addPreset('lying in bed, warm lamplight, black silk slip')">bedroom</div>
+      <div class="preset" onclick="addPreset('standing in kitchen doorway, morning light, white robe')">kitchen</div>
+      <div class="preset" onclick="addPreset('sitting on the edge of the couch, oversized t-shirt, soft natural light')">couch</div>
+      <div class="preset" onclick="addPreset('standing in front of a mirror, black lace lingerie, dim warm light')">lingerie</div>
+      <div class="preset" onclick="addPreset('stepping out of the shower, wet skin, towel loosely held, steam')">shower</div>
+      <div class="preset" onclick="addPreset('leaning against a doorframe, jeans and unbuttoned white shirt')">casual</div>
+      <div class="preset" onclick="addPreset('artistic black and white, dramatic shadows, fine art nude, Newton inspired')">b&w art</div>
+      <div class="preset" onclick="addPreset('on a balcony at sunset, sundress, golden hour light')">golden hour</div>
+      <div class="preset" onclick="addPreset('lying on stomach on the floor, barefoot, reading, panties and tank top')">lazy day</div>
+    </div>
 
-  <!-- Controls -->
-  <div class="controls">
-    <button class="gen-btn" id="gen-btn" onclick="generate()">Generate</button>
-    <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()">PRO $0.07</div>
-  </div>
+    <div class="controls">
+      <button class="gen-btn" id="gen-btn" onclick="generate()">Generate</button>
+      <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()">PRO $0.07</div>
+    </div>
 
-  <!-- Error -->
-  <div class="error" id="error"></div>
+    <div class="error" id="error"></div>
+    <div class="loading" id="loading"><div class="spinner"></div><div class="loading-text">Generating...</div></div>
 
-  <!-- Loading -->
-  <div class="loading" id="loading">
-    <div class="spinner"></div>
-    <div class="loading-text">Generating...</div>
-  </div>
-
-  <!-- Result -->
-  <div class="result" id="result">
-    <img id="result-img" src="" alt="Generated">
-    <div class="result-actions">
-      <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Send to Telegram</button>
-      <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Send to Discord</button>
-      <button class="action-btn" onclick="copyUrl()">Copy URL</button>
-      <button class="action-btn" onclick="downloadImg()">Download</button>
+    <div class="result" id="result">
+      <img id="result-img" src="" alt="Generated">
+      <div class="result-actions">
+        <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
+        <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
+        <button class="action-btn" onclick="copyUrl()">Copy URL</button>
+        <button class="action-btn" onclick="downloadImg()">Download</button>
+      </div>
     </div>
   </div>
 
-  <!-- History -->
-  <div class="history-label" id="history-label" style="display:none;">Recent</div>
-  <div class="history" id="history"></div>
+  <!-- History tab -->
+  <div class="tab-content" id="tab-history">
+    <div class="history" id="history-grid"></div>
+  </div>
+</div>
+
+<!-- Add character modal -->
+<div class="modal-overlay" id="modal-new-char">
+  <div class="modal">
+    <h2>New Character</h2>
+    <label>Name (lowercase, no spaces)</label>
+    <input type="text" id="new-char-name" placeholder="e.g. sasha">
+    <label>Display Name</label>
+    <input type="text" id="new-char-display" placeholder="e.g. Sasha Noire">
+    <label>Description</label>
+    <input type="text" id="new-char-desc" placeholder="e.g. blonde, blue eyes, curvy">
+    <label>Prompt Prefix</label>
+    <input type="text" id="new-char-prefix" value="same face and body but">
+    <label>Reference Image</label>
+    <input type="file" id="new-char-file" accept="image/*">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-save" onclick="saveNewChar()">Save</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -203,34 +222,103 @@ let selectedChar = 'luna';
 let currentModel = 'pro';
 let currentUrl = '';
 let currentScene = '';
-let history = [];
+let characters = [];
 
-// Auto-login if token saved
-if (token) {
-  document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
-}
+if (token) { showApp(); }
 
 function authenticate() {
   token = document.getElementById('token-input').value;
   if (!token) return;
   localStorage.setItem('studio-token', token);
-  document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
+  showApp();
 }
 
 document.getElementById('token-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') authenticate();
 });
 
-function selectChar(c) {
-  selectedChar = c;
-  document.querySelectorAll('.char-card').forEach(el => {
-    el.classList.toggle('active', el.dataset.char === c);
-    if (c === 'holly') el.classList.toggle('holly', el.dataset.char === c);
-    else el.classList.remove('holly');
-  });
+async function showApp() {
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  await loadCharacters();
+  loadHistory();
 }
+
+function headers() {
+  return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+// --- Characters ---
+
+async function loadCharacters() {
+  try {
+    const res = await fetch('/api/characters');
+    characters = await res.json();
+    renderCharacters();
+  } catch (e) { console.error(e); }
+}
+
+function renderCharacters() {
+  const row = document.getElementById('char-row');
+  row.innerHTML = characters.map(c => `
+    <div class="char-card ${c.name === selectedChar ? 'active' : ''}" data-char="${c.name}" onclick="selectChar('${c.name}')">
+      <img src="${c.ref_image_url}" alt="${c.display_name}">
+      <div class="name">${c.display_name}</div>
+      <div class="sub">${c.description || ''}</div>
+    </div>
+  `).join('') + `
+    <div class="char-card add-new" onclick="openModal()">
+      <div style="font-size:2rem;margin-bottom:8px;color:#444">+</div>
+      <div class="name">Add New</div>
+    </div>
+  `;
+}
+
+function selectChar(name) {
+  selectedChar = name;
+  document.querySelectorAll('.char-card').forEach(el => el.classList.toggle('active', el.dataset.char === name));
+}
+
+// --- Modal ---
+
+function openModal() { document.getElementById('modal-new-char').classList.add('active'); }
+function closeModal() { document.getElementById('modal-new-char').classList.remove('active'); }
+
+async function saveNewChar() {
+  const name = document.getElementById('new-char-name').value.trim().toLowerCase();
+  const displayName = document.getElementById('new-char-display').value.trim();
+  const desc = document.getElementById('new-char-desc').value.trim();
+  const prefix = document.getElementById('new-char-prefix').value.trim();
+  const fileInput = document.getElementById('new-char-file');
+
+  if (!name || !fileInput.files[0]) { toast('Name and image required'); return; }
+
+  const form = new FormData();
+  form.append('file', fileInput.files[0]);
+  form.append('name', name);
+  form.append('display_name', displayName || name);
+  form.append('description', desc);
+  form.append('prompt_prefix', prefix);
+
+  try {
+    const res = await fetch('/api/characters/upload-ref', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: form
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast(`${displayName || name} added`);
+      closeModal();
+      await loadCharacters();
+      selectChar(name);
+    } else {
+      toast(data.error || 'Upload failed');
+    }
+  } catch (e) { toast('Upload failed'); }
+}
+
+// --- Generation ---
 
 function addPreset(text) {
   const ta = document.getElementById('scene');
@@ -240,142 +328,120 @@ function addPreset(text) {
 
 function toggleModel() {
   const el = document.getElementById('model-toggle');
-  if (currentModel === 'pro') {
-    currentModel = 'basic';
-    el.textContent = 'BASIC $0.02';
-    el.className = 'model-toggle basic';
-  } else {
-    currentModel = 'pro';
-    el.textContent = 'PRO $0.07';
-    el.className = 'model-toggle pro';
-  }
+  if (currentModel === 'pro') { currentModel = 'basic'; el.textContent = 'BASIC $0.02'; el.className = 'model-toggle basic'; }
+  else { currentModel = 'pro'; el.textContent = 'PRO $0.07'; el.className = 'model-toggle pro'; }
 }
 
 async function generate() {
   const scene = document.getElementById('scene').value.trim();
-  if (!scene) { toast('Enter a scene first'); return; }
-
+  if (!scene) { toast('Enter a scene'); return; }
   currentScene = scene;
+
   const btn = document.getElementById('gen-btn');
-  btn.disabled = true;
-  btn.textContent = 'Generating...';
+  btn.disabled = true; btn.textContent = 'Generating...';
   document.getElementById('loading').classList.add('active');
   document.getElementById('result').classList.remove('active');
   document.getElementById('error').classList.remove('active');
-
-  // Reset send buttons
-  document.getElementById('btn-tg').className = 'action-btn tg';
-  document.getElementById('btn-tg').textContent = 'Send to Telegram';
-  document.getElementById('btn-dc').className = 'action-btn dc';
-  document.getElementById('btn-dc').textContent = 'Send to Discord';
+  resetSendBtns();
 
   try {
     const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      method: 'POST', headers: headers(),
       body: JSON.stringify({ character: selectedChar, scene, model: currentModel })
     });
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Generation failed');
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed');
 
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
     document.getElementById('result').classList.add('active');
-
-    // Add to history
-    history.unshift({ url: currentUrl, scene, character: selectedChar });
-    if (history.length > 20) history.pop();
-    renderHistory();
+    loadHistory();
   } catch (err) {
     document.getElementById('error').textContent = err.message;
     document.getElementById('error').classList.add('active');
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Generate';
+    btn.disabled = false; btn.textContent = 'Generate';
     document.getElementById('loading').classList.remove('active');
   }
 }
 
+// --- History ---
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/generations?limit=50', { headers: headers() });
+    if (!res.ok) return;
+    const gens = await res.json();
+    renderHistory(gens);
+  } catch (e) {}
+}
+
+function renderHistory(gens) {
+  const grid = document.getElementById('history-grid');
+  if (!gens.length) { grid.innerHTML = '<div style="color:#555;padding:40px;text-align:center">No generations yet</div>'; return; }
+  grid.innerHTML = gens.map(g => `
+    <div class="hist-item" onclick="loadGen('${g.image_url}','${esc(g.scene)}','${g.character_name}')">
+      <img src="${g.image_url}" alt="${esc(g.scene)}" title="${g.character_name}: ${esc(g.scene)}">
+      <div class="hist-char">${g.character_name}</div>
+    </div>
+  `).join('');
+}
+
+function esc(s) { return (s||'').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+function loadGen(url, scene, charName) {
+  currentUrl = url; currentScene = scene;
+  document.getElementById('scene').value = scene;
+  selectChar(charName);
+  document.getElementById('result-img').src = url;
+  document.getElementById('result').classList.add('active');
+  resetSendBtns();
+  switchTab('generate');
+}
+
+// --- Send ---
+
+function resetSendBtns() {
+  const tg = document.getElementById('btn-tg'); tg.className = 'action-btn tg'; tg.textContent = 'Telegram';
+  const dc = document.getElementById('btn-dc'); dc.className = 'action-btn dc'; dc.textContent = 'Discord';
+}
+
 async function sendTelegram() {
   if (!currentUrl) return;
-  const btn = document.getElementById('btn-tg');
-  btn.textContent = 'Sending...';
+  const btn = document.getElementById('btn-tg'); btn.textContent = '...';
   try {
-    const res = await fetch('/api/send/telegram', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: currentUrl, caption: `${selectedChar} - ${currentScene}` })
-    });
+    const res = await fetch('/api/send/telegram', { method: 'POST', headers: headers(), body: JSON.stringify({ url: currentUrl, caption: `${selectedChar} - ${currentScene}` }) });
     const data = await res.json();
-    if (data.ok) { btn.className = 'action-btn sent'; btn.textContent = 'Sent to Telegram'; }
-    else throw new Error('Send failed');
-  } catch (err) { btn.textContent = 'Failed'; toast(err.message); }
+    if (data.ok) { btn.className = 'action-btn sent'; btn.textContent = 'Sent'; } else throw new Error();
+  } catch { btn.textContent = 'Failed'; }
 }
 
 async function sendDiscord() {
   if (!currentUrl) return;
-  const btn = document.getElementById('btn-dc');
-  btn.textContent = 'Sending...';
+  const btn = document.getElementById('btn-dc'); btn.textContent = '...';
   try {
-    const res = await fetch('/api/send/discord', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: currentUrl, caption: `${selectedChar} - ${currentScene}` })
-    });
+    const res = await fetch('/api/send/discord', { method: 'POST', headers: headers(), body: JSON.stringify({ url: currentUrl, caption: `${selectedChar} - ${currentScene}` }) });
     const data = await res.json();
-    if (data.ok) { btn.className = 'action-btn sent'; btn.textContent = 'Sent to Discord'; }
-    else throw new Error('Send failed');
-  } catch (err) { btn.textContent = 'Failed'; toast(err.message); }
+    if (data.ok) { btn.className = 'action-btn sent'; btn.textContent = 'Sent'; } else throw new Error();
+  } catch { btn.textContent = 'Failed'; }
 }
 
-function copyUrl() {
-  if (!currentUrl) return;
-  navigator.clipboard.writeText(currentUrl);
-  toast('URL copied');
+function copyUrl() { if (!currentUrl) return; navigator.clipboard.writeText(currentUrl); toast('Copied'); }
+function downloadImg() { if (!currentUrl) return; const a = document.createElement('a'); a.href = currentUrl; a.download = `${selectedChar}-${Date.now()}.jpeg`; a.target='_blank'; a.click(); }
+
+// --- Tabs ---
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (i===0 && name==='generate') || (i===1 && name==='history')));
+  document.getElementById('tab-generate').classList.toggle('active', name==='generate');
+  document.getElementById('tab-history').classList.toggle('active', name==='history');
+  if (name === 'history') loadHistory();
 }
 
-function downloadImg() {
-  if (!currentUrl) return;
-  const a = document.createElement('a');
-  a.href = currentUrl;
-  a.download = `${selectedChar}-${Date.now()}.jpeg`;
-  a.target = '_blank';
-  a.click();
-}
+// --- Util ---
 
-function renderHistory() {
-  const el = document.getElementById('history');
-  const label = document.getElementById('history-label');
-  if (history.length === 0) { label.style.display = 'none'; return; }
-  label.style.display = 'block';
-  el.innerHTML = history.map((h, i) =>
-    `<img src="${h.url}" alt="${h.scene}" title="${h.character}: ${h.scene}" onclick="loadFromHistory(${i})">`
-  ).join('');
-}
+function toast(msg) { const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2000); }
 
-function loadFromHistory(i) {
-  const h = history[i];
-  currentUrl = h.url;
-  currentScene = h.scene;
-  document.getElementById('scene').value = h.scene;
-  selectChar(h.character);
-  document.getElementById('result-img').src = h.url;
-  document.getElementById('result').classList.add('active');
-  // Reset send buttons
-  document.getElementById('btn-tg').className = 'action-btn tg';
-  document.getElementById('btn-tg').textContent = 'Send to Telegram';
-  document.getElementById('btn-dc').className = 'action-btn dc';
-  document.getElementById('btn-dc').textContent = 'Send to Discord';
-}
-
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2000);
-}
-
-// Ctrl+Enter to generate
 document.getElementById('scene').addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') generate();
 });
