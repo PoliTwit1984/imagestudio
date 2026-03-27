@@ -1,0 +1,9 @@
+{
+  "name": "image-studio",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun run --watch index.ts"
+  },
+  "dependencies": {}
+}

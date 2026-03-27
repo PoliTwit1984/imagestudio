@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Studio</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh; padding: 20px; max-width: 900px; margin: 0 auto;
+  }
+  h1 { font-size: 1.4rem; font-weight: 300; color: #888; margin-bottom: 24px; letter-spacing: 2px; text-transform: uppercase; }
+  h1 span { color: #e0e0e0; font-weight: 600; }
+
+  /* Auth */
+  #auth-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; gap: 16px; }
+  #auth-screen input { background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 12px 20px; border-radius: 8px; font-size: 1rem; width: 300px; text-align: center; }
+  #auth-screen button { background: #222; border: 1px solid #444; color: #e0e0e0; padding: 12px 32px; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+  #auth-screen button:hover { background: #333; }
+
+  /* Main app */
+  #app { display: none; }
+
+  /* Character selector */
+  .char-row { display: flex; gap: 12px; margin-bottom: 20px; }
+  .char-card {
+    flex: 1; padding: 16px; background: #151515; border: 2px solid #222; border-radius: 12px;
+    cursor: pointer; transition: all 0.2s; text-align: center;
+  }
+  .char-card:hover { border-color: #444; }
+  .char-card.active { border-color: #c850c0; }
+  .char-card.active.holly { border-color: #e07050; }
+  .char-card img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
+  .char-card .name { font-size: 1.1rem; font-weight: 600; }
+  .char-card .sub { font-size: 0.75rem; color: #666; margin-top: 4px; }
+
+  /* Scene input */
+  .scene-wrap { margin-bottom: 16px; }
+  textarea {
+    width: 100%; background: #151515; border: 1px solid #333; color: #e0e0e0; padding: 14px;
+    border-radius: 10px; font-size: 1rem; resize: vertical; min-height: 80px; font-family: inherit;
+  }
+  textarea:focus { outline: none; border-color: #c850c0; }
+  textarea::placeholder { color: #555; }
+
+  /* Presets */
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .preset {
+    background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 6px 14px;
+    border-radius: 20px; font-size: 0.8rem; cursor: pointer; transition: all 0.15s;
+  }
+  .preset:hover { background: #252525; color: #e0e0e0; border-color: #555; }
+
+  /* Controls row */
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; }
+  .gen-btn {
+    flex: 1; padding: 14px; background: linear-gradient(135deg, #c850c0, #4158d0);
+    border: none; color: white; font-size: 1rem; font-weight: 600; border-radius: 10px;
+    cursor: pointer; transition: opacity 0.2s; letter-spacing: 0.5px;
+  }
+  .gen-btn:hover { opacity: 0.9; }
+  .gen-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .model-toggle {
+    background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 10px 16px;
+    border-radius: 10px; font-size: 0.85rem; cursor: pointer; white-space: nowrap;
+  }
+  .model-toggle.pro { border-color: #c850c0; color: #c850c0; }
+  .model-toggle.basic { border-color: #50c878; color: #50c878; }
+
+  /* Loading */
+  .loading { text-align: center; padding: 60px 0; display: none; }
+  .loading.active { display: block; }
+  .spinner {
+    width: 40px; height: 40px; border: 3px solid #333; border-top-color: #c850c0;
+    border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { color: #666; font-size: 0.9rem; }
+
+  /* Result */
+  .result { display: none; margin-bottom: 24px; }
+  .result.active { display: block; }
+  .result img {
+    width: 100%; border-radius: 12px; margin-bottom: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  }
+  .result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .action-btn {
+    background: #1a1a1a; border: 1px solid #333; color: #ccc; padding: 8px 16px;
+    border-radius: 8px; font-size: 0.85rem; cursor: pointer; transition: all 0.15s;
+  }
+  .action-btn:hover { background: #252525; border-color: #555; }
+  .action-btn.tg { border-color: #0088cc; color: #0088cc; }
+  .action-btn.dc { border-color: #5865f2; color: #5865f2; }
+  .action-btn.sent { border-color: #50c878; color: #50c878; pointer-events: none; }
+
+  /* History */
+  .history-label { font-size: 0.75rem; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .history { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; }
+  .history::-webkit-scrollbar { height: 4px; }
+  .history::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .history img {
+    width: 80px; height: 100px; object-fit: cover; border-radius: 8px;
+    cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; flex-shrink: 0;
+  }
+  .history img:hover { border-color: #c850c0; }
+
+  /* Error */
+  .error { background: #2a1515; border: 1px solid #5a2020; color: #e08080; padding: 12px; border-radius: 8px; margin-bottom: 16px; display: none; }
+  .error.active { display: block; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #222; border: 1px solid #444; color: #e0e0e0; padding: 10px 24px;
+    border-radius: 8px; font-size: 0.9rem; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- Auth screen -->
+<div id="auth-screen">
+  <h1><span>Image Studio</span></h1>
+  <input type="password" id="token-input" placeholder="Token" autofocus>
+  <button onclick="authenticate()">Enter</button>
+</div>
+
+<!-- Main app -->
+<div id="app">
+  <h1><span>Image Studio</span></h1>
+
+  <!-- Character selector -->
+  <div class="char-row">
+    <div class="char-card active" data-char="luna" onclick="selectChar('luna')">
+      <img src="/ref/luna-grok-ref.jpeg" alt="Luna">
+      <div class="name">Luna</div>
+      <div class="sub">purplish pink hair, green-hazel eyes</div>
+    </div>
+    <div class="char-card" data-char="holly" onclick="selectChar('holly')">
+      <img src="/ref/holly-grok-ref.jpeg" alt="Holly">
+      <div class="name">Holly</div>
+      <div class="sub">dark hair, dark eyes, athletic</div>
+    </div>
+  </div>
+
+  <!-- Scene input -->
+  <div class="scene-wrap">
+    <textarea id="scene" placeholder="Describe the scene... e.g. lying on white sheets, morning light, black silk slip"></textarea>
+  </div>
+
+  <!-- Presets -->
+  <div class="presets">
+    <div class="preset" onclick="addPreset('lying in bed, warm lamplight, black silk slip')">bedroom</div>
+    <div class="preset" onclick="addPreset('standing in kitchen doorway, morning light, white robe')">kitchen</div>
+    <div class="preset" onclick="addPreset('sitting on the edge of the couch, oversized t-shirt, soft natural light')">couch</div>
+    <div class="preset" onclick="addPreset('standing in front of a mirror, black lace lingerie, dim warm light')">lingerie</div>
+    <div class="preset" onclick="addPreset('stepping out of the shower, wet skin, towel loosely held, steam')">shower</div>
+    <div class="preset" onclick="addPreset('leaning against a doorframe, jeans and unbuttoned white shirt')">casual</div>
+    <div class="preset" onclick="addPreset('artistic black and white, dramatic shadows, fine art nude, Newton inspired')">b&w art</div>
+    <div class="preset" onclick="addPreset('on a balcony at sunset, sundress, golden hour light')">golden hour</div>
+    <div class="preset" onclick="addPreset('lying on stomach on the floor, barefoot, reading, panties and tank top')">lazy day</div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="gen-btn" id="gen-btn" onclick="generate()">Generate</button>
+    <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()">PRO $0.07</div>
+  </div>
+
+  <!-- Error -->
+  <div class="error" id="error"></div>
+
+  <!-- Loading -->
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div class="loading-text">Generating...</div>
+  </div>
+
+  <!-- Result -->
+  <div class="result" id="result">
+    <img id="result-img" src="" alt="Generated">
+    <div class="result-actions">
+      <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Send to Telegram</button>
+      <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Send to Discord</button>
+      <button class="action-btn" onclick="copyUrl()">Copy URL</button>
+      <button class="action-btn" onclick="downloadImg()">Download</button>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div class="history-label" id="history-label" style="display:none;">Recent</div>
+  <div class="history" id="history"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let token = localStorage.getItem('studio-token') || '';
+let selectedChar = 'luna';
+let currentModel = 'pro';
+let currentUrl = '';
+let currentScene = '';
+let history = [];
+
+// Auto-login if token saved
+if (token) {
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+
+function authenticate() {
+  token = document.getElementById('token-input').value;
+  if (!token) return;
+  localStorage.setItem('studio-token', token);
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+
+document.getElementById('token-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') authenticate();
+});
+
+function selectChar(c) {
+  selectedChar = c;
+  document.querySelectorAll('.char-card').forEach(el => {
+    el.classList.toggle('active', el.dataset.char === c);
+    if (c === 'holly') el.classList.toggle('holly', el.dataset.char === c);
+    else el.classList.remove('holly');
+  });
+}
+
+function addPreset(text) {
+  const ta = document.getElementById('scene');
+  ta.value = text;
+  ta.focus();
+}
+
+function toggleModel() {
+  const el = document.getElementById('model-toggle');
+  if (currentModel === 'pro') {
+    currentModel = 'basic';
+    el.textContent = 'BASIC $0.02';
+    el.className = 'model-toggle basic';
+  } else {
+    currentModel = 'pro';
+    el.textContent = 'PRO $0.07';
+    el.className = 'model-toggle pro';
+  }
+}
+
+async function generate() {
+  const scene = document.getElementById('scene').value.trim();
+  if (!scene) { toast('Enter a scene first'); return; }
+
+  currentScene = scene;
+  const btn = document.getElementById('gen-btn');
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+  document.getElementById('loading').classList.add('active');
+  document.getElementById('result').classList.remove('active');
+  document.getElementById('error').classList.remove('active');
+
+  // Reset send buttons
+  document.getElementById('btn-tg').className = 'action-btn tg';
+  document.getElementById('btn-tg').textContent = 'Send to Telegram';
+  document.getElementById('btn-dc').className = 'action-btn dc';
+  document.getElementById('btn-dc').textContent = 'Send to Discord';
+
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: selectedChar, scene, model: currentModel })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Generation failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    document.getElementById('result').classList.add('active');
+
+    // Add to history
+    history.unshift({ url: currentUrl, scene, character: selectedChar });
+    if (history.length > 20) history.pop();
+    renderHistory();
+  } catch (err) {
+    document.getElementById('error').textContent = err.message;
+    document.getElementById('error').classList.add('active');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate';
+    document.getElementById('loading').classList.remove('active');
+  }
+}
+
+async function sendTelegram() {
+  if (!currentUrl) return;
+  const btn = document.getElementById('btn-tg');
+  btn.textContent = 'Sending...';
+  try {
+    const res = await fetch('/api/send/telegram', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: currentUrl, caption: `${selectedChar} - ${currentScene}` })
+    });
+    const data = await res.json();
+    if (data.ok) { btn.className = 'action-btn sent'; btn.textContent = 'Sent to Telegram'; }
+    else throw new Error('Send failed');
+  } catch (err) { btn.textContent = 'Failed'; toast(err.message); }
+}
+
+async function sendDiscord() {
+  if (!currentUrl) return;
+  const btn = document.getElementById('btn-dc');
+  btn.textContent = 'Sending...';
+  try {
+    const res = await fetch('/api/send/discord', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: currentUrl, caption: `${selectedChar} - ${currentScene}` })
+    });
+    const data = await res.json();
+    if (data.ok) { btn.className = 'action-btn sent'; btn.textContent = 'Sent to Discord'; }
+    else throw new Error('Send failed');
+  } catch (err) { btn.textContent = 'Failed'; toast(err.message); }
+}
+
+function copyUrl() {
+  if (!currentUrl) return;
+  navigator.clipboard.writeText(currentUrl);
+  toast('URL copied');
+}
+
+function downloadImg() {
+  if (!currentUrl) return;
+  const a = document.createElement('a');
+  a.href = currentUrl;
+  a.download = `${selectedChar}-${Date.now()}.jpeg`;
+  a.target = '_blank';
+  a.click();
+}
+
+function renderHistory() {
+  const el = document.getElementById('history');
+  const label = document.getElementById('history-label');
+  if (history.length === 0) { label.style.display = 'none'; return; }
+  label.style.display = 'block';
+  el.innerHTML = history.map((h, i) =>
+    `<img src="${h.url}" alt="${h.scene}" title="${h.character}: ${h.scene}" onclick="loadFromHistory(${i})">`
+  ).join('');
+}
+
+function loadFromHistory(i) {
+  const h = history[i];
+  currentUrl = h.url;
+  currentScene = h.scene;
+  document.getElementById('scene').value = h.scene;
+  selectChar(h.character);
+  document.getElementById('result-img').src = h.url;
+  document.getElementById('result').classList.add('active');
+  // Reset send buttons
+  document.getElementById('btn-tg').className = 'action-btn tg';
+  document.getElementById('btn-tg').textContent = 'Send to Telegram';
+  document.getElementById('btn-dc').className = 'action-btn dc';
+  document.getElementById('btn-dc').textContent = 'Send to Discord';
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// Ctrl+Enter to generate
+document.getElementById('scene').addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') generate();
+});
+</script>
+</body>
+</html>
