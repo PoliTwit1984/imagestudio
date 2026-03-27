@@ -105,6 +105,58 @@ async function generateImage(
   };
 }
 
+// --- AI Prompt Enhancer (Grok reasoning) ---
+
+const ENHANCE_SYSTEM = `You are an expert prompt engineer for the Grok image generation model (grok-imagine-image). Your job is to take a simple scene description and enhance it into a photorealistic prompt.
+
+RULES:
+- This is for an img2img pipeline — a reference image provides the face/body. Do NOT describe the person's face, hair color, body type, or identity. Only describe the SCENE, POSE, CLOTHING, LIGHTING, and MOOD.
+- Keep it under 150 words.
+- Make it look like a real amateur photo, not a professional studio shot.
+- Output ONLY the enhanced prompt text. No explanation, no quotes, no preamble.
+
+TECHNIQUES TO USE:
+- Specify natural lighting with time-of-day context (golden hour, overcast, warm lamplight, morning window light)
+- Add subtle environmental interaction (hair catching light, skin sheen, fabric draping naturally)
+- Include camera/lens cues (shot on iPhone 14 Pro, shallow depth of field, slight motion blur)
+- Add real-photo imperfections (slight grain, natural skin texture with visible pores, matte finish)
+- Use film stock references when appropriate (Kodak Portra 400 tones, Fuji superia warmth)
+- Mention composition (rule of thirds, off-center framing, eye-level angle)
+- Add tactile texture details on clothing and environment (worn cotton, rumpled sheets, rough wood)
+- NEVER include: smiling, perfect symmetry, vibrant colors, studio lighting, or "beautiful/gorgeous/stunning"
+- Always end with: "no smiling, lips slightly parted, direct eye contact"`;
+
+async function enhancePrompt(scene: string, character: any): Promise<string> {
+  const charContext = character.description ? `The subject is: ${character.description}.` : "";
+
+  const res = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("XAI_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "grok-3",
+      messages: [
+        { role: "system", content: ENHANCE_SYSTEM },
+        {
+          role: "user",
+          content: `Scene: "${scene}"\n${charContext}\nEnhance this into a photorealistic img2img prompt. Remember: do NOT describe the person's face/hair/body — only the scene, pose, clothing, lighting, and mood.`,
+        },
+      ],
+      temperature: 0.8,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Grok enhance failed: ${err}`);
+  }
+
+  const data = await res.json();
+  return data.choices[0].message.content.trim();
+}
+
 // --- Static files ---
 const indexHtml = Bun.file("./public/index.html");
 
@@ -130,6 +182,23 @@ const server = Bun.serve({
     }
 
     // --- Auth required below ---
+
+    // Enhance prompt via Grok reasoning
+    if (url.pathname === "/api/enhance" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const scene = body.scene || "";
+        const charName = body.character || "luna";
+        if (!scene) return Response.json({ error: "scene required" }, { status: 400 });
+
+        const character = await getCharacter(charName);
+        const enhanced = await enhancePrompt(scene, character || { description: "" });
+        return Response.json({ ok: true, enhanced });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
 
     // Generate image
     if (url.pathname === "/api/generate" && req.method === "POST") {

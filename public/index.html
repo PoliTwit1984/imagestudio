@@ -109,6 +109,17 @@
   .hist-item img:hover { border-color: #c850c0; }
   .hist-item .hist-char { position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #ccc; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; }
 
+  /* Enhance button */
+  .enhance-row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+  .enhance-btn {
+    background: linear-gradient(135deg, #ff8c00, #ff4500); border: none; color: white; padding: 8px 18px;
+    border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+    transition: opacity 0.2s;
+  }
+  .enhance-btn:hover { opacity: 0.85; }
+  .enhance-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .enhance-hint { font-size: 0.75rem; color: #555; }
+
   /* Error */
   .error { background: #2a1515; border: 1px solid #5a2020; color: #e08080; padding: 12px; border-radius: 8px; margin-bottom: 16px; display: none; }
   .error.active { display: block; }
@@ -155,6 +166,11 @@
     <div class="char-row" id="char-row"></div>
 
     <textarea id="scene" placeholder="Describe the scene... e.g. lying on white sheets, morning light, black silk slip"></textarea>
+
+    <div class="enhance-row">
+      <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()">AI Enhance</button>
+      <span class="enhance-hint">Grok rewrites your prompt for max realism</span>
+    </div>
 
     <div class="presets">
       <div class="preset" onclick="addPreset('lying in bed, warm lamplight, black silk slip')">bedroom</div>
@@ -330,6 +346,34 @@ function toggleModel() {
   const el = document.getElementById('model-toggle');
   if (currentModel === 'pro') { currentModel = 'basic'; el.textContent = 'BASIC $0.02'; el.className = 'model-toggle basic'; }
   else { currentModel = 'pro'; el.textContent = 'PRO $0.07'; el.className = 'model-toggle pro'; }
+}
+
+async function enhancePrompt() {
+  const ta = document.getElementById('scene');
+  const scene = ta.value.trim();
+  if (!scene) { toast('Enter a scene first'); return; }
+
+  const btn = document.getElementById('enhance-btn');
+  const origText = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Enhancing...';
+
+  try {
+    const res = await fetch('/api/enhance', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ scene, character: selectedChar })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed');
+
+    ta.value = data.enhanced;
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+    toast('Prompt enhanced');
+  } catch (err) {
+    toast('Enhance failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = origText;
+  }
 }
 
 async function generate() {
