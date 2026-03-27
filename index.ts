@@ -92,7 +92,15 @@ const server = Bun.serve({
 
     // Health
     if (url.pathname === "/health") {
-      return Response.json({ status: "ok", service: "image-studio" });
+      const xk = env("XAI_API_KEY");
+      return Response.json({
+        status: "ok",
+        service: "image-studio",
+        xai_key_len: xk.length,
+        xai_key_prefix: xk.slice(0, 4),
+        self_url: getSelfUrl(),
+        env_keys: Object.keys(process.env).filter(k => k.startsWith("XAI") || k.startsWith("RAIL") || k.startsWith("BEAR")).sort(),
+      });
     }
 
     // --- Auth required below ---
