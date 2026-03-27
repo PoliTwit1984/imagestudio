@@ -109,6 +109,25 @@
   .hist-item img:hover { border-color: #c850c0; }
   .hist-item .hist-char { position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #ccc; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; }
 
+  /* Prompt Builder */
+  .builder { margin-bottom: 20px; }
+  .builder-toggle {
+    cursor: pointer; padding: 10px 14px; background: #151515; border: 1px solid #222;
+    border-radius: 10px; font-size: 0.9rem; color: #aaa; user-select: none;
+  }
+  .builder-toggle:hover { border-color: #444; }
+  #builder-arrow { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; margin-right: 6px; }
+  .builder-steps { padding-top: 12px; }
+  .step { margin-bottom: 14px; }
+  .step-label { font-size: 0.75rem; color: #c850c0; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; font-weight: 600; }
+  .step-options { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    background: #1a1a1a; border: 1px solid #2a2a2a; color: #999; padding: 5px 12px;
+    border-radius: 16px; font-size: 0.78rem; cursor: pointer; transition: all 0.15s; user-select: none;
+  }
+  .chip:hover { background: #252525; color: #e0e0e0; border-color: #555; }
+  .chip.used { border-color: #c850c0; color: #c850c0; background: #1a1020; }
+
   /* Enhance button */
   .enhance-row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
   .enhance-btn {
@@ -165,23 +184,170 @@
   <div class="tab-content active" id="tab-generate">
     <div class="char-row" id="char-row"></div>
 
-    <textarea id="scene" placeholder="Describe the scene... e.g. lying on white sheets, morning light, black silk slip"></textarea>
+    <textarea id="scene" placeholder="Build your prompt below, or just type freestyle and hit AI Enhance..."></textarea>
 
     <div class="enhance-row">
       <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()">AI Enhance</button>
       <span class="enhance-hint">Grok rewrites your prompt for max realism</span>
+      <button class="action-btn" style="margin-left:auto;font-size:0.75rem;" onclick="clearPrompt()">Clear</button>
     </div>
 
-    <div class="presets">
-      <div class="preset" onclick="addPreset('lying in bed, warm lamplight, black silk slip')">bedroom</div>
-      <div class="preset" onclick="addPreset('standing in kitchen doorway, morning light, white robe')">kitchen</div>
-      <div class="preset" onclick="addPreset('sitting on the edge of the couch, oversized t-shirt, soft natural light')">couch</div>
-      <div class="preset" onclick="addPreset('standing in front of a mirror, black lace lingerie, dim warm light')">lingerie</div>
-      <div class="preset" onclick="addPreset('stepping out of the shower, wet skin, towel loosely held, steam')">shower</div>
-      <div class="preset" onclick="addPreset('leaning against a doorframe, jeans and unbuttoned white shirt')">casual</div>
-      <div class="preset" onclick="addPreset('artistic black and white, dramatic shadows, fine art nude, Newton inspired')">b&w art</div>
-      <div class="preset" onclick="addPreset('on a balcony at sunset, sundress, golden hour light')">golden hour</div>
-      <div class="preset" onclick="addPreset('lying on stomach on the floor, barefoot, reading, panties and tank top')">lazy day</div>
+    <!-- Prompt Builder Steps -->
+    <div class="builder" id="builder">
+      <div class="builder-toggle" onclick="toggleBuilder()">
+        <span id="builder-arrow">&#9654;</span> Prompt Builder <span style="color:#555;font-size:0.75rem;margin-left:8px;">click options to build your prompt step by step</span>
+      </div>
+      <div class="builder-steps" id="builder-steps" style="display:none;">
+
+        <div class="step">
+          <div class="step-label">1. Scene / Location</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('lying in bed')">lying in bed</span>
+            <span class="chip" onclick="addChip('standing in kitchen doorway')">kitchen doorway</span>
+            <span class="chip" onclick="addChip('sitting on the edge of the couch')">couch</span>
+            <span class="chip" onclick="addChip('leaning against a doorframe')">doorframe</span>
+            <span class="chip" onclick="addChip('standing in front of a mirror')">mirror</span>
+            <span class="chip" onclick="addChip('on a balcony')">balcony</span>
+            <span class="chip" onclick="addChip('stepping out of the shower')">shower</span>
+            <span class="chip" onclick="addChip('lying on stomach on the floor')">floor</span>
+            <span class="chip" onclick="addChip('sitting on stairs')">stairs</span>
+            <span class="chip" onclick="addChip('in a car backseat')">car</span>
+            <span class="chip" onclick="addChip('hotel room')">hotel room</span>
+            <span class="chip" onclick="addChip('rooftop at night')">rooftop</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">2. Clothing / State</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('black silk slip')">black silk slip</span>
+            <span class="chip" onclick="addChip('white robe loosely open')">white robe</span>
+            <span class="chip" onclick="addChip('black lace lingerie')">black lace lingerie</span>
+            <span class="chip" onclick="addChip('oversized t-shirt, nothing underneath')">oversized tee</span>
+            <span class="chip" onclick="addChip('jeans and unbuttoned white shirt')">jeans + shirt</span>
+            <span class="chip" onclick="addChip('sundress')">sundress</span>
+            <span class="chip" onclick="addChip('towel loosely held, wet skin')">towel</span>
+            <span class="chip" onclick="addChip('panties and tank top')">panties + tank</span>
+            <span class="chip" onclick="addChip('leather jacket, nothing underneath')">leather jacket</span>
+            <span class="chip" onclick="addChip('button-down half open, no bra')">button-down</span>
+            <span class="chip" onclick="addChip('sheer bodysuit')">bodysuit</span>
+            <span class="chip" onclick="addChip('wrapped in bedsheets')">bedsheets</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">3. Lighting</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('warm lamplight')">warm lamplight</span>
+            <span class="chip" onclick="addChip('soft golden hour light at sunset')">golden hour</span>
+            <span class="chip" onclick="addChip('morning window light, soft and directional')">morning window</span>
+            <span class="chip" onclick="addChip('overcast daylight, cool even illumination')">overcast</span>
+            <span class="chip" onclick="addChip('dim candlelight')">candlelight</span>
+            <span class="chip" onclick="addChip('neon light from a sign outside the window')">neon glow</span>
+            <span class="chip" onclick="addChip('harsh midday sunlight with sharp shadows')">harsh midday</span>
+            <span class="chip" onclick="addChip('dappled light through blinds')">blinds light</span>
+            <span class="chip" onclick="addChip('bathroom fluorescent, slightly green cast')">fluorescent</span>
+            <span class="chip" onclick="addChip('single bedside lamp, warm orange pool of light')">bedside lamp</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">4. Camera / Lens</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('shot on iPhone 14 Pro')">iPhone 14 Pro</span>
+            <span class="chip" onclick="addChip('Canon 50mm f/1.8, shallow depth of field')">Canon 50mm</span>
+            <span class="chip" onclick="addChip('85mm f/1.4 portrait lens, creamy bokeh')">85mm portrait</span>
+            <span class="chip" onclick="addChip('35mm f/1.4 wide angle, close up')">35mm wide</span>
+            <span class="chip" onclick="addChip('Polaroid instant camera')">Polaroid</span>
+            <span class="chip" onclick="addChip('disposable camera flash')">disposable cam</span>
+            <span class="chip" onclick="addChip('webcam quality, slightly grainy')">webcam</span>
+            <span class="chip" onclick="addChip('selfie angle, arm extended')">selfie</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">5. Skin / Texture</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('visible pores, natural matte skin')">natural matte</span>
+            <span class="chip" onclick="addChip('dewy skin with a slight sheen of sweat')">dewy / sweat</span>
+            <span class="chip" onclick="addChip('freckles visible across nose and shoulders')">freckles</span>
+            <span class="chip" onclick="addChip('wet skin, water droplets')">wet skin</span>
+            <span class="chip" onclick="addChip('sun-kissed skin, slight tan lines')">tan lines</span>
+            <span class="chip" onclick="addChip('goosebumps on arms')">goosebumps</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">6. Environment Details</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('rumpled white sheets')">rumpled sheets</span>
+            <span class="chip" onclick="addChip('steam in the air')">steam</span>
+            <span class="chip" onclick="addChip('coffee mug on nightstand')">coffee mug</span>
+            <span class="chip" onclick="addChip('rain on the window')">rain on window</span>
+            <span class="chip" onclick="addChip('cigarette smoke curling')">smoke</span>
+            <span class="chip" onclick="addChip('fairy lights in background')">fairy lights</span>
+            <span class="chip" onclick="addChip('cluttered apartment, lived-in')">messy apartment</span>
+            <span class="chip" onclick="addChip('plants and natural wood')">plants + wood</span>
+            <span class="chip" onclick="addChip('empty wine glass on floor')">wine glass</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">7. Mood / Expression</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('intense eye contact, lips slightly parted')">intense</span>
+            <span class="chip" onclick="addChip('looking away, pensive, lost in thought')">pensive</span>
+            <span class="chip" onclick="addChip('looking over shoulder back at camera')">over shoulder</span>
+            <span class="chip" onclick="addChip('eyes half-closed, sleepy, just woke up')">sleepy</span>
+            <span class="chip" onclick="addChip('biting lower lip')">lip bite</span>
+            <span class="chip" onclick="addChip('caught mid-movement, candid')">candid</span>
+            <span class="chip" onclick="addChip('defiant stare, chin slightly up')">defiant</span>
+            <span class="chip" onclick="addChip('vulnerable, unguarded')">vulnerable</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">8. Film / Color Grade</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('Kodak Portra 400 tones, warm and soft')">Portra 400</span>
+            <span class="chip" onclick="addChip('Fuji Superia warmth, slightly faded')">Fuji Superia</span>
+            <span class="chip" onclick="addChip('muted teal-and-orange cinematic grade')">cinematic</span>
+            <span class="chip" onclick="addChip('desaturated, moody, low contrast')">desaturated moody</span>
+            <span class="chip" onclick="addChip('high contrast black and white')">b&w high contrast</span>
+            <span class="chip" onclick="addChip('Instagram Lark filter look, lifted shadows')">Lark filter</span>
+            <span class="chip" onclick="addChip('natural colors, no filter, raw')">no filter raw</span>
+            <span class="chip" onclick="addChip('cross-processed, slightly green shadows')">cross-processed</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">9. Photo Imperfections</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('slight film grain from ISO 800')">film grain</span>
+            <span class="chip" onclick="addChip('subtle motion blur')">motion blur</span>
+            <span class="chip" onclick="addChip('lens flare from light source')">lens flare</span>
+            <span class="chip" onclick="addChip('slightly out of focus background')">soft bokeh</span>
+            <span class="chip" onclick="addChip('dust particles visible in light beam')">dust particles</span>
+            <span class="chip" onclick="addChip('vignette, darker edges')">vignette</span>
+            <span class="chip" onclick="addChip('slightly overexposed highlights')">overexposed</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-label">10. Composition</div>
+          <div class="step-options">
+            <span class="chip" onclick="addChip('rule of thirds, subject off-center')">rule of thirds</span>
+            <span class="chip" onclick="addChip('centered, symmetrical framing')">centered</span>
+            <span class="chip" onclick="addChip('low angle, looking up')">low angle</span>
+            <span class="chip" onclick="addChip('overhead shot, looking down')">overhead</span>
+            <span class="chip" onclick="addChip('close-up, face fills frame')">close-up</span>
+            <span class="chip" onclick="addChip('full body, wide shot')">full body</span>
+            <span class="chip" onclick="addChip('POV perspective, first person')">POV</span>
+            <span class="chip" onclick="addChip('dutch angle, slightly tilted')">dutch angle</span>
+          </div>
+        </div>
+
+      </div>
     </div>
 
     <div class="controls">
@@ -340,6 +506,39 @@ function addPreset(text) {
   const ta = document.getElementById('scene');
   ta.value = text;
   ta.focus();
+}
+
+function clearPrompt() {
+  document.getElementById('scene').value = '';
+  document.querySelectorAll('.chip.used').forEach(c => c.classList.remove('used'));
+  toast('Cleared');
+}
+
+function toggleBuilder() {
+  const steps = document.getElementById('builder-steps');
+  const arrow = document.getElementById('builder-arrow');
+  if (steps.style.display === 'none') {
+    steps.style.display = 'block';
+    arrow.style.transform = 'rotate(90deg)';
+  } else {
+    steps.style.display = 'none';
+    arrow.style.transform = 'rotate(0deg)';
+  }
+}
+
+function addChip(text) {
+  const ta = document.getElementById('scene');
+  const current = ta.value.trim();
+  if (current) {
+    ta.value = current + ', ' + text;
+  } else {
+    ta.value = text;
+  }
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+
+  // Mark the chip as used
+  event.target.classList.add('used');
 }
 
 function toggleModel() {
