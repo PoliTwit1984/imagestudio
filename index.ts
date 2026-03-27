@@ -9,7 +9,8 @@ function env(key: string, fallback?: string): string {
 
 function getSelfUrl(): string {
   const domain = env("RAILWAY_PUBLIC_DOMAIN");
-  return domain ? `https://${domain}` : `http://localhost:${PORT}`;
+  // Local dev: use holly-image-pipeline on Railway for HTTPS ref hosting
+  return domain ? `https://${domain}` : "https://image-studio-production.up.railway.app";
 }
 
 const REALISM_TAGS =
