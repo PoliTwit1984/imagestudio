@@ -1,17 +1,16 @@
 // Image Studio — Luna & Holly image generation web app
 // Bun server: serves UI + calls Grok img2img + sends to Telegram/Discord
 
-const XAI_API_KEY = process.env.XAI_API_KEY!;
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_LUNAS_BOT_TOKEN!;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "-1003866791406";
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN!;
-const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || "1476094105745494161";
-const BEARER_TOKEN = process.env.BEARER_TOKEN || "studio-2026";
 const PORT = process.env.PORT || 3000;
 
-const SELF_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-  : `http://localhost:${PORT}`;
+function env(key: string, fallback?: string): string {
+  return process.env[key] || Bun.env[key] || fallback || "";
+}
+
+function getSelfUrl(): string {
+  const domain = env("RAILWAY_PUBLIC_DOMAIN");
+  return domain ? `https://${domain}` : `http://localhost:${PORT}`;
+}
 
 const REALISM_TAGS =
   "raw unfiltered amateur iPhone photo, realistic skin texture with visible pores, candid r/gonewild energy, no filters";
@@ -35,7 +34,7 @@ const hollyRef = Bun.file("./refs/holly-grok-ref.jpeg");
 
 function checkAuth(req: Request): boolean {
   const auth = req.headers.get("Authorization");
-  return auth === `Bearer ${BEARER_TOKEN}`;
+  return auth === `Bearer ${env("BEARER_TOKEN", "studio-2026")}`;
 }
 
 async function generateImage(
@@ -44,13 +43,13 @@ async function generateImage(
   model: string
 ): Promise<{ url: string; revisedPrompt: string }> {
   const char = CHARACTERS[character] || CHARACTERS.luna;
-  const refUrl = `${SELF_URL}/ref/${char.ref}`;
+  const refUrl = `${getSelfUrl()}/ref/${char.ref}`;
   const prompt = `${char.prefix} ${scene}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
 
   const res = await fetch("https://api.x.ai/v1/images/edits", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${XAI_API_KEY}`,
+      Authorization: `Bearer ${env("XAI_API_KEY")}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -121,12 +120,12 @@ const server = Bun.serve({
       try {
         const body = await req.json();
         const res = await fetch(
-          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`,
+          `https://api.telegram.org/bot${env("TELEGRAM_LUNAS_BOT_TOKEN")}/sendPhoto`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              chat_id: TELEGRAM_CHAT_ID,
+              chat_id: env("TELEGRAM_CHAT_ID", "-1003866791406"),
               photo: body.url,
               caption: (body.caption || "").slice(0, 1024),
             }),
@@ -145,11 +144,11 @@ const server = Bun.serve({
       try {
         const body = await req.json();
         const res = await fetch(
-          `https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages`,
+          `https://discord.com/api/v10/channels/${env("DISCORD_CHANNEL_ID", "1476094105745494161")}/messages`,
           {
             method: "POST",
             headers: {
-              Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+              Authorization: `Bot ${env("DISCORD_BOT_TOKEN")}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
