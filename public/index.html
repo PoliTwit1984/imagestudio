@@ -80,6 +80,11 @@
   }
   .gen-btn:hover { opacity: 0.9; }
   .gen-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .pose-btn {
+    background: #101518; border: 1px solid #06b6d4; color: #06b6d4; padding: 10px 16px;
+    border-radius: 10px; font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .pose-btn:hover { opacity: 0.85; }
   .engine-toggle {
     background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 10px 16px;
     border-radius: 10px; font-size: 0.85rem; cursor: pointer; white-space: nowrap; font-weight: 600;
@@ -593,11 +598,38 @@
 
     <div class="controls">
       <button class="gen-btn" id="gen-btn" onclick="generate()">Generate</button>
+      <button class="pose-btn" onclick="openPoseRef()">Pose Ref</button>
       <div class="engine-toggle grok" id="engine-toggle" onclick="toggleEngine()">GROK</div>
       <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()">PRO $0.07</div>
       <select class="lora-select" id="lora-select" style="display:none;">
         <option value="">Select LoRA...</option>
       </select>
+    </div>
+
+    <!-- Pose reference panel -->
+    <div class="pose-panel" id="pose-panel" style="display:none;">
+      <div class="edit-label">Pose Reference <span style="font-weight:400;color:#888;">— upload any image to copy the pose</span></div>
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        <div style="flex:1;">
+          <input type="file" id="pose-upload" accept="image/*" style="font-size:0.8rem;color:#888;margin-bottom:8px;">
+          <div style="color:#555;font-size:0.72rem;">Or paste a URL:</div>
+          <input type="text" id="pose-url-input" class="edit-input" placeholder="https://..." style="margin-top:4px;font-size:0.8rem;">
+        </div>
+        <img id="pose-preview" src="" style="max-height:100px;border-radius:8px;display:none;">
+      </div>
+      <div style="margin-top:8px;">
+        <div style="color:#888;font-size:0.75rem;">Scene description (what to generate in this pose):</div>
+        <input type="text" id="pose-scene" class="edit-input" placeholder="e.g. naked on white sheets, warm lamplight" style="margin-top:4px;">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <div style="color:#888;font-size:0.75rem;">Pose strength:</div>
+        <input type="range" id="pose-strength" min="0.3" max="0.9" step="0.05" value="0.65" style="flex:1;">
+        <span id="pose-strength-val" style="color:#06b6d4;font-size:0.8rem;font-weight:600;">0.65</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button class="edit-btn" id="pose-go" onclick="runPoseGenerate()" style="background:linear-gradient(135deg,#06b6d4,#0891b2);">Generate with Pose</button>
+        <button class="action-btn" onclick="closePoseRef()">Cancel</button>
+      </div>
     </div>
 
     <div class="error" id="error"></div>
@@ -620,38 +652,11 @@
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')">Upscale</button>
         <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;">Magnific</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;">Face Swap</button>
-        <button class="action-btn" id="btn-pose" onclick="openPoseRef()" style="border-color:#06b6d4;color:#06b6d4;">Pose Ref</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
         <button class="action-btn" onclick="copyUrl()">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()">Download</button>
       </div>
-      <!-- Pose reference panel -->
-      <div class="pose-panel" id="pose-panel" style="display:none;">
-        <div class="edit-label">Pose Reference <span style="font-weight:400;color:#888;">— upload any image to copy the pose</span></div>
-        <div style="display:flex;gap:12px;align-items:flex-start;">
-          <div style="flex:1;">
-            <input type="file" id="pose-upload" accept="image/*" style="font-size:0.8rem;color:#888;margin-bottom:8px;">
-            <div style="color:#555;font-size:0.72rem;">Or paste a URL:</div>
-            <input type="text" id="pose-url-input" class="edit-input" placeholder="https://..." style="margin-top:4px;font-size:0.8rem;">
-          </div>
-          <img id="pose-preview" src="" style="max-height:100px;border-radius:8px;display:none;">
-        </div>
-        <div style="margin-top:8px;">
-          <div style="color:#888;font-size:0.75rem;">Scene description (what to generate in this pose):</div>
-          <input type="text" id="pose-scene" class="edit-input" placeholder="e.g. naked on white sheets, warm lamplight" style="margin-top:4px;">
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-          <div style="color:#888;font-size:0.75rem;">Pose strength:</div>
-          <input type="range" id="pose-strength" min="0.3" max="0.9" step="0.05" value="0.65" style="flex:1;">
-          <span id="pose-strength-val" style="color:#06b6d4;font-size:0.8rem;font-weight:600;">0.65</span>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:10px;">
-          <button class="edit-btn" id="pose-go" onclick="runPoseGenerate()" style="background:linear-gradient(135deg,#06b6d4,#0891b2);">Generate with Pose</button>
-          <button class="action-btn" onclick="closePoseRef()">Cancel</button>
-        </div>
-      </div>
-
       <!-- Face swap panel -->
       <div class="faceswap-panel" id="faceswap-panel" style="display:none;">
         <div class="edit-label">Face Swap <span style="font-weight:400;color:#888;">— pick a face to swap onto this image</span></div>
