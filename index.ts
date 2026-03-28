@@ -948,6 +948,78 @@ const server = Bun.serve({
       }
     }
 
+    // Pose reference — img2img with LoRA (fal.ai only)
+    if (url.pathname === "/api/pose-generate" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const poseUrl = body.pose_image_url || "";
+        const scene = body.scene || "";
+        const loraName = body.lora || "";
+        const strength = body.strength || 0.65;
+        const charName = body.character || "luna";
+        if (!poseUrl) return Response.json({ error: "pose_image_url required" }, { status: 400 });
+
+        // Resolve LoRA
+        let loraUrl = "";
+        let trigger = "";
+        if (loraName) {
+          const lora = await getLoraByName(loraName);
+          if (lora) { loraUrl = lora.url; trigger = lora.trigger_word; }
+        }
+        if (!loraUrl) {
+          const character = await getCharacter(charName);
+          loraUrl = character?.lora_url || "";
+          trigger = character?.lora_trigger || "";
+        }
+
+        const prompt = `${trigger} ${scene}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
+
+        const falBody: any = {
+          prompt,
+          image_url: poseUrl,
+          strength,
+          num_inference_steps: 28,
+          guidance_scale: 7.5,
+          enable_safety_checker: false,
+        };
+        if (loraUrl) {
+          falBody.loras = [{ path: loraUrl, scale: 0.9 }];
+        }
+
+        const res = await fetch("https://fal.run/fal-ai/flux-lora/image-to-image", {
+          method: "POST",
+          headers: {
+            Authorization: `Key ${env("FAL_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(falBody),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`Pose generate ${res.status}: ${err}`);
+        }
+
+        const data = await res.json();
+        const resultUrl = data.images[0].url;
+
+        const character = await getCharacter(charName);
+        await saveGeneration({
+          character_id: character?.id,
+          character_name: charName,
+          scene: `[pose-ref] ${scene}`,
+          model: "fal-pose-lora",
+          image_url: resultUrl,
+          revised_prompt: "",
+        });
+
+        return Response.json({ ok: true, url: resultUrl });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Generate Magnific prompt only (step 1 — user can edit before upscaling)
     if (url.pathname === "/api/magnific-prompt" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
