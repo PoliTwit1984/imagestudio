@@ -137,6 +137,10 @@
   }
   .edit-btn:hover { opacity: 0.9; }
   .edit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .edit-status { padding: 8px 12px; border-radius: 8px; font-size: 0.82rem; margin-bottom: 10px; }
+  .edit-status.error { background: #2a1515; border: 1px solid #5a2020; color: #e08080; }
+  .edit-status.success { background: #0a2018; border: 1px solid #10b981; color: #34d399; }
+  .edit-status.loading { background: #1a1a2a; border: 1px solid #4158d0; color: #818cf8; }
   .edit-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 
   /* Settings */
@@ -535,6 +539,7 @@
           <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()">Grok Vision: Suggest Edits</button>
           <span class="enhance-hint" id="analyze-hint">Grok looks at the image and recommends improvements</span>
         </div>
+        <div class="edit-status" id="edit-status" style="display:none;"></div>
         <div class="edit-presets" id="edit-presets">
           <span class="chip" onclick="setEdit('convert to black and white, dramatic contrast')">b&w</span>
           <span class="chip" onclick="setEdit('more dramatic shadows, moodier lighting')">darker</span>
@@ -924,10 +929,13 @@ async function generate() {
   currentScene = scene;
 
   const btn = document.getElementById('gen-btn');
-  btn.disabled = true; btn.textContent = 'Generating...';
+  btn.disabled = true;
+  const engineLabel = currentEngine === 'fal' ? `FAL.AI${currentLora ? ' + ' + currentLora : ''}` : `GROK ${currentModel.toUpperCase()}`;
+  btn.textContent = `${engineLabel}...`;
   document.getElementById('loading').classList.add('active');
   document.getElementById('result').classList.remove('active');
   document.getElementById('error').classList.remove('active');
+  document.getElementById('edit-status').style.display = 'none';
   resetSendBtns();
 
   try {
@@ -1076,6 +1084,14 @@ async function enhanceEdit() {
   }
 }
 
+function showEditStatus(msg, type) {
+  const el = document.getElementById('edit-status');
+  el.textContent = msg;
+  el.className = 'edit-status ' + type;
+  el.style.display = 'block';
+  if (type !== 'loading') setTimeout(() => { el.style.display = 'none'; }, 8000);
+}
+
 async function editImage() {
   if (!currentUrl) { toast('Generate an image first'); return; }
   const editPrompt = document.getElementById('edit-input').value.trim();
@@ -1083,7 +1099,7 @@ async function editImage() {
 
   const btn = document.getElementById('edit-btn');
   btn.disabled = true; btn.textContent = 'Editing...';
-  document.getElementById('loading').classList.add('active');
+  showEditStatus(`Editing with ${currentEngine.toUpperCase()}... "${editPrompt.slice(0, 60)}"`, 'loading');
 
   try {
     const res = await fetch('/api/edit', {
@@ -1105,12 +1121,11 @@ async function editImage() {
     document.getElementById('edit-input').value = '';
     resetSendBtns();
     loadHistory();
-    toast('Edit applied');
+    showEditStatus(`Edit applied via ${(data.engine || currentEngine).toUpperCase()}`, 'success');
   } catch (err) {
-    toast('Edit failed: ' + err.message);
+    showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Edit';
-    document.getElementById('loading').classList.remove('active');
   }
 }
 
