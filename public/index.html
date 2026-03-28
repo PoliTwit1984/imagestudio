@@ -1160,31 +1160,38 @@ const SETTING_LABELS = {
   chat_system: { label: 'Chat Creative Director', desc: 'System prompt for the Grok chat panel.' },
 };
 
+let settingsData = [];
+
 async function loadSettings() {
   const container = document.getElementById('settings-container');
   try {
     const res = await fetch('/api/settings', { headers: headers() });
-    const settings = await res.json();
-    if (!Array.isArray(settings)) throw new Error('Failed to load');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    settingsData = await res.json();
+    if (!Array.isArray(settingsData)) throw new Error('Not an array');
 
-    container.innerHTML = settings.map(s => {
+    container.innerHTML = '';
+    settingsData.forEach(s => {
       const meta = SETTING_LABELS[s.key] || { label: s.key, desc: s.description || '' };
-      return `
-        <div class="setting-card" data-key="${s.key}">
-          <div class="setting-header">
-            <span class="setting-key">${meta.label}</span>
-          </div>
-          <div class="setting-desc">${meta.desc}</div>
-          <textarea class="setting-textarea" id="setting-${s.key}" rows="8">${escHtml(s.value)}</textarea>
-          <div class="setting-actions">
-            <span class="setting-saved" id="saved-${s.key}">Saved</span>
-            <button class="setting-save" onclick="saveSetting('${s.key}')">Save</button>
-          </div>
+      const card = document.createElement('div');
+      card.className = 'setting-card';
+      card.innerHTML = `
+        <div class="setting-header">
+          <span class="setting-key">${meta.label}</span>
+        </div>
+        <div class="setting-desc">${meta.desc}</div>
+        <textarea class="setting-textarea" id="setting-${s.key}" rows="10"></textarea>
+        <div class="setting-actions">
+          <span class="setting-saved" id="saved-${s.key}">Saved</span>
+          <button class="setting-save" onclick="saveSetting('${s.key}')">Save</button>
         </div>
       `;
-    }).join('');
+      container.appendChild(card);
+      // Set value via DOM to avoid HTML injection issues
+      document.getElementById('setting-' + s.key).value = s.value;
+    });
   } catch (err) {
-    container.innerHTML = '<div style="color:#e08080;padding:20px;">Failed to load settings</div>';
+    container.innerHTML = `<div style="color:#e08080;padding:20px;">Failed to load settings: ${err.message}</div>`;
   }
 }
 
