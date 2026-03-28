@@ -926,13 +926,14 @@ const server = Bun.serve({
         let endpoint: string;
         let payload: any;
 
+        let magnificPrompt = "";
         if (mode === "creative") {
           // Freepik Magnific Creative — Grok auto-generates the prompt
-          const autoPrompt = await generateMagnificPrompt(imageUrl);
+          magnificPrompt = await generateMagnificPrompt(imageUrl);
           endpoint = "image-upscaler";
           payload = {
             image: b64Data,
-            prompt: autoPrompt,
+            prompt: magnificPrompt,
             scale_factor: `${scale}x`,
           };
         } else {
@@ -1002,7 +1003,7 @@ const server = Bun.serve({
           revised_prompt: "",
         });
 
-        return Response.json({ ok: true, url: resultUrl, scale });
+        return Response.json({ ok: true, url: resultUrl, scale, magnificPrompt });
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
       }

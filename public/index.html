@@ -1326,7 +1326,8 @@ async function upscaleImage(mode) {
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
-    showEditStatus(`Upscaled — enhanced texture and detail`, 'success');
+    const promptInfo = data.magnificPrompt ? `\nPrompt: "${data.magnificPrompt}"` : '';
+    showEditStatus(`Upscaled ${data.scale}x${promptInfo}`, 'success');
   } catch (err) {
     hideImgOverlay();
     showEditStatus('Upscale failed: ' + err.message, 'error');
