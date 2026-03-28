@@ -46,6 +46,11 @@
   .char-card img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
   .char-card .name { font-size: 1rem; font-weight: 600; }
   .char-card .sub { font-size: 0.7rem; color: #555; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100px; }
+  .char-actions { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
+  .char-edit-btn { font-size: 0.65rem; color: #666; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+  .char-edit-btn:hover { color: #c850c0; background: #1a1020; }
+  .char-delete-btn { font-size: 0.65rem; color: #666; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+  .char-delete-btn:hover { color: #e05050; background: #2a1515; }
   .char-card.add-new { border-style: dashed; border-color: #333; }
   .char-card.add-new:hover { border-color: #666; }
   .char-card.add-new .name { color: #666; }
@@ -613,6 +618,29 @@
   </div>
 </div>
 
+<!-- Edit character modal -->
+<div class="modal-overlay" id="modal-edit-char">
+  <div class="modal">
+    <h2>Edit Character</h2>
+    <input type="hidden" id="edit-char-name">
+    <label>Display Name</label>
+    <input type="text" id="edit-char-display">
+    <label>Description</label>
+    <input type="text" id="edit-char-desc">
+    <label>Prompt Prefix</label>
+    <input type="text" id="edit-char-prefix">
+    <label>Replace Reference Image (optional)</label>
+    <input type="file" id="edit-char-file" accept="image/*">
+    <div style="margin-top:8px;">
+      <img id="edit-char-preview" src="" style="max-height:80px;border-radius:8px;display:none;">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeEditCharModal()">Cancel</button>
+      <button class="btn-save" onclick="saveEditChar()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -679,6 +707,10 @@ function renderCharacters() {
       <img src="${c.ref_image_url}" alt="${c.display_name}">
       <div class="name">${c.display_name}</div>
       <div class="sub">${c.description || ''}</div>
+      <div class="char-actions">
+        <span class="char-edit-btn" onclick="event.stopPropagation(); openEditCharModal('${c.name}')">edit</span>
+        <span class="char-delete-btn" onclick="event.stopPropagation(); deleteChar('${c.name}', '${c.display_name}')">x</span>
+      </div>
     </div>
   `).join('') + `
     <div class="char-card add-new" onclick="openModal()">
@@ -693,10 +725,70 @@ function selectChar(name) {
   document.querySelectorAll('.char-card').forEach(el => el.classList.toggle('active', el.dataset.char === name));
 }
 
-// --- Modal ---
+// --- Modal (new) ---
 
 function openModal() { document.getElementById('modal-new-char').classList.add('active'); }
 function closeModal() { document.getElementById('modal-new-char').classList.remove('active'); }
+
+// --- Modal (edit) ---
+
+function openEditCharModal(name) {
+  const char = characters.find(c => c.name === name);
+  if (!char) return;
+  document.getElementById('edit-char-name').value = char.name;
+  document.getElementById('edit-char-display').value = char.display_name;
+  document.getElementById('edit-char-desc').value = char.description || '';
+  document.getElementById('edit-char-prefix').value = char.prompt_prefix || 'same face and body but';
+  const preview = document.getElementById('edit-char-preview');
+  preview.src = char.ref_image_url;
+  preview.style.display = 'block';
+  document.getElementById('edit-char-file').value = '';
+  document.getElementById('modal-edit-char').classList.add('active');
+}
+
+function closeEditCharModal() { document.getElementById('modal-edit-char').classList.remove('active'); }
+
+async function saveEditChar() {
+  const name = document.getElementById('edit-char-name').value;
+  const form = new FormData();
+  form.append('name', name);
+  form.append('display_name', document.getElementById('edit-char-display').value.trim());
+  form.append('description', document.getElementById('edit-char-desc').value.trim());
+  form.append('prompt_prefix', document.getElementById('edit-char-prefix').value.trim());
+
+  const fileInput = document.getElementById('edit-char-file');
+  if (fileInput.files[0]) form.append('file', fileInput.files[0]);
+
+  try {
+    const res = await fetch('/api/characters/update', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: form
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast(`${name} updated`);
+      closeEditCharModal();
+      await loadCharacters();
+    } else toast(data.error || 'Update failed');
+  } catch { toast('Update failed'); }
+}
+
+async function deleteChar(name, displayName) {
+  if (!confirm(`Delete ${displayName}? This removes the character and ref image.`)) return;
+  try {
+    const res = await fetch('/api/characters/delete', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast(`${displayName} deleted`);
+      if (selectedChar === name) selectedChar = characters[0]?.name || 'luna';
+      await loadCharacters();
+    } else toast(data.error || 'Delete failed');
+  } catch { toast('Delete failed'); }
+}
 
 async function saveNewChar() {
   const name = document.getElementById('new-char-name').value.trim().toLowerCase();

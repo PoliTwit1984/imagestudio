@@ -779,6 +779,86 @@ const server = Bun.serve({
       }
     }
 
+    // Update character (edit fields, optionally replace ref image)
+    if (url.pathname === "/api/characters/update" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const formData = await req.formData();
+        const charName = formData.get("name") as string;
+        if (!charName) return Response.json({ error: "name required" }, { status: 400 });
+
+        const updates: any = { updated_at: new Date().toISOString() };
+        const displayName = formData.get("display_name") as string;
+        const description = formData.get("description") as string;
+        const promptPrefix = formData.get("prompt_prefix") as string;
+        if (displayName) updates.display_name = displayName;
+        if (description !== null && description !== undefined) updates.description = description;
+        if (promptPrefix) updates.prompt_prefix = promptPrefix;
+
+        // Optional new ref image
+        const file = formData.get("file") as File | null;
+        if (file && file.size > 0) {
+          const fileName = `refs/${charName}-ref.jpeg`;
+          const bytes = await file.arrayBuffer();
+          await fetch(
+            `${SUPABASE_URL}/storage/v1/object/image-studio/${fileName}`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${env("SUPABASE_ANON_KEY")}`,
+                "Content-Type": file.type || "image/jpeg",
+                "x-upsert": "true",
+              },
+              body: bytes,
+            }
+          );
+          updates.ref_image_path = fileName;
+          updates.ref_image_url = `${SUPABASE_URL}/storage/v1/object/public/image-studio/${fileName}`;
+        }
+
+        await fetch(`${SUPABASE_URL}/rest/v1/characters?name=eq.${charName}`, {
+          method: "PATCH",
+          headers: supaHeaders(),
+          body: JSON.stringify(updates),
+        });
+
+        return Response.json({ ok: true, name: charName });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
+    // Delete character
+    if (url.pathname === "/api/characters/delete" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const charName = body.name;
+        if (!charName) return Response.json({ error: "name required" }, { status: 400 });
+
+        // Delete from DB
+        await fetch(`${SUPABASE_URL}/rest/v1/characters?name=eq.${charName}`, {
+          method: "DELETE",
+          headers: supaHeaders(),
+        });
+
+        // Delete ref image from storage
+        await fetch(
+          `${SUPABASE_URL}/storage/v1/object/image-studio/refs/${charName}-ref.jpeg`,
+          {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${env("SUPABASE_ANON_KEY")}`,
+            },
+          }
+        );
+
+        return Response.json({ ok: true, deleted: charName });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Send to Telegram
     if (url.pathname === "/api/send/telegram" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
