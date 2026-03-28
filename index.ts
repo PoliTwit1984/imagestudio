@@ -69,11 +69,13 @@ async function updateGeneration(id: string, fields: any) {
 
 // --- Image generation ---
 
-async function generateImage(
+// --- Grok img2img generation ---
+
+async function generateGrok(
   character: any,
   scene: string,
   model: string
-): Promise<{ url: string; revisedPrompt: string }> {
+): Promise<{ url: string; revisedPrompt: string; engine: string }> {
   const refUrl = character.ref_image_url;
   const prefix = character.prompt_prefix || "same face and body but";
   const suffix = character.prompt_suffix || "";
@@ -102,7 +104,69 @@ async function generateImage(
   return {
     url: data.data[0].url,
     revisedPrompt: data.data[0].revised_prompt || "",
+    engine: "grok",
   };
+}
+
+// --- fal.ai Flux LoRA generation (zero filter) ---
+
+async function generateFal(
+  character: any,
+  scene: string,
+): Promise<{ url: string; revisedPrompt: string; engine: string }> {
+  const trigger = character.lora_trigger || "";
+  const loraUrl = character.lora_url || "";
+
+  if (!loraUrl) {
+    throw new Error(`No LoRA configured for ${character.name}. Upload one in character settings or use Grok.`);
+  }
+
+  const prompt = `${trigger} ${scene}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
+
+  const body: any = {
+    prompt,
+    image_size: { width: 768, height: 1024 },
+    num_inference_steps: 28,
+    guidance_scale: 7.5,
+    num_images: 1,
+    enable_safety_checker: false,
+    loras: [{ path: loraUrl, scale: character.lora_scale || 0.9 }],
+  };
+
+  const res = await fetch("https://fal.run/fal-ai/flux-lora", {
+    method: "POST",
+    headers: {
+      Authorization: `Key ${env("FAL_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`fal.ai ${res.status}: ${err}`);
+  }
+
+  const data = await res.json();
+  return {
+    url: data.images[0].url,
+    revisedPrompt: "",
+    engine: "fal",
+  };
+}
+
+// --- Router: pick engine based on user selection ---
+
+async function generateImage(
+  character: any,
+  scene: string,
+  model: string,
+  engine: string = "grok"
+): Promise<{ url: string; revisedPrompt: string; engine: string }> {
+  if (engine === "fal") {
+    return generateFal(character, scene);
+  }
+  return generateGrok(character, scene, model);
 }
 
 // --- Shared context for all AI prompts ---
@@ -466,19 +530,20 @@ const server = Bun.serve({
         const charName = body.character || "luna";
         const scene = body.scene || "";
         const model = body.model || "pro";
+        const engine = body.engine || "grok";
         if (!scene) return Response.json({ error: "scene required" }, { status: 400 });
 
         const character = await getCharacter(charName);
         if (!character) return Response.json({ error: "character not found" }, { status: 404 });
 
-        const result = await generateImage(character, scene, model);
+        const result = await generateImage(character, scene, model, engine);
 
         // Save to generations table
         await saveGeneration({
           character_id: character.id,
           character_name: charName,
           scene,
-          model,
+          model: `${engine}/${model}`,
           image_url: result.url,
           revised_prompt: result.revisedPrompt,
         });
