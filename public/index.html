@@ -81,6 +81,13 @@
   }
   .engine-toggle.grok { border-color: #f59e0b; color: #f59e0b; }
   .engine-toggle.fal { border-color: #ec4899; color: #ec4899; }
+  .lora-select {
+    background: #1a1a1a; border: 1px solid #ec4899; color: #ec4899; padding: 10px 12px;
+    border-radius: 10px; font-size: 0.85rem; cursor: pointer; font-weight: 600;
+    -webkit-appearance: none; appearance: none;
+  }
+  .lora-select:focus { outline: none; border-color: #f472b6; }
+  .lora-select option { background: #1a1a1a; color: #e0e0e0; }
   .model-toggle {
     background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 10px 16px;
     border-radius: 10px; font-size: 0.85rem; cursor: pointer; white-space: nowrap;
@@ -496,6 +503,9 @@
       <button class="gen-btn" id="gen-btn" onclick="generate()">Generate</button>
       <div class="engine-toggle grok" id="engine-toggle" onclick="toggleEngine()">GROK</div>
       <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()">PRO $0.07</div>
+      <select class="lora-select" id="lora-select" style="display:none;">
+        <option value="">Select LoRA...</option>
+      </select>
     </div>
 
     <div class="error" id="error"></div>
@@ -610,9 +620,11 @@ let token = localStorage.getItem('studio-token') || '';
 let selectedChar = 'luna';
 let currentModel = 'pro';
 let currentEngine = 'grok';
+let currentLora = '';
 let currentUrl = '';
 let currentScene = '';
 let characters = [];
+let loras = [];
 
 if (token) { showApp(); }
 
@@ -631,7 +643,19 @@ async function showApp() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   await loadCharacters();
+  await loadLoras();
   loadHistory();
+}
+
+async function loadLoras() {
+  try {
+    const res = await fetch('/api/loras');
+    loras = await res.json();
+    const select = document.getElementById('lora-select');
+    select.innerHTML = '<option value="">No LoRA (text only)</option>' +
+      loras.map(l => `<option value="${l.name}">${l.display_name} (${l.trigger_word})</option>`).join('');
+    select.onchange = () => { currentLora = select.value; };
+  } catch (e) { console.error('Failed to load LoRAs', e); }
 }
 
 function headers() {
@@ -752,17 +776,19 @@ function addChip(text) {
 function toggleEngine() {
   const el = document.getElementById('engine-toggle');
   const modelEl = document.getElementById('model-toggle');
+  const loraEl = document.getElementById('lora-select');
   if (currentEngine === 'grok') {
     currentEngine = 'fal';
     el.textContent = 'FAL.AI';
     el.className = 'engine-toggle fal';
-    // fal doesn't have pro/basic — hide model toggle
     modelEl.style.display = 'none';
+    loraEl.style.display = '';
   } else {
     currentEngine = 'grok';
     el.textContent = 'GROK';
     el.className = 'engine-toggle grok';
     modelEl.style.display = '';
+    loraEl.style.display = 'none';
   }
 }
 
@@ -815,7 +841,7 @@ async function generate() {
   try {
     const res = await fetch('/api/generate', {
       method: 'POST', headers: headers(),
-      body: JSON.stringify({ character: selectedChar, scene, model: currentModel, engine: currentEngine })
+      body: JSON.stringify({ character: selectedChar, scene, model: currentModel, engine: currentEngine, lora: currentLora })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Failed');
@@ -975,6 +1001,7 @@ async function editImage() {
         edit_prompt: editPrompt,
         model: currentModel,
         engine: currentEngine,
+        lora: currentLora,
         character: selectedChar
       })
     });

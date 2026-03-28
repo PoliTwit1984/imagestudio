@@ -113,12 +113,14 @@ async function generateGrok(
 async function generateFal(
   character: any,
   scene: string,
+  loraOverride?: { url: string; trigger: string; scale: number },
 ): Promise<{ url: string; revisedPrompt: string; engine: string }> {
-  const trigger = character.lora_trigger || "";
-  const loraUrl = character.lora_url || "";
+  const loraUrl = loraOverride?.url || character.lora_url || "";
+  const trigger = loraOverride?.trigger || character.lora_trigger || "";
+  const scale = loraOverride?.scale || character.lora_scale || 0.9;
 
   if (!loraUrl) {
-    throw new Error(`No LoRA configured for ${character.name}. Upload one in character settings or use Grok.`);
+    throw new Error(`No LoRA selected. Pick one from the dropdown or use Grok.`);
   }
 
   const prompt = `${trigger} ${scene}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
@@ -130,7 +132,7 @@ async function generateFal(
     guidance_scale: 7.5,
     num_images: 1,
     enable_safety_checker: false,
-    loras: [{ path: loraUrl, scale: character.lora_scale || 0.9 }],
+    loras: [{ path: loraUrl, scale }],
   };
 
   const res = await fetch("https://fal.run/fal-ai/flux-lora", {
@@ -161,12 +163,23 @@ async function generateImage(
   character: any,
   scene: string,
   model: string,
-  engine: string = "grok"
+  engine: string = "grok",
+  loraOverride?: { url: string; trigger: string; scale: number },
 ): Promise<{ url: string; revisedPrompt: string; engine: string }> {
   if (engine === "fal") {
-    return generateFal(character, scene);
+    return generateFal(character, scene, loraOverride);
   }
   return generateGrok(character, scene, model);
+}
+
+// Helper to fetch a LoRA by name from Supabase
+async function getLoraByName(name: string): Promise<any> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/loras?name=eq.${name}&limit=1`,
+    { headers: supaHeaders() }
+  );
+  const rows = await res.json();
+  return rows[0] || null;
 }
 
 // --- Settings (loaded from Supabase, with hardcoded fallbacks) ---
@@ -421,6 +434,14 @@ const server = Bun.serve({
       return Response.json(chars);
     }
 
+    // Get available LoRAs
+    if (url.pathname === "/api/loras" && req.method === "GET") {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/loras?order=name`, {
+        headers: supaHeaders(),
+      });
+      return Response.json(await res.json());
+    }
+
     // --- Auth required below ---
 
     // Get all settings
@@ -562,8 +583,14 @@ const server = Bun.serve({
         if (engine === "fal") {
           // fal.ai Flux Kontext LoRA — image editing with LoRA consistency, zero filter
           const character = await getCharacter(charName);
-          const loraUrl = character?.lora_url || "";
-          const loraScale = character?.lora_scale || 0.9;
+          let loraUrl = character?.lora_url || "";
+          let loraScale = character?.lora_scale || 0.9;
+
+          // LoRA override from dropdown
+          if (body.lora) {
+            const lora = await getLoraByName(body.lora);
+            if (lora) { loraUrl = lora.url; loraScale = lora.scale; }
+          }
 
           const falBody: any = {
             image_url: sourceUrl,
@@ -654,7 +681,16 @@ const server = Bun.serve({
         const character = await getCharacter(charName);
         if (!character) return Response.json({ error: "character not found" }, { status: 404 });
 
-        const result = await generateImage(character, scene, model, engine);
+        // Resolve LoRA if specified
+        let loraOverride;
+        if (engine === "fal" && body.lora) {
+          const lora = await getLoraByName(body.lora);
+          if (lora) {
+            loraOverride = { url: lora.url, trigger: lora.trigger_word, scale: lora.scale };
+          }
+        }
+
+        const result = await generateImage(character, scene, model, engine, loraOverride);
 
         // Save to generations table
         await saveGeneration({
