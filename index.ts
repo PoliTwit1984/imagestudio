@@ -861,7 +861,7 @@ const server = Bun.serve({
         let falRes;
         if (mode === "creative") {
           // Real-ESRGAN — sharpens and enhances detail without hallucinating new features
-          falRes = await fetch("https://fal.run/fal-ai/real-esrgan", {
+          falRes = await fetch("https://fal.run/fal-ai/esrgan", {
             method: "POST",
             headers: {
               Authorization: `Key ${env("FAL_API_KEY")}`,
@@ -870,7 +870,6 @@ const server = Bun.serve({
             body: JSON.stringify({
               image_url: imageUrl,
               scale: 2,
-              face_enhance: true,
             }),
           });
         } else {
