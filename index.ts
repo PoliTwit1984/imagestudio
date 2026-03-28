@@ -871,6 +871,7 @@ const server = Bun.serve({
             prompt: "photorealistic, natural skin texture with visible pores, realistic fabric texture, natural lighting, amateur photo",
             negative_prompt: "blurry, smooth skin, plastic, airbrushed, painting, illustration, cartoon",
             enable_safety_checker: false,
+            override_size_limits: true,
           }),
         });
 
