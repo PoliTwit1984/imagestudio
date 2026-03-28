@@ -955,6 +955,62 @@ const server = Bun.serve({
       }
     }
 
+    // Analyze pose reference image (Grok vision describes the pose)
+    if (url.pathname === "/api/analyze-pose" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const poseUrl = body.pose_image_url || "";
+        if (!poseUrl) return Response.json({ error: "pose_image_url required" }, { status: 400 });
+
+        const res = await fetch("https://api.x.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env("XAI_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "grok-4-1-fast-non-reasoning",
+            messages: [
+              {
+                role: "system",
+                content: `You are a pose description expert for AI image generation. Your job is to look at a reference image and describe ONLY the body pose, position, and arrangement in precise detail.
+
+RULES:
+- Describe the exact pose: body orientation, limb positions, head tilt, hand placement, leg position
+- Describe the camera angle and framing (overhead, eye-level, low angle, etc.)
+- Mention if the subject is clothed or nude — if nude, describe what's visible/exposed
+- Do NOT describe the person's face, hair, identity, or who they are
+- Do NOT describe the environment, lighting, or mood — ONLY the physical pose
+- Keep it under 80 words
+- Output ONLY the pose description, no explanation
+- Be explicit and specific about body positioning — this will be used as a prompt for image generation`,
+              },
+              {
+                role: "user",
+                content: [
+                  { type: "image_url", image_url: { url: poseUrl } },
+                  { type: "text", text: "Describe the exact body pose, position, and camera angle in this image. Be specific about limb placement, body orientation, and what's visible. Output ONLY the description." },
+                ],
+              },
+            ],
+            temperature: 0.4,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`Pose analysis failed: ${err}`);
+        }
+
+        const data = await res.json();
+        const poseDescription = data.choices[0].message.content.trim();
+        return Response.json({ ok: true, poseDescription });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Pose reference — img2img with LoRA (fal.ai only)
     if (url.pathname === "/api/pose-generate" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
