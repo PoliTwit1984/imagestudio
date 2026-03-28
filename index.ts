@@ -418,9 +418,16 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Static
+    // Static — no-cache to prevent stale pages
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      return new Response(indexHtml, { headers: { "Content-Type": "text/html" } });
+      return new Response(indexHtml, {
+        headers: {
+          "Content-Type": "text/html",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0",
+        },
+      });
     }
 
     // Health
