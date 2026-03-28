@@ -410,6 +410,58 @@ CONTEXT:
 - You can suggest multiple options as numbered alternatives
 `;
 
+// --- Magnific Auto-Prompt (Grok vision → describe image → generate Magnific prompt) ---
+
+const MAGNIFIC_PROMPT_SYSTEM = `You are an expert at writing prompts for the Magnific AI upscaler. Your job is to look at an image and generate the optimal Magnific upscale prompt.
+
+RULES:
+- Describe what IS in the image — not what you want to add. Magnific uses the prompt to guide texture enhancement.
+- Use weight modifiers for emphasis: (skin texture:1.3), (fabric detail:1.2)
+- Keep it under 60 words.
+- Output ONLY the prompt text. No explanation.
+
+FOCUS ON THESE DETAILS:
+- Skin: "(natural skin texture with visible pores:1.3)", "(subtle skin imperfections:1.1)", freckles if present
+- Fabric: describe the specific material — "(worn cotton texture:1.2)", "(silk weave:1.2)", "(lace detail:1.3)"
+- Hair: "(individual hair strands:1.1)", describe color/texture
+- Environment: describe surfaces — "(scuffed hardwood:1.1)", "(rumpled linen sheets:1.2)"
+- Lighting quality: "(natural window light:1.1)", film stock reference if applicable
+- Camera: "35mm film grain", "shallow depth of field" if present
+- ALWAYS include: "(photorealistic:1.3), (8k detail:1.1)"
+- NEVER include: body descriptions, face descriptions, identity, poses, actions`;
+
+async function generateMagnificPrompt(imageUrl: string): Promise<string> {
+  const res = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("XAI_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "grok-4-1-fast-non-reasoning",
+      messages: [
+        { role: "system", content: MAGNIFIC_PROMPT_SYSTEM },
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: imageUrl } },
+            { type: "text", text: "Generate the optimal Magnific upscale prompt for this image. Describe textures, materials, and lighting that should be enhanced. Output ONLY the prompt." },
+          ],
+        },
+      ],
+      temperature: 0.6,
+    }),
+  });
+
+  if (!res.ok) {
+    // Fallback to default prompt
+    return "(photorealistic:1.3), (natural skin texture with visible pores:1.3), (8k detail:1.1), (fabric texture:1.2), natural lighting, 35mm film grain";
+  }
+
+  const data = await res.json();
+  return data.choices[0].message.content.trim();
+}
+
 // --- Static files ---
 const indexHtml = Bun.file("./public/index.html");
 
@@ -875,11 +927,12 @@ const server = Bun.serve({
         let payload: any;
 
         if (mode === "creative") {
-          // Freepik Magnific Creative — adds skin texture, pores, film grain
+          // Freepik Magnific Creative — Grok auto-generates the prompt
+          const autoPrompt = await generateMagnificPrompt(imageUrl);
           endpoint = "image-upscaler";
           payload = {
             image: b64Data,
-            prompt: "photorealistic skin with visible pores and natural imperfections, realistic fabric texture, natural film grain like Kodak Portra 400, amateur photo detail",
+            prompt: autoPrompt,
             scale_factor: `${scale}x`,
           };
         } else {

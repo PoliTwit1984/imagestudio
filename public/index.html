@@ -1308,7 +1308,7 @@ async function upscaleImage(mode) {
   const origText = btn.textContent;
   btn.disabled = true; btn.textContent = '...';
 
-  const label = mode === 'creative' ? 'Adding texture...' : 'Upscaling 4x...';
+  const label = mode === 'creative' ? 'Grok analyzing image → Magnific upscaling...' : 'Upscaling...';
   showImgOverlay(label);
   showEditStatus(label, 'loading');
 
