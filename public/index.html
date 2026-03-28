@@ -1270,37 +1270,11 @@ function setEdit(text) {
 
 async function analyzeImage() {
   if (!currentUrl) { toast('Generate an image first'); return; }
-
-  const btn = document.getElementById('analyze-btn');
-  const hint = document.getElementById('analyze-hint');
-  btn.disabled = true; btn.textContent = 'Analyzing...';
-  hint.textContent = 'Grok is studying the image...';
-
-  try {
-    const res = await fetch('/api/analyze', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({ image_url: currentUrl })
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Analysis failed');
-
-    const container = document.getElementById('ai-suggestions');
-    container.innerHTML = '<div class="ai-suggestions-label">Grok suggests</div>' +
-      data.suggestions.map(s =>
-        `<span class="chip" onclick="setEdit('${s.prompt.replace(/'/g, "\\'")}')" title="${s.prompt}">${s.label}</span>`
-      ).join('');
-    container.style.display = 'flex';
-    container.style.flexWrap = 'wrap';
-    container.style.gap = '6px';
-    container.style.marginTop = '10px';
-    hint.textContent = `${data.suggestions.length} suggestions ready`;
-    toast('Image analyzed');
-  } catch (err) {
-    hint.textContent = 'Analysis failed';
-    toast('Analysis failed: ' + err.message);
-  } finally {
-    btn.disabled = false; btn.textContent = 'Grok Vision: Suggest Edits';
-  }
+  // Route through chat — the vision/creative director prompt handles <edit> tags
+  chatAttachedImage = currentUrl;
+  document.getElementById('chat-input').value = 'Analyze this. What\'s hot, what needs work. Give me edits.';
+  sendChat();
+  toast('Sent to chat for analysis');
 }
 
 async function enhanceEdit() {
