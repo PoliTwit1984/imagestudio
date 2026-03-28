@@ -380,11 +380,23 @@ async function analyzeImage(imageUrl: string): Promise<any[]> {
   }
 
   const data = await res.json();
-  const content = data.choices[0].message.content.trim();
-  // Extract JSON from response (handle markdown code blocks)
+  let content = data.choices[0].message.content.trim();
+
+  // Strip reasoning/thinking tags if present
+  content = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+  // Strip markdown code blocks
+  content = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+
+  // Extract JSON array
   const jsonMatch = content.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error("No JSON array in response");
-  return JSON.parse(jsonMatch[0]);
+  if (!jsonMatch) throw new Error("No JSON array in response: " + content.slice(0, 200));
+
+  try {
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    throw new Error("Invalid JSON: " + jsonMatch[0].slice(0, 200));
+  }
 }
 
 // --- Chat with Grok (image creative director) ---
