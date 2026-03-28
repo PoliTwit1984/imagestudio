@@ -176,6 +176,66 @@ async function enhancePrompt(scene: string, character: any, mode: string = "gene
   return data.choices[0].message.content.trim();
 }
 
+// --- Vision Analysis (Grok looks at the image and suggests edits) ---
+
+const VISION_SYSTEM = `You are a photography director and image editor reviewing a generated photo. Your job is to look at the image and suggest specific edits that would make it more photorealistic, more compelling, or more intimate.
+
+OUTPUT FORMAT — return a JSON array of 6-8 suggestions. Each suggestion has:
+- "label": short button label (2-4 words)
+- "prompt": the detailed edit prompt to feed back into img2img
+
+Focus on:
+1. Lighting improvements (shadows too flat? highlights blown? add rim light?)
+2. Color grading (would a film stock look help? warmer? cooler? desaturated?)
+3. Composition tweaks (tighter crop? different angle?)
+4. Texture/realism (skin looks too smooth? add grain? more environmental detail?)
+5. Mood shifts (make it moodier? more intimate? more raw?)
+6. Creative variations (b&w version? different clothing? wet look?)
+
+Be specific in the prompts — not "make it better" but "add warm rim light from the right side, deepen shadows in the background, Kodak Portra 400 color shift."
+
+RULES:
+- Never suggest smiling or teeth showing
+- Keep each prompt under 40 words
+- Make suggestions that are meaningfully different from each other
+- Output ONLY valid JSON array, no explanation`;
+
+async function analyzeImage(imageUrl: string): Promise<any[]> {
+  const res = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("XAI_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "grok-3",
+      messages: [
+        { role: "system", content: VISION_SYSTEM },
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: imageUrl } },
+            { type: "text", text: "Analyze this generated photo and suggest 6-8 specific edits. Return ONLY a JSON array." },
+          ],
+        },
+      ],
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Vision analysis failed: ${err}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices[0].message.content.trim();
+  // Extract JSON from response (handle markdown code blocks)
+  const jsonMatch = content.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) throw new Error("No JSON array in response");
+  return JSON.parse(jsonMatch[0]);
+}
+
 // --- Static files ---
 const indexHtml = Bun.file("./public/index.html");
 
@@ -203,6 +263,21 @@ const server = Bun.serve({
     // --- Auth required below ---
 
     // Enhance prompt via Grok reasoning
+    // Vision analysis — Grok looks at the image and suggests edits
+    if (url.pathname === "/api/analyze" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const imageUrl = body.image_url || "";
+        if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
+
+        const suggestions = await analyzeImage(imageUrl);
+        return Response.json({ ok: true, suggestions });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     if (url.pathname === "/api/enhance" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
       try {

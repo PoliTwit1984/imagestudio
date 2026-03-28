@@ -114,6 +114,17 @@
   .edit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .edit-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 
+  /* Analyze button */
+  .analyze-btn {
+    background: linear-gradient(135deg, #10b981, #059669); border: none; color: white; padding: 8px 16px;
+    border-radius: 8px; font-size: 0.82rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .analyze-btn:hover { opacity: 0.85; }
+  .analyze-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .ai-suggestions .chip { border-color: #10b981; color: #10b981; }
+  .ai-suggestions .chip:hover { background: #0a2018; color: #34d399; }
+  .ai-suggestions-label { font-size: 0.7rem; color: #10b981; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; font-weight: 600; }
+
   /* History */
   .history-label { font-size: 0.75rem; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
   .history { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; flex-wrap: wrap; }
@@ -391,7 +402,11 @@
           <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;">AI</button>
           <button class="edit-btn" id="edit-btn" onclick="editImage()">Edit</button>
         </div>
-        <div class="edit-presets">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()">Grok Vision: Suggest Edits</button>
+          <span class="enhance-hint" id="analyze-hint">Grok looks at the image and recommends improvements</span>
+        </div>
+        <div class="edit-presets" id="edit-presets">
           <span class="chip" onclick="setEdit('convert to black and white, dramatic contrast')">b&w</span>
           <span class="chip" onclick="setEdit('more dramatic shadows, moodier lighting')">darker</span>
           <span class="chip" onclick="setEdit('warmer tones, more golden light')">warmer</span>
@@ -405,6 +420,7 @@
           <span class="chip" onclick="setEdit('eyes looking directly at camera')">eye contact</span>
           <span class="chip" onclick="setEdit('wet skin, like just out of shower')">wet look</span>
         </div>
+        <div class="edit-presets ai-suggestions" id="ai-suggestions" style="display:none;"></div>
       </div>
     </div>
   </div>
@@ -711,6 +727,41 @@ async function sendDiscord() {
 
 function setEdit(text) {
   document.getElementById('edit-input').value = text;
+}
+
+async function analyzeImage() {
+  if (!currentUrl) { toast('Generate an image first'); return; }
+
+  const btn = document.getElementById('analyze-btn');
+  const hint = document.getElementById('analyze-hint');
+  btn.disabled = true; btn.textContent = 'Analyzing...';
+  hint.textContent = 'Grok is studying the image...';
+
+  try {
+    const res = await fetch('/api/analyze', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Analysis failed');
+
+    const container = document.getElementById('ai-suggestions');
+    container.innerHTML = '<div class="ai-suggestions-label">Grok suggests</div>' +
+      data.suggestions.map(s =>
+        `<span class="chip" onclick="setEdit('${s.prompt.replace(/'/g, "\\'")}')" title="${s.prompt}">${s.label}</span>`
+      ).join('');
+    container.style.display = 'flex';
+    container.style.flexWrap = 'wrap';
+    container.style.gap = '6px';
+    container.style.marginTop = '10px';
+    hint.textContent = `${data.suggestions.length} suggestions ready`;
+    toast('Image analyzed');
+  } catch (err) {
+    hint.textContent = 'Analysis failed';
+    toast('Analysis failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Grok Vision: Suggest Edits';
+  }
 }
 
 async function enhanceEdit() {
