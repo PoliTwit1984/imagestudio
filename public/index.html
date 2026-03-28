@@ -110,6 +110,25 @@
   /* Result */
   .result { display: none; margin-bottom: 24px; }
   .result.active { display: block; }
+  /* Version strip */
+  .version-strip { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .version-btn {
+    background: #1a1a1a; border: 1px solid #333; color: #888; padding: 4px 10px;
+    border-radius: 6px; font-size: 0.75rem; cursor: pointer; white-space: nowrap;
+  }
+  .version-btn:hover { border-color: #c850c0; color: #c850c0; }
+  .version-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .version-thumbs { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+  .version-thumbs::-webkit-scrollbar { height: 3px; }
+  .version-thumbs::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .version-thumb {
+    width: 48px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer;
+    border: 2px solid transparent; flex-shrink: 0; opacity: 0.5; transition: all 0.15s;
+  }
+  .version-thumb:hover { opacity: 0.8; }
+  .version-thumb.active { border-color: #c850c0; opacity: 1; }
+  .version-label { position: absolute; bottom: 1px; right: 1px; background: rgba(0,0,0,0.7); color: #aaa; font-size: 0.5rem; padding: 1px 3px; border-radius: 2px; }
+
   .result img { width: 100%; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
   .result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .action-btn {
@@ -521,6 +540,11 @@
     <div class="loading" id="loading"><div class="spinner"></div><div class="loading-text">Generating...</div></div>
 
     <div class="result" id="result">
+      <div class="version-strip" id="version-strip" style="display:none;">
+        <button class="version-btn" id="undo-btn" onclick="undoEdit()" title="Undo">&#8592; Undo</button>
+        <div class="version-thumbs" id="version-thumbs"></div>
+        <button class="version-btn" id="redo-btn" onclick="redoEdit()" title="Redo">Redo &#8594;</button>
+      </div>
       <img id="result-img" src="" alt="Generated">
       <div class="result-actions">
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
@@ -658,6 +682,8 @@ let currentUrl = '';
 let currentScene = '';
 let characters = [];
 let loras = [];
+let versionStack = []; // [{url, label}]
+let versionIndex = -1;
 
 if (token) { showApp(); }
 
@@ -837,6 +863,62 @@ function addPreset(text) {
   ta.focus();
 }
 
+// --- Version stack ---
+
+function pushVersion(url, label) {
+  // If we're not at the end, branching from a previous version — truncate forward history
+  if (versionIndex < versionStack.length - 1) {
+    versionStack = versionStack.slice(0, versionIndex + 1);
+  }
+  versionStack.push({ url, label });
+  versionIndex = versionStack.length - 1;
+  renderVersionStrip();
+}
+
+function goToVersion(idx) {
+  if (idx < 0 || idx >= versionStack.length) return;
+  versionIndex = idx;
+  currentUrl = versionStack[idx].url;
+  document.getElementById('result-img').src = currentUrl;
+  resetSendBtns();
+  renderVersionStrip();
+}
+
+function undoEdit() {
+  if (versionIndex > 0) goToVersion(versionIndex - 1);
+}
+
+function redoEdit() {
+  if (versionIndex < versionStack.length - 1) goToVersion(versionIndex + 1);
+}
+
+function renderVersionStrip() {
+  const strip = document.getElementById('version-strip');
+  const thumbs = document.getElementById('version-thumbs');
+  const undoBtn = document.getElementById('undo-btn');
+  const redoBtn = document.getElementById('redo-btn');
+
+  if (versionStack.length <= 1) { strip.style.display = 'none'; return; }
+  strip.style.display = 'flex';
+
+  undoBtn.disabled = versionIndex <= 0;
+  redoBtn.disabled = versionIndex >= versionStack.length - 1;
+
+  thumbs.innerHTML = versionStack.map((v, i) =>
+    `<img class="version-thumb ${i === versionIndex ? 'active' : ''}" src="${v.url}" title="${v.label}" onclick="goToVersion(${i})">`
+  ).join('');
+
+  // Scroll to active
+  const activeTh = thumbs.querySelector('.active');
+  if (activeTh) activeTh.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+}
+
+function resetVersionStack() {
+  versionStack = [];
+  versionIndex = -1;
+  document.getElementById('version-strip').style.display = 'none';
+}
+
 function clearPrompt() {
   document.getElementById('scene').value = '';
   document.querySelectorAll('.chip.used').forEach(c => c.classList.remove('used'));
@@ -949,6 +1031,8 @@ async function generate() {
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
     document.getElementById('result').classList.add('active');
+    resetVersionStack();
+    pushVersion(currentUrl, `${selectedChar}: ${scene.slice(0, 50)}`);
     loadHistory();
   } catch (err) {
     document.getElementById('error').textContent = err.message;
@@ -990,6 +1074,8 @@ function loadGen(url, scene, charName) {
   document.getElementById('result-img').src = url;
   document.getElementById('result').classList.add('active');
   resetSendBtns();
+  resetVersionStack();
+  pushVersion(url, `${charName}: ${scene.slice(0, 50)}`);
   switchTab('generate');
 }
 
@@ -1118,10 +1204,12 @@ async function editImage() {
 
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
+    const editLabel = editPrompt.slice(0, 40);
+    pushVersion(currentUrl, `edit: ${editLabel}`);
     document.getElementById('edit-input').value = '';
     resetSendBtns();
     loadHistory();
-    showEditStatus(`Edit applied via ${(data.engine || currentEngine).toUpperCase()}`, 'success');
+    showEditStatus(`Edit applied via ${(data.engine || currentEngine).toUpperCase()} (v${versionIndex + 1}/${versionStack.length})`, 'success');
   } catch (err) {
     showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
