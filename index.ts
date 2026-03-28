@@ -570,11 +570,39 @@ const server = Bun.serve({
         // Add conversation history
         for (const msg of messages) {
           if (msg.role === "user" && msg.image) {
-            // Message with image attachment
+            // Persist image to Supabase if it's a temp URL (Grok/fal URLs expire)
+            let safeImageUrl = msg.image;
+            if (msg.image.includes("imgen.x.ai") || msg.image.includes("fal.media")) {
+              try {
+                const imgResp = await fetch(msg.image);
+                if (imgResp.ok) {
+                  const imgBuf = await imgResp.arrayBuffer();
+                  const ts = Date.now();
+                  const uploadRes = await fetch(
+                    `${SUPABASE_URL}/storage/v1/object/image-studio/chat-images/chat-${ts}.jpeg`,
+                    {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${env("SUPABASE_ANON_KEY")}`,
+                        "Content-Type": "image/jpeg",
+                        "x-upsert": "true",
+                      },
+                      body: imgBuf,
+                    }
+                  );
+                  if (uploadRes.ok) {
+                    safeImageUrl = `${SUPABASE_URL}/storage/v1/object/public/image-studio/chat-images/chat-${ts}.jpeg`;
+                  }
+                }
+              } catch {
+                // Fall back to original URL
+              }
+            }
+
             apiMessages.push({
               role: "user",
               content: [
-                { type: "image_url", image_url: { url: msg.image } },
+                { type: "image_url", image_url: { url: safeImageUrl } },
                 { type: "text", text: msg.content },
               ],
             });
