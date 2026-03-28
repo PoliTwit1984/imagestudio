@@ -723,6 +723,9 @@
 
   <!-- Settings tab -->
   <div class="tab-content" id="tab-settings">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+      <button class="action-btn" onclick="reloadPrompts()" style="border-color:#50c878;color:#50c878;">Reload Prompts</button>
+    </div>
     <div class="settings-container" id="settings-container">
       <div class="settings-loading">Loading settings...</div>
     </div>
@@ -1915,6 +1918,15 @@ function escHtml(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+async function reloadPrompts() {
+  try {
+    const res = await fetch('/api/settings/reload', { method: 'POST', headers: headers() });
+    const data = await res.json();
+    if (data.ok) toast('Server cache cleared — prompts reloaded');
+    else toast('Reload failed');
+  } catch { toast('Reload failed'); }
+}
+
 async function saveSetting(key) {
   const textarea = document.getElementById('setting-' + key);
   const value = textarea.value;
@@ -1929,7 +1941,8 @@ async function saveSetting(key) {
     if (data.ok) {
       savedEl.style.display = 'inline';
       setTimeout(() => savedEl.style.display = 'none', 2000);
-      toast(`${key} saved`);
+      toast(`${key} saved & reloaded`);
+      reloadPrompts();
     } else {
       toast('Save failed: ' + (data.error || ''));
     }

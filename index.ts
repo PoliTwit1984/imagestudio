@@ -510,6 +510,13 @@ const server = Bun.serve({
       return Response.json(settings);
     }
 
+    // Bust settings cache
+    if (url.pathname === "/api/settings/reload" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      for (const key of Object.keys(settingsCache)) delete settingsCache[key];
+      return Response.json({ ok: true, message: "Cache cleared" });
+    }
+
     // Update a setting
     if (url.pathname === "/api/settings" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
