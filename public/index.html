@@ -150,6 +150,13 @@
   }
   .edit-input:focus { outline: none; border-color: #c850c0; }
   .edit-input::placeholder { color: #555; }
+  .edit-engine-select {
+    background: #1a1a1a; border: 1px solid #555; color: #ccc; padding: 8px 10px;
+    border-radius: 8px; font-size: 0.82rem; cursor: pointer;
+    -webkit-appearance: none; appearance: none;
+  }
+  .edit-engine-select:focus { outline: none; border-color: #c850c0; }
+  .edit-engine-select option { background: #1a1a1a; color: #e0e0e0; }
   .edit-btn {
     background: linear-gradient(135deg, #8b5cf6, #6366f1); border: none; color: white; padding: 10px 20px;
     border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; white-space: nowrap;
@@ -557,6 +564,10 @@
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
           <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;">AI</button>
+          <select class="edit-engine-select" id="edit-engine-select">
+            <option value="grok">Grok</option>
+            <option value="fal">fal.ai</option>
+          </select>
           <button class="edit-btn" id="edit-btn" onclick="editImage()">Edit</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
@@ -1183,9 +1194,10 @@ async function editImage() {
   const editPrompt = document.getElementById('edit-input').value.trim();
   if (!editPrompt) { toast('Describe the edit'); return; }
 
+  const editEngine = document.getElementById('edit-engine-select').value;
   const btn = document.getElementById('edit-btn');
   btn.disabled = true; btn.textContent = 'Editing...';
-  showEditStatus(`Editing with ${currentEngine.toUpperCase()}... "${editPrompt.slice(0, 60)}"`, 'loading');
+  showEditStatus(`Editing with ${editEngine.toUpperCase()}... "${editPrompt.slice(0, 60)}"`, 'loading');
 
   try {
     const res = await fetch('/api/edit', {
@@ -1194,7 +1206,7 @@ async function editImage() {
         source_url: currentUrl,
         edit_prompt: editPrompt,
         model: currentModel,
-        engine: currentEngine,
+        engine: editEngine,
         lora: currentLora,
         character: selectedChar
       })
