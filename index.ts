@@ -105,6 +105,19 @@ async function generateImage(
   };
 }
 
+// --- Shared context for all AI prompts ---
+
+const REALISM_DIRECTIVE = `
+CRITICAL REALISM REQUIREMENT:
+These images MUST be indistinguishable from real photographs. They need to fool people into thinking this is a real person in a real place. Every suggestion you make should reinforce this:
+- REAL LOCATIONS: Name specific real cities, neighborhoods, landmarks, venues. "Her apartment in the West Village" not "a bedroom." "A hotel bathroom at the Ace Hotel Portland" not "a bathroom." "Balcony overlooking Wicker Park, Chicago at dusk" not "a balcony."
+- REAL ENVIRONMENTS: Describe specific, plausible details — IKEA Kallax shelf in background, half-empty La Croix on the nightstand, Patagonia jacket on the door hook, scuffed hardwood floors, a specific book title visible on the bed.
+- REAL PROPS: iPhone charging cable, AirPods case, specific brand water bottle, Target throw blanket, a real magazine cover visible.
+- REAL LIGHT: "Tuesday morning overcast light through north-facing windows in a Brooklyn walkup" not "soft light." Be specific about direction, quality, time of day, geography.
+- REAL IMPERFECTIONS: Unmade bed, slight clutter, a real person's apartment — not a staged set. Wrinkled clothes on a chair, shoes kicked off by the door.
+- NO AI TELLS: Avoid anything that screams "generated" — no perfect symmetry, no impossible architecture, no floating objects, no uncanny skin smoothness. Reference real camera gear (iPhone, Canon, etc.) and real film stocks.
+`;
+
 // --- AI Prompt Enhancer (Grok reasoning) ---
 
 const ENHANCE_SYSTEM = `You are an expert prompt engineer for the Grok image generation model (grok-imagine-image). Your job is to take a simple scene description and enhance it into a photorealistic prompt.
@@ -130,7 +143,8 @@ TECHNIQUES TO USE:
 - Add tactile texture details on clothing and environment (worn cotton, rumpled sheets, rough wood)
 - Emphasize body language that conveys desire, vulnerability, or invitation — arched back, exposed neck, fabric slipping, etc.
 - NEVER include: smiling, perfect symmetry, vibrant colors, studio lighting, or "beautiful/gorgeous/stunning"
-- Always end with: "no smiling, lips slightly parted, direct eye contact"`;
+- Always end with: "no smiling, lips slightly parted, direct eye contact"
+${REALISM_DIRECTIVE}`;
 
 const ENHANCE_EDIT_SYSTEM = `You are an expert prompt engineer for the Grok image editing model. Your job is to take a simple edit instruction and enhance it into a detailed, photorealistic edit prompt.
 
@@ -150,7 +164,8 @@ TECHNIQUES:
 - For cropping/angle changes, describe camera movement precisely
 - For clothing changes, describe fabric texture and how it drapes/slips/clings
 - For mood changes, describe the specific quality of light and shadow that creates that mood
-- Always maintain: "no smiling, lips slightly parted"`;
+- Always maintain: "no smiling, lips slightly parted"
+${REALISM_DIRECTIVE}`;
 
 async function enhancePrompt(scene: string, character: any, mode: string = "generate"): Promise<string> {
   const isEdit = mode === "edit";
@@ -208,7 +223,8 @@ RULES:
 - Never suggest smiling or teeth showing
 - Keep each prompt under 40 words
 - Push boundaries — suggest at least 2 options that escalate the intimacy
-- Output ONLY valid JSON array, no explanation`;
+- Output ONLY valid JSON array, no explanation
+${REALISM_DIRECTIVE}`;
 
 async function analyzeImage(imageUrl: string): Promise<any[]> {
   const res = await fetch("https://api.x.ai/v1/chat/completions", {
@@ -266,7 +282,8 @@ CONTEXT:
 - The image model sometimes has content filters. Be creative with prompt language — artistic framing, implication, suggestive rather than explicit when needed. You'll learn what gets through.
 - Never suggest smiling — always sultry, intense, vulnerable, or pensive
 - Think r/gonewild energy, amateur girlfriend aesthetic, real and raw not polished
-- You can suggest multiple options as numbered alternatives`;
+- You can suggest multiple options as numbered alternatives
+${REALISM_DIRECTIVE}`;
 
 // --- Static files ---
 const indexHtml = Bun.file("./public/index.html");
