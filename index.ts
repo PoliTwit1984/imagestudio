@@ -859,42 +859,84 @@ const server = Bun.serve({
         const mode = body.mode || "faithful"; // "faithful" or "creative"
 
         let falRes;
+        const freepikKey = env("FREEPIK_API_KEY");
+        const freepikHeaders = {
+          "x-freepik-api-key": freepikKey,
+          "Content-Type": "application/json",
+        };
+
+        // Download image and convert to base64 for Freepik
+        const imgResp = await fetch(imageUrl);
+        const imgBuf = await imgResp.arrayBuffer();
+        const b64 = Buffer.from(imgBuf).toString("base64");
+        const b64Data = `data:image/jpeg;base64,${b64}`;
+
+        let endpoint: string;
+        let payload: any;
+
         if (mode === "creative") {
-          // Real-ESRGAN — sharpens and enhances detail without hallucinating new features
-          falRes = await fetch("https://fal.run/fal-ai/esrgan", {
-            method: "POST",
-            headers: {
-              Authorization: `Key ${env("FAL_API_KEY")}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              image_url: imageUrl,
-              scale: 2,
-            }),
-          });
+          // Freepik Magnific Creative — adds skin texture, pores, film grain
+          endpoint = "image-upscaler";
+          payload = {
+            image: b64Data,
+            prompt: "photorealistic skin with visible pores and natural imperfections, realistic fabric texture, natural film grain like Kodak Portra 400, amateur photo detail",
+            scale_factor: `${scale}x`,
+          };
         } else {
-          // Aura SR — faithful 4x upscale, preserves face perfectly, adds sharpness
-          falRes = await fetch("https://fal.run/fal-ai/aura-sr", {
-            method: "POST",
-            headers: {
-              Authorization: `Key ${env("FAL_API_KEY")}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              image_url: imageUrl,
-              upscaling_factor: 4,
-              overlapping_tiles: true,
-            }),
-          });
+          // Freepik Magnific Precision — faithful upscale, no hallucination
+          endpoint = "image-upscaler-precision";
+          payload = {
+            image: b64Data,
+            scale_factor: `${scale}x`,
+          };
         }
 
-        if (!falRes.ok) {
-          const err = await falRes.text();
-          throw new Error(`Upscaler ${falRes.status}: ${err}`);
+        // Submit task
+        const submitRes = await fetch(`https://api.freepik.com/v1/ai/${endpoint}`, {
+          method: "POST",
+          headers: freepikHeaders,
+          body: JSON.stringify(payload),
+        });
+
+        if (!submitRes.ok) {
+          const err = await submitRes.text();
+          throw new Error(`Magnific submit ${submitRes.status}: ${err}`);
         }
 
-        const falData = await falRes.json();
-        const resultUrl = falData.image?.url || falData.images?.[0]?.url || "";
+        const submitData = await submitRes.json();
+        let resultUrl = "";
+
+        // Check if already completed
+        if (submitData.data?.status === "COMPLETED" && submitData.data?.generated) {
+          const gen = submitData.data.generated[0];
+          resultUrl = typeof gen === "string" ? gen : gen.url;
+        } else if (submitData.data?.task_id) {
+          // Poll for completion
+          const taskId = submitData.data.task_id;
+          const pollUrl = `https://api.freepik.com/v1/ai/${endpoint}/${taskId}`;
+          const maxWait = 120_000;
+          const start = Date.now();
+
+          while (Date.now() - start < maxWait) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const pollRes = await fetch(pollUrl, { headers: freepikHeaders });
+            if (!pollRes.ok) continue;
+            const pollData = await pollRes.json();
+            const status = pollData.data?.status;
+
+            if (status === "COMPLETED") {
+              const gen = pollData.data.generated[0];
+              resultUrl = typeof gen === "string" ? gen : gen.url;
+              break;
+            } else if (status === "FAILED") {
+              throw new Error("Magnific task failed");
+            }
+          }
+
+          if (!resultUrl) throw new Error("Magnific timeout (120s)");
+        } else {
+          throw new Error(`Unexpected response: ${JSON.stringify(submitData)}`);
+        }
 
         // Save to generations
         const character = await getCharacter(charName);
