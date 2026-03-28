@@ -148,6 +148,12 @@
     position: absolute; top: -6px; right: -6px; background: #c850c0; color: white; border: none;
     width: 18px; height: 18px; border-radius: 50%; font-size: 0.7rem; cursor: pointer; line-height: 18px; text-align: center;
   }
+  .chat-quick-actions { display: flex; gap: 6px; padding: 8px 0; flex-wrap: wrap; }
+  .chat-quick {
+    background: #151515; border: 1px solid #333; color: #888; padding: 5px 12px;
+    border-radius: 16px; font-size: 0.75rem; cursor: pointer;
+  }
+  .chat-quick:hover { border-color: #c850c0; color: #c850c0; }
   .chat-input-row { display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid #222; }
   .chat-input {
     flex: 1; background: #151515; border: 1px solid #333; color: #e0e0e0; padding: 10px 14px;
@@ -494,6 +500,11 @@
       <div class="chat-image-preview" id="chat-image-preview" style="display:none;">
         <img id="chat-preview-img" src="">
         <button class="chat-remove-img" onclick="removeChatImage()">x</button>
+      </div>
+      <div class="chat-quick-actions">
+        <button class="chat-quick" onclick="chatAnalyzeRef()">Analyze Ref Image</button>
+        <button class="chat-quick" onclick="chatSuggestScenes()">Suggest Scenes</button>
+        <button class="chat-quick" onclick="chatAnalyzeGenerated()">Analyze Generated</button>
       </div>
       <div class="chat-input-row">
         <button class="chat-attach" onclick="attachCurrentImage()" title="Attach current image">img</button>
@@ -977,6 +988,31 @@ function useEditFromChat(edit) {
   document.getElementById('edit-input').value = edit;
   switchTab('generate');
   toast('Edit loaded — hit Edit');
+}
+
+function getSelectedCharRefUrl() {
+  const char = characters.find(c => c.name === selectedChar);
+  return char ? char.ref_image_url : null;
+}
+
+function chatAnalyzeRef() {
+  const refUrl = getSelectedCharRefUrl();
+  if (!refUrl) { toast('Select a character first'); return; }
+  chatAttachedImage = refUrl;
+  document.getElementById('chat-input').value = `This is the reference image for ${selectedChar}. Describe what you see — her features, vibe, energy. Then suggest 5 creative scenes that would look amazing with this person. Give me the prompts.`;
+  sendChat();
+}
+
+function chatSuggestScenes() {
+  document.getElementById('chat-input').value = `Give me 5 creative, unexpected scene ideas for ${selectedChar}. Not the usual bedroom/kitchen stuff — think cinematic, editorial, story-driven. Give me the prompts.`;
+  sendChat();
+}
+
+function chatAnalyzeGenerated() {
+  if (!currentUrl) { toast('Generate an image first'); return; }
+  chatAttachedImage = currentUrl;
+  document.getElementById('chat-input').value = `Look at this generated image. What's working? What's not? Give me 3 specific edits to make it more photorealistic, and 2 creative variations I should try. Give me the prompts.`;
+  sendChat();
 }
 
 async function sendChat() {
