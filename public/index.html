@@ -581,7 +581,8 @@
       </div>
       <img id="result-img" src="" alt="Generated">
       <div class="result-actions">
-        <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage()">Upscale 2x</button>
+        <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')">Upscale</button>
+        <button class="action-btn" id="btn-upscale-creative" onclick="upscaleImage('creative')" style="border-color:#f59e0b;color:#f59e0b;">+ Texture</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
         <button class="action-btn" onclick="copyUrl()">Copy URL</button>
@@ -1275,16 +1276,21 @@ async function editImage() {
   }
 }
 
-async function upscaleImage() {
+async function upscaleImage(mode) {
   if (!currentUrl) return;
-  const btn = document.getElementById('btn-upscale');
-  btn.disabled = true; btn.textContent = 'Upscaling...';
-  showEditStatus('Upscaling 2x with Creative Upscaler — adding skin texture, pores, fabric detail...', 'loading');
+  const btn = document.getElementById(mode === 'creative' ? 'btn-upscale-creative' : 'btn-upscale');
+  const origText = btn.textContent;
+  btn.disabled = true; btn.textContent = '...';
+
+  const label = mode === 'creative'
+    ? 'Creative upscale — adding texture (lower creativity to protect face)...'
+    : 'Faithful 4x upscale — sharpening without changing features...';
+  showEditStatus(label, 'loading');
 
   try {
     const res = await fetch('/api/upscale', {
       method: 'POST', headers: headers(),
-      body: JSON.stringify({ image_url: currentUrl, scale: 2, character: selectedChar })
+      body: JSON.stringify({ image_url: currentUrl, scale: 2, mode, character: selectedChar })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Upscale failed');
@@ -1298,7 +1304,7 @@ async function upscaleImage() {
   } catch (err) {
     showEditStatus('Upscale failed: ' + err.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = 'Upscale 2x';
+    btn.disabled = false; btn.textContent = origText;
   }
 }
 

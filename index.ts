@@ -856,24 +856,44 @@ const server = Bun.serve({
         const charName = body.character || "luna";
         if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
 
-        const falRes = await fetch("https://fal.run/fal-ai/creative-upscaler", {
-          method: "POST",
-          headers: {
-            Authorization: `Key ${env("FAL_API_KEY")}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            image_url: imageUrl,
-            scale,
-            creativity: 0.35,
-            detail: 1.1,
-            shape_preservation: 0.25,
-            prompt: "photorealistic, natural skin texture with visible pores, realistic fabric texture, natural lighting, amateur photo",
-            negative_prompt: "blurry, smooth skin, plastic, airbrushed, painting, illustration, cartoon",
-            enable_safety_checker: false,
-            override_size_limits: true,
-          }),
-        });
+        const mode = body.mode || "faithful"; // "faithful" or "creative"
+
+        let falRes;
+        if (mode === "creative") {
+          // Creative upscaler — adds texture detail but can distort faces
+          falRes = await fetch("https://fal.run/fal-ai/creative-upscaler", {
+            method: "POST",
+            headers: {
+              Authorization: `Key ${env("FAL_API_KEY")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              image_url: imageUrl,
+              scale,
+              creativity: 0.2, // lower = safer for faces
+              detail: 1.0,
+              shape_preservation: 0.5, // higher = preserve face better
+              prompt: "photorealistic skin texture, visible pores on body only, realistic fabric texture, natural lighting",
+              negative_prompt: "distorted face, different face, blurry face, smooth skin, plastic, airbrushed",
+              enable_safety_checker: false,
+              override_size_limits: true,
+            }),
+          });
+        } else {
+          // Aura SR — faithful 4x upscale, preserves face perfectly, adds sharpness
+          falRes = await fetch("https://fal.run/fal-ai/aura-sr", {
+            method: "POST",
+            headers: {
+              Authorization: `Key ${env("FAL_API_KEY")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              image_url: imageUrl,
+              upscaling_factor: 4,
+              overlapping_tiles: true,
+            }),
+          });
+        }
 
         if (!falRes.ok) {
           const err = await falRes.text();
