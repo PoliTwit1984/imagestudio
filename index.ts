@@ -899,6 +899,55 @@ const server = Bun.serve({
     }
 
     // Upscale image via fal.ai creative upscaler
+    // Face swap via fal.ai
+    if (url.pathname === "/api/face-swap" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const baseUrl = body.base_image_url || "";
+        const faceUrl = body.face_image_url || "";
+        const charName = body.character || "unknown";
+        if (!baseUrl || !faceUrl) {
+          return Response.json({ error: "base_image_url and face_image_url required" }, { status: 400 });
+        }
+
+        const res = await fetch("https://fal.run/fal-ai/face-swap", {
+          method: "POST",
+          headers: {
+            Authorization: `Key ${env("FAL_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            base_image_url: baseUrl,
+            swap_image_url: faceUrl,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`Face swap ${res.status}: ${err}`);
+        }
+
+        const data = await res.json();
+        const resultUrl = data.image?.url || "";
+
+        // Save to generations
+        const character = await getCharacter(charName);
+        await saveGeneration({
+          character_id: character?.id,
+          character_name: charName,
+          scene: "[face-swap]",
+          model: "fal-face-swap",
+          image_url: resultUrl,
+          revised_prompt: "",
+        });
+
+        return Response.json({ ok: true, url: resultUrl });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Generate Magnific prompt only (step 1 — user can edit before upscaling)
     if (url.pathname === "/api/magnific-prompt" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });

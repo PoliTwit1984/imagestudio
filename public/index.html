@@ -149,6 +149,18 @@
   .action-btn.dc { border-color: #5865f2; color: #5865f2; }
   .action-btn.sent { border-color: #50c878; color: #50c878; pointer-events: none; }
 
+  /* Face swap panel */
+  .faceswap-panel {
+    background: #15101a; border: 1px solid #a855f733; border-radius: 10px; padding: 14px; margin-bottom: 14px;
+  }
+  .faceswap-chars { display: flex; gap: 8px; flex-wrap: wrap; }
+  .faceswap-face {
+    width: 56px; height: 56px; border-radius: 50%; object-fit: cover; cursor: pointer;
+    border: 2px solid transparent; transition: border-color 0.15s;
+  }
+  .faceswap-face:hover { border-color: #a855f7; }
+  .faceswap-face.selected { border-color: #a855f7; box-shadow: 0 0 8px #a855f766; }
+
   /* Magnific editor */
   .magnific-editor {
     background: #151510; border: 1px solid #f59e0b33; border-radius: 10px; padding: 14px; margin-bottom: 14px;
@@ -602,11 +614,26 @@
       <div class="result-actions">
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')">Upscale</button>
         <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;">Magnific</button>
+        <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;">Face Swap</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
         <button class="action-btn" onclick="copyUrl()">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()">Download</button>
       </div>
+      <!-- Face swap panel -->
+      <div class="faceswap-panel" id="faceswap-panel" style="display:none;">
+        <div class="edit-label">Face Swap <span style="font-weight:400;color:#888;">— pick a face to swap onto this image</span></div>
+        <div class="faceswap-options">
+          <div class="faceswap-chars" id="faceswap-chars"></div>
+          <div style="color:#555;font-size:0.75rem;margin:8px 0;">or upload a face:</div>
+          <input type="file" id="faceswap-upload" accept="image/*" style="font-size:0.8rem;color:#888;">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="edit-btn" id="faceswap-go" onclick="runFaceSwap()" style="background:linear-gradient(135deg,#a855f7,#7c3aed);">Swap Face</button>
+          <button class="action-btn" onclick="closeFaceSwap()">Cancel</button>
+        </div>
+      </div>
+
       <!-- Magnific prompt editor -->
       <div class="magnific-editor" id="magnific-editor" style="display:none;">
         <div class="edit-label">Magnific Prompt <span style="font-weight:400;color:#888;">(edit before upscaling)</span></div>
@@ -1408,6 +1435,87 @@ async function runMagnific() {
     showEditStatus('Magnific failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Upscale with this prompt';
+  }
+}
+
+// --- Face Swap ---
+let selectedFaceUrl = '';
+
+function openFaceSwap() {
+  if (!currentUrl) { toast('Generate an image first'); return; }
+  selectedFaceUrl = '';
+  // Populate with character ref images
+  const container = document.getElementById('faceswap-chars');
+  container.innerHTML = characters.map(c =>
+    `<img class="faceswap-face" src="${c.ref_image_url}" title="${c.display_name}" onclick="selectFace('${c.ref_image_url}', this)">`
+  ).join('');
+  document.getElementById('faceswap-upload').value = '';
+  document.getElementById('faceswap-panel').style.display = 'block';
+}
+
+function closeFaceSwap() {
+  document.getElementById('faceswap-panel').style.display = 'none';
+}
+
+function selectFace(url, el) {
+  selectedFaceUrl = url;
+  document.querySelectorAll('.faceswap-face').forEach(f => f.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+async function runFaceSwap() {
+  const fileInput = document.getElementById('faceswap-upload');
+  let faceUrl = selectedFaceUrl;
+
+  // If file uploaded, upload to Supabase first
+  if (fileInput.files[0] && !faceUrl) {
+    const file = fileInput.files[0];
+    const ts = Date.now();
+    const uploadRes = await fetch(
+      `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/faces/upload-${ts}.jpeg`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${document.querySelector('meta[name="supabase-key"]')?.content || ''}`,
+          'Content-Type': file.type || 'image/jpeg',
+          'x-upsert': 'true',
+        },
+        body: await file.arrayBuffer(),
+      }
+    );
+    if (uploadRes.ok) {
+      faceUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/faces/upload-${ts}.jpeg`;
+    }
+  }
+
+  if (!faceUrl) { toast('Select a face or upload one'); return; }
+
+  const btn = document.getElementById('faceswap-go');
+  btn.disabled = true; btn.textContent = 'Swapping...';
+  showImgOverlay('Swapping face...');
+  showEditStatus('Face swap in progress...', 'loading');
+
+  try {
+    const res = await fetch('/api/face-swap', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ base_image_url: currentUrl, face_image_url: faceUrl, character: selectedChar })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Face swap failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, 'face-swap');
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    closeFaceSwap();
+    showEditStatus('Face swapped', 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Face swap failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Swap Face';
   }
 }
 
