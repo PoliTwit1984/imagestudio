@@ -169,9 +169,49 @@ async function generateImage(
   return generateGrok(character, scene, model);
 }
 
+// --- Settings (loaded from Supabase, with hardcoded fallbacks) ---
+
+const settingsCache: Record<string, { value: string; ts: number }> = {};
+const CACHE_TTL = 60_000; // 1 min cache
+
+async function getSetting(key: string, fallback: string): Promise<string> {
+  const cached = settingsCache[key];
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.value;
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/studio_settings?key=eq.${key}&select=value`,
+      { headers: supaHeaders() }
+    );
+    const rows = await res.json();
+    const val = rows[0]?.value || fallback;
+    settingsCache[key] = { value: val, ts: Date.now() };
+    return val;
+  } catch {
+    return fallback;
+  }
+}
+
+async function getAllSettings(): Promise<any[]> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/studio_settings?order=key`, {
+    headers: supaHeaders(),
+  });
+  return res.json();
+}
+
+async function updateSetting(key: string, value: string) {
+  await fetch(`${SUPABASE_URL}/rest/v1/studio_settings?key=eq.${key}`, {
+    method: "PATCH",
+    headers: supaHeaders(),
+    body: JSON.stringify({ value, updated_at: new Date().toISOString() }),
+  });
+  // Bust cache
+  delete settingsCache[key];
+}
+
 // --- Shared context for all AI prompts ---
 
-const REALISM_DIRECTIVE = `
+const REALISM_DIRECTIVE_DEFAULT = `
 CRITICAL REALISM REQUIREMENT:
 These images MUST be indistinguishable from real photographs. They need to fool people into thinking this is a real person in a real place. Every suggestion you make should reinforce this:
 - REAL LOCATIONS: Name specific real cities, neighborhoods, landmarks, venues. "Her apartment in the West Village" not "a bedroom." "A hotel bathroom at the Ace Hotel Portland" not "a bathroom." "Balcony overlooking Wicker Park, Chicago at dusk" not "a balcony."
@@ -184,7 +224,7 @@ These images MUST be indistinguishable from real photographs. They need to fool 
 
 // --- AI Prompt Enhancer (Grok reasoning) ---
 
-const ENHANCE_SYSTEM = `You are an expert prompt engineer for the Grok image generation model (grok-imagine-image). Your job is to take a simple scene description and enhance it into a photorealistic prompt.
+const ENHANCE_SYSTEM_DEFAULT = `You are an expert prompt engineer for the Grok image generation model (grok-imagine-image). Your job is to take a simple scene description and enhance it into a photorealistic prompt.
 
 CONTEXT:
 - These images are for a personal content project — intimate thirst trap photography for Instagram and private use. The goal is maximum sex appeal and raw desire. Think r/gonewild, amateur girlfriend energy, the kind of photo that makes someone stop scrolling.
@@ -208,9 +248,9 @@ TECHNIQUES TO USE:
 - Emphasize body language that conveys desire, vulnerability, or invitation — arched back, exposed neck, fabric slipping, etc.
 - NEVER include: smiling, perfect symmetry, vibrant colors, studio lighting, or "beautiful/gorgeous/stunning"
 - Always end with: "no smiling, lips slightly parted, direct eye contact"
-${REALISM_DIRECTIVE}`;
+`;
 
-const ENHANCE_EDIT_SYSTEM = `You are an expert prompt engineer for the Grok image editing model. Your job is to take a simple edit instruction and enhance it into a detailed, photorealistic edit prompt.
+const ENHANCE_EDIT_SYSTEM_DEFAULT = `You are an expert prompt engineer for the Grok image editing model. Your job is to take a simple edit instruction and enhance it into a detailed, photorealistic edit prompt.
 
 CONTEXT:
 - These are intimate, provocative images for personal use and Instagram thirst traps. Edits should push toward more sex appeal, more raw energy, more desire.
@@ -229,11 +269,15 @@ TECHNIQUES:
 - For clothing changes, describe fabric texture and how it drapes/slips/clings
 - For mood changes, describe the specific quality of light and shadow that creates that mood
 - Always maintain: "no smiling, lips slightly parted"
-${REALISM_DIRECTIVE}`;
+`;
 
 async function enhancePrompt(scene: string, character: any, mode: string = "generate"): Promise<string> {
   const isEdit = mode === "edit";
-  const systemPrompt = isEdit ? ENHANCE_EDIT_SYSTEM : ENHANCE_SYSTEM;
+  const realism = await getSetting("realism_directive", REALISM_DIRECTIVE_DEFAULT);
+  const base = isEdit
+    ? await getSetting("enhance_edit_system", ENHANCE_EDIT_SYSTEM_DEFAULT)
+    : await getSetting("enhance_system", ENHANCE_SYSTEM_DEFAULT);
+  const systemPrompt = `${base}\n\n${realism}`;
   const charContext = character?.description ? `The subject is: ${character.description}.` : "";
 
   const userMsg = isEdit
@@ -267,7 +311,7 @@ async function enhancePrompt(scene: string, character: any, mode: string = "gene
 
 // --- Vision Analysis (Grok looks at the image and suggests edits) ---
 
-const VISION_SYSTEM = `You are a photography director reviewing intimate, provocative images for a personal content project (Instagram thirst traps and private use). Your job is to suggest edits that make the image more photorealistic, more provocative, and more desirable.
+const VISION_SYSTEM_DEFAULT = `You are a photography director reviewing intimate, provocative images for a personal content project (Instagram thirst traps and private use). Your job is to suggest edits that make the image more photorealistic, more provocative, and more desirable.
 
 OUTPUT FORMAT — return a JSON array of 6-8 suggestions. Each suggestion has:
 - "label": short button label (2-4 words)
@@ -288,9 +332,13 @@ RULES:
 - Keep each prompt under 40 words
 - Push boundaries — suggest at least 2 options that escalate the intimacy
 - Output ONLY valid JSON array, no explanation
-${REALISM_DIRECTIVE}`;
+`;
 
 async function analyzeImage(imageUrl: string): Promise<any[]> {
+  const realism = await getSetting("realism_directive", REALISM_DIRECTIVE_DEFAULT);
+  const visionPrompt = await getSetting("vision_system", VISION_SYSTEM_DEFAULT);
+  const fullSystem = `${visionPrompt}\n\n${realism}`;
+
   const res = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -300,7 +348,7 @@ async function analyzeImage(imageUrl: string): Promise<any[]> {
     body: JSON.stringify({
       model: "grok-4.20-0309-reasoning",
       messages: [
-        { role: "system", content: VISION_SYSTEM },
+        { role: "system", content: fullSystem },
         {
           role: "user",
           content: [
@@ -328,7 +376,7 @@ async function analyzeImage(imageUrl: string): Promise<any[]> {
 
 // --- Chat with Grok (image creative director) ---
 
-const CHAT_SYSTEM = `You are a creative director for intimate, provocative photography. You're helping someone create AI-generated thirst trap images — for Instagram, private enjoyment, and personal fantasy. You can see images when they share them.
+const CHAT_SYSTEM_DEFAULT = `You are a creative director for intimate, provocative photography. You're helping someone create AI-generated thirst trap images — for Instagram, private enjoyment, and personal fantasy. You can see images when they share them.
 
 YOUR ROLE:
 - Help brainstorm scenes, poses, lighting, and mood that maximize sex appeal and raw desire
@@ -347,7 +395,7 @@ CONTEXT:
 - Never suggest smiling — always sultry, intense, vulnerable, or pensive
 - Think r/gonewild energy, amateur girlfriend aesthetic, real and raw not polished
 - You can suggest multiple options as numbered alternatives
-${REALISM_DIRECTIVE}`;
+`;
 
 // --- Static files ---
 const indexHtml = Bun.file("./public/index.html");
@@ -375,7 +423,30 @@ const server = Bun.serve({
 
     // --- Auth required below ---
 
-    // Enhance prompt via Grok reasoning
+    // Get all settings
+    if (url.pathname === "/api/settings" && req.method === "GET") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      const settings = await getAllSettings();
+      return Response.json(settings);
+    }
+
+    // Update a setting
+    if (url.pathname === "/api/settings" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const key = body.key;
+        const value = body.value;
+        if (!key || value === undefined) {
+          return Response.json({ error: "key and value required" }, { status: 400 });
+        }
+        await updateSetting(key, value);
+        return Response.json({ ok: true, key });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Chat with Grok
     if (url.pathname === "/api/chat" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -390,9 +461,11 @@ const server = Bun.serve({
           ? `Current character: ${character.display_name} (${character.description}).`
           : "";
 
-        // Build message array with system prompt
+        // Build message array with system prompt (loaded from Supabase)
+        const chatPrompt = await getSetting("chat_system", CHAT_SYSTEM_DEFAULT);
+        const realism = await getSetting("realism_directive", REALISM_DIRECTIVE_DEFAULT);
         const apiMessages: any[] = [
-          { role: "system", content: `${CHAT_SYSTEM}\n\n${charContext}` },
+          { role: "system", content: `${chatPrompt}\n\n${realism}\n\n${charContext}` },
         ];
 
         // Add conversation history

@@ -127,6 +127,34 @@
   .edit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .edit-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 
+  /* Settings */
+  .settings-container { display: flex; flex-direction: column; gap: 20px; }
+  .settings-loading { color: #555; padding: 40px; text-align: center; }
+  .setting-card {
+    background: #151515; border: 1px solid #222; border-radius: 12px; padding: 16px;
+  }
+  .setting-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .setting-key { font-size: 0.8rem; color: #c850c0; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  .setting-desc { font-size: 0.75rem; color: #555; margin-bottom: 8px; }
+  .setting-textarea {
+    width: 100%; background: #0a0a0a; border: 1px solid #333; color: #ddd; padding: 12px;
+    border-radius: 8px; font-size: 0.82rem; font-family: 'SF Mono', 'Fira Code', monospace;
+    resize: vertical; min-height: 120px; line-height: 1.5;
+  }
+  .setting-textarea:focus { outline: none; border-color: #c850c0; }
+  .setting-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
+  .setting-save {
+    background: linear-gradient(135deg, #c850c0, #4158d0); border: none; color: white;
+    padding: 6px 16px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  }
+  .setting-save:hover { opacity: 0.9; }
+  .setting-save:disabled { opacity: 0.4; }
+  .setting-reset {
+    background: #1a1a1a; border: 1px solid #333; color: #888; padding: 6px 16px;
+    border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+  }
+  .setting-saved { font-size: 0.75rem; color: #50c878; margin-right: auto; line-height: 28px; display: none; }
+
   /* Chat panel */
   .chat-panel {
     background: #111; border: 1px solid #222; border-radius: 12px; padding: 0;
@@ -288,6 +316,7 @@
   <div class="tabs">
     <div class="tab active" onclick="switchTab('generate')">Generate</div>
     <div class="tab" onclick="switchTab('history')">History</div>
+    <div class="tab" onclick="switchTab('settings')">Settings</div>
   </div>
 
   <div class="main-layout">
@@ -513,6 +542,13 @@
   <!-- History tab -->
   <div class="tab-content" id="tab-history">
     <div class="history" id="history-grid"></div>
+  </div>
+
+  <!-- Settings tab -->
+  <div class="tab-content" id="tab-settings">
+    <div class="settings-container" id="settings-container">
+      <div class="settings-loading">Loading settings...</div>
+    </div>
   </div>
 
   </div><!-- end main-left -->
@@ -966,11 +1002,13 @@ function downloadImg() { if (!currentUrl) return; const a = document.createEleme
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t,i) => {
-    t.classList.toggle('active', (i===0 && name==='generate') || (i===1 && name==='history'));
+    t.classList.toggle('active', (i===0 && name==='generate') || (i===1 && name==='history') || (i===2 && name==='settings'));
   });
   document.getElementById('tab-generate').classList.toggle('active', name==='generate');
   document.getElementById('tab-history').classList.toggle('active', name==='history');
+  document.getElementById('tab-settings').classList.toggle('active', name==='settings');
   if (name === 'history') loadHistory();
+  if (name === 'settings') loadSettings();
 }
 
 // --- Chat ---
@@ -1112,6 +1150,70 @@ async function sendChat() {
 }
 
 // --- Util ---
+
+// --- Settings ---
+const SETTING_LABELS = {
+  realism_directive: { label: 'Realism Directive', desc: 'Appended to ALL AI prompts. Defines what "real" means.' },
+  enhance_system: { label: 'AI Enhance (Generate)', desc: 'System prompt for the AI Enhance button on scene prompts.' },
+  enhance_edit_system: { label: 'AI Enhance (Edit)', desc: 'System prompt for the AI button on edit prompts.' },
+  vision_system: { label: 'Grok Vision Analysis', desc: 'System prompt when Grok analyzes an image and suggests edits.' },
+  chat_system: { label: 'Chat Creative Director', desc: 'System prompt for the Grok chat panel.' },
+};
+
+async function loadSettings() {
+  const container = document.getElementById('settings-container');
+  try {
+    const res = await fetch('/api/settings', { headers: headers() });
+    const settings = await res.json();
+    if (!Array.isArray(settings)) throw new Error('Failed to load');
+
+    container.innerHTML = settings.map(s => {
+      const meta = SETTING_LABELS[s.key] || { label: s.key, desc: s.description || '' };
+      return `
+        <div class="setting-card" data-key="${s.key}">
+          <div class="setting-header">
+            <span class="setting-key">${meta.label}</span>
+          </div>
+          <div class="setting-desc">${meta.desc}</div>
+          <textarea class="setting-textarea" id="setting-${s.key}" rows="8">${escHtml(s.value)}</textarea>
+          <div class="setting-actions">
+            <span class="setting-saved" id="saved-${s.key}">Saved</span>
+            <button class="setting-save" onclick="saveSetting('${s.key}')">Save</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = '<div style="color:#e08080;padding:20px;">Failed to load settings</div>';
+  }
+}
+
+function escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function saveSetting(key) {
+  const textarea = document.getElementById('setting-' + key);
+  const value = textarea.value;
+  const savedEl = document.getElementById('saved-' + key);
+
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ key, value })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      savedEl.style.display = 'inline';
+      setTimeout(() => savedEl.style.display = 'none', 2000);
+      toast(`${key} saved`);
+    } else {
+      toast('Save failed: ' + (data.error || ''));
+    }
+  } catch (err) {
+    toast('Save failed');
+  }
+}
 
 function toast(msg) { const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2000); }
 
