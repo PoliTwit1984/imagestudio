@@ -588,34 +588,14 @@ const server = Bun.serve({
         let revisedPrompt = "";
 
         if (engine === "fal") {
-          // fal.ai Flux Kontext LoRA — image editing with LoRA consistency, zero filter
-          const character = await getCharacter(charName);
-          let loraUrl = character?.lora_url || "";
-          let loraScale = character?.lora_scale || 0.9;
-
-          // LoRA override from dropdown
-          if (body.lora) {
-            const lora = await getLoraByName(body.lora);
-            if (lora) { loraUrl = lora.url; loraScale = lora.scale; }
-          }
-
+          // bria/fibo-edit — high-quality image editing via natural language instructions
           const falBody: any = {
             image_url: sourceUrl,
-            prompt: `${editPrompt}, ${REALISM_TAGS}, no smiling, lips parted`,
-            num_inference_steps: 30,
-            guidance_scale: 2.5,
-            num_images: 1,
-            enable_safety_checker: false,
-            output_format: "jpeg",
-            resolution_mode: "match_input",
+            instruction: editPrompt,
+            steps_num: 30,
           };
 
-          // Add LoRA if character has one
-          if (loraUrl) {
-            falBody.loras = [{ path: loraUrl, scale: loraScale }];
-          }
-
-          const falRes = await fetch("https://fal.run/fal-ai/flux-kontext-lora", {
+          const falRes = await fetch("https://fal.run/bria/fibo-edit/edit", {
             method: "POST",
             headers: {
               Authorization: `Key ${env("FAL_API_KEY")}`,
@@ -626,11 +606,11 @@ const server = Bun.serve({
 
           if (!falRes.ok) {
             const err = await falRes.text();
-            throw new Error(`fal.ai Kontext ${falRes.status}: ${err}`);
+            throw new Error(`fal.ai Bria Edit ${falRes.status}: ${err}`);
           }
 
           const falData = await falRes.json();
-          resultUrl = falData.images[0].url;
+          resultUrl = falData.images?.[0]?.url || falData.image?.url || "";
         } else {
           // Grok img2img edit
           const grokRes = await fetch("https://api.x.ai/v1/images/edits", {
