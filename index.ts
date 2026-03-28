@@ -236,6 +236,26 @@ async function analyzeImage(imageUrl: string): Promise<any[]> {
   return JSON.parse(jsonMatch[0]);
 }
 
+// --- Chat with Grok (image creative director) ---
+
+const CHAT_SYSTEM = `You are a creative photography director helping someone create and refine AI-generated images. You can see images when they share them.
+
+YOUR ROLE:
+- Help brainstorm scenes, poses, lighting, and mood
+- Suggest specific prompts they can use to generate or edit images
+- When you suggest a prompt, wrap it in a special tag so the UI can make it clickable: <prompt>your suggested prompt here</prompt>
+- When you suggest an edit to an existing image, use: <edit>your edit instruction here</edit>
+- Keep responses conversational and concise (2-4 sentences max unless they ask for detail)
+- You know the Grok image model well — give specific, actionable suggestions
+- Reference real photography techniques, film stocks, lighting setups
+- Be creative and push boundaries — this is a personal project, not commercial
+
+CONTEXT:
+- Images are generated via Grok img2img with a face-locked reference photo
+- The prompt should describe SCENE, CLOTHING, LIGHTING, MOOD — not the person's face/body
+- Never suggest smiling — always sultry, intense, or pensive
+- You can suggest multiple options as numbered alternatives`;
+
 // --- Static files ---
 const indexHtml = Bun.file("./public/index.html");
 
@@ -263,6 +283,67 @@ const server = Bun.serve({
     // --- Auth required below ---
 
     // Enhance prompt via Grok reasoning
+    // Chat with Grok
+    if (url.pathname === "/api/chat" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const messages = body.messages || [];
+        const imageUrl = body.image_url || null;
+        const charName = body.character || "luna";
+
+        const character = await getCharacter(charName);
+        const charContext = character?.description
+          ? `Current character: ${character.display_name} (${character.description}).`
+          : "";
+
+        // Build message array with system prompt
+        const apiMessages: any[] = [
+          { role: "system", content: `${CHAT_SYSTEM}\n\n${charContext}` },
+        ];
+
+        // Add conversation history
+        for (const msg of messages) {
+          if (msg.role === "user" && msg.image) {
+            // Message with image attachment
+            apiMessages.push({
+              role: "user",
+              content: [
+                { type: "image_url", image_url: { url: msg.image } },
+                { type: "text", text: msg.content },
+              ],
+            });
+          } else {
+            apiMessages.push({ role: msg.role, content: msg.content });
+          }
+        }
+
+        const res = await fetch("https://api.x.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env("XAI_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "grok-4.20-0309-reasoning",
+            messages: apiMessages,
+            temperature: 0.8,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`Chat failed: ${err}`);
+        }
+
+        const data = await res.json();
+        const reply = data.choices[0].message.content;
+        return Response.json({ ok: true, reply });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Vision analysis — Grok looks at the image and suggests edits
     if (url.pathname === "/api/analyze" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });

@@ -114,6 +114,60 @@
   .edit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .edit-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 
+  /* Chat */
+  .chat-container { display: flex; flex-direction: column; height: 70vh; }
+  .chat-messages {
+    flex: 1; overflow-y: auto; padding: 12px 0; display: flex; flex-direction: column; gap: 12px;
+  }
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .chat-msg {
+    max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 0.9rem; line-height: 1.5;
+    word-wrap: break-word;
+  }
+  .chat-msg.user { align-self: flex-end; background: #1a2540; color: #c0d0f0; border-bottom-right-radius: 4px; }
+  .chat-msg.assistant { align-self: flex-start; background: #1a1a1a; color: #ddd; border-bottom-left-radius: 4px; }
+  .chat-msg .chat-prompt-btn {
+    display: inline-block; background: #1a1030; border: 1px solid #c850c0; color: #c850c0;
+    padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; margin: 4px 2px;
+    transition: background 0.15s;
+  }
+  .chat-msg .chat-prompt-btn:hover { background: #2a1840; }
+  .chat-msg .chat-edit-btn {
+    display: inline-block; background: #0a2018; border: 1px solid #10b981; color: #10b981;
+    padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; margin: 4px 2px;
+    transition: background 0.15s;
+  }
+  .chat-msg .chat-edit-btn:hover { background: #0a3020; }
+  .chat-msg img { max-width: 200px; border-radius: 8px; margin-top: 6px; }
+  .chat-image-preview {
+    position: relative; display: inline-block; margin: 8px 0;
+  }
+  .chat-image-preview img { height: 60px; border-radius: 6px; border: 1px solid #c850c0; }
+  .chat-remove-img {
+    position: absolute; top: -6px; right: -6px; background: #c850c0; color: white; border: none;
+    width: 18px; height: 18px; border-radius: 50%; font-size: 0.7rem; cursor: pointer; line-height: 18px; text-align: center;
+  }
+  .chat-input-row { display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid #222; }
+  .chat-input {
+    flex: 1; background: #151515; border: 1px solid #333; color: #e0e0e0; padding: 10px 14px;
+    border-radius: 8px; font-size: 0.9rem; font-family: inherit;
+  }
+  .chat-input:focus { outline: none; border-color: #c850c0; }
+  .chat-input::placeholder { color: #555; }
+  .chat-attach {
+    background: #1a1a1a; border: 1px solid #333; color: #888; padding: 8px 12px;
+    border-radius: 8px; font-size: 0.8rem; cursor: pointer; font-weight: 600;
+  }
+  .chat-attach:hover { border-color: #c850c0; color: #c850c0; }
+  .chat-attach.attached { border-color: #c850c0; color: #c850c0; }
+  .chat-send {
+    background: linear-gradient(135deg, #c850c0, #4158d0); border: none; color: white;
+    padding: 10px 18px; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+  }
+  .chat-send:hover { opacity: 0.9; }
+  .chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
   /* Analyze button */
   .analyze-btn {
     background: linear-gradient(135deg, #10b981, #059669); border: none; color: white; padding: 8px 16px;
@@ -207,6 +261,7 @@
   <div class="tabs">
     <div class="tab active" onclick="switchTab('generate')">Generate</div>
     <div class="tab" onclick="switchTab('history')">History</div>
+    <div class="tab" onclick="switchTab('chat')">Chat</div>
   </div>
 
   <!-- Generate tab -->
@@ -428,6 +483,24 @@
   <!-- History tab -->
   <div class="tab-content" id="tab-history">
     <div class="history" id="history-grid"></div>
+  </div>
+
+  <!-- Chat tab -->
+  <div class="tab-content" id="tab-chat">
+    <div class="chat-container">
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-msg assistant">What are we creating today? I can help brainstorm scenes, suggest prompts, or refine what you've already generated. If you have an image, share it and I'll give you ideas.</div>
+      </div>
+      <div class="chat-image-preview" id="chat-image-preview" style="display:none;">
+        <img id="chat-preview-img" src="">
+        <button class="chat-remove-img" onclick="removeChatImage()">x</button>
+      </div>
+      <div class="chat-input-row">
+        <button class="chat-attach" onclick="attachCurrentImage()" title="Attach current image">img</button>
+        <input type="text" id="chat-input" class="chat-input" placeholder="Talk to Grok about what you want to create...">
+        <button class="chat-send" id="chat-send" onclick="sendChat()">Send</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -831,10 +904,130 @@ function downloadImg() { if (!currentUrl) return; const a = document.createEleme
 // --- Tabs ---
 
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (i===0 && name==='generate') || (i===1 && name==='history')));
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', (i===0 && name==='generate') || (i===1 && name==='history') || (i===2 && name==='chat'));
+  });
   document.getElementById('tab-generate').classList.toggle('active', name==='generate');
   document.getElementById('tab-history').classList.toggle('active', name==='history');
+  document.getElementById('tab-chat').classList.toggle('active', name==='chat');
   if (name === 'history') loadHistory();
+  if (name === 'chat') {
+    document.getElementById('chat-input').focus();
+    scrollChat();
+  }
+}
+
+// --- Chat ---
+let chatHistory = []; // {role, content, image?}
+let chatAttachedImage = null;
+
+function scrollChat() {
+  const el = document.getElementById('chat-messages');
+  el.scrollTop = el.scrollHeight;
+}
+
+function attachCurrentImage() {
+  if (!currentUrl) { toast('No image to attach'); return; }
+  chatAttachedImage = currentUrl;
+  document.getElementById('chat-image-preview').style.display = 'inline-block';
+  document.getElementById('chat-preview-img').src = currentUrl;
+  document.querySelector('.chat-attach').classList.add('attached');
+}
+
+function removeChatImage() {
+  chatAttachedImage = null;
+  document.getElementById('chat-image-preview').style.display = 'none';
+  document.querySelector('.chat-attach').classList.remove('attached');
+}
+
+function renderChatMsg(role, content, image) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+
+  if (role === 'user' && image) {
+    div.innerHTML = `<img src="${image}"><br>`;
+  }
+
+  if (role === 'assistant') {
+    // Parse <prompt> and <edit> tags into clickable buttons
+    let html = content
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/&lt;prompt&gt;([\s\S]*?)&lt;\/prompt&gt;/g, (_, p) =>
+        `<span class="chat-prompt-btn" onclick="usePromptFromChat('${p.replace(/'/g, "\\'")}')">${p}</span>`)
+      .replace(/&lt;edit&gt;([\s\S]*?)&lt;\/edit&gt;/g, (_, e) =>
+        `<span class="chat-edit-btn" onclick="useEditFromChat('${e.replace(/'/g, "\\'")}')">${e}</span>`)
+      .replace(/\n/g, '<br>');
+    div.innerHTML += html;
+  } else {
+    div.innerHTML += content.replace(/\n/g, '<br>');
+  }
+
+  container.appendChild(div);
+  scrollChat();
+}
+
+function usePromptFromChat(prompt) {
+  document.getElementById('scene').value = prompt;
+  switchTab('generate');
+  toast('Prompt loaded — hit Generate');
+}
+
+function useEditFromChat(edit) {
+  document.getElementById('edit-input').value = edit;
+  switchTab('generate');
+  toast('Edit loaded — hit Edit');
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const btn = document.getElementById('chat-send');
+  btn.disabled = true;
+
+  // Add user message to history
+  const userMsg = { role: 'user', content: text };
+  if (chatAttachedImage) userMsg.image = chatAttachedImage;
+  chatHistory.push(userMsg);
+
+  renderChatMsg('user', text, chatAttachedImage);
+  input.value = '';
+  removeChatImage();
+
+  // Show typing indicator
+  const typingDiv = document.createElement('div');
+  typingDiv.className = 'chat-msg assistant';
+  typingDiv.id = 'chat-typing';
+  typingDiv.textContent = 'Thinking...';
+  document.getElementById('chat-messages').appendChild(typingDiv);
+  scrollChat();
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        messages: chatHistory,
+        image_url: currentUrl,
+        character: selectedChar
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Chat failed');
+
+    // Remove typing indicator
+    document.getElementById('chat-typing')?.remove();
+
+    chatHistory.push({ role: 'assistant', content: data.reply });
+    renderChatMsg('assistant', data.reply);
+  } catch (err) {
+    document.getElementById('chat-typing')?.remove();
+    renderChatMsg('assistant', 'Error: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
 }
 
 // --- Util ---
@@ -847,6 +1040,10 @@ document.getElementById('scene').addEventListener('keydown', e => {
 
 document.getElementById('edit-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') editImage();
+});
+
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
 </script>
 </body>
