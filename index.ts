@@ -208,7 +208,7 @@ async function analyzeImage(imageUrl: string): Promise<any[]> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "grok-4-1-fast-non-reasoning",
+      model: "grok-4.20-0309-reasoning",
       messages: [
         { role: "system", content: VISION_SYSTEM },
         {
