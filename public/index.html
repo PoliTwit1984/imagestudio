@@ -136,6 +136,7 @@
     border-radius: 8px; font-size: 0.85rem; cursor: pointer; transition: all 0.15s;
   }
   .action-btn:hover { background: #252525; border-color: #555; }
+  .action-btn.upscale { border-color: #f59e0b; color: #f59e0b; }
   .action-btn.tg { border-color: #0088cc; color: #0088cc; }
   .action-btn.dc { border-color: #5865f2; color: #5865f2; }
   .action-btn.sent { border-color: #50c878; color: #50c878; pointer-events: none; }
@@ -580,6 +581,7 @@
       </div>
       <img id="result-img" src="" alt="Generated">
       <div class="result-actions">
+        <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage()">Upscale 2x</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
         <button class="action-btn" onclick="copyUrl()">Copy URL</button>
@@ -1270,6 +1272,33 @@ async function editImage() {
     showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Edit';
+  }
+}
+
+async function upscaleImage() {
+  if (!currentUrl) return;
+  const btn = document.getElementById('btn-upscale');
+  btn.disabled = true; btn.textContent = 'Upscaling...';
+  showEditStatus('Upscaling 2x with Creative Upscaler — adding skin texture, pores, fabric detail...', 'loading');
+
+  try {
+    const res = await fetch('/api/upscale', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, scale: 2, character: selectedChar })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Upscale failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `upscale ${data.scale}x`);
+    resetSendBtns();
+    loadHistory();
+    showEditStatus(`Upscaled ${data.scale}x — enhanced texture and detail`, 'success');
+  } catch (err) {
+    showEditStatus('Upscale failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Upscale 2x';
   }
 }
 

@@ -846,6 +846,59 @@ const server = Bun.serve({
       }
     }
 
+    // Upscale image via fal.ai creative upscaler
+    if (url.pathname === "/api/upscale" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const imageUrl = body.image_url || "";
+        const scale = body.scale || 2; // 2x or 4x
+        const charName = body.character || "luna";
+        if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
+
+        const falRes = await fetch("https://fal.run/fal-ai/creative-upscaler", {
+          method: "POST",
+          headers: {
+            Authorization: `Key ${env("FAL_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            image_url: imageUrl,
+            scale,
+            creativity: 0.35,
+            detail: 1.1,
+            shape_preservation: 0.25,
+            prompt: "photorealistic, natural skin texture with visible pores, realistic fabric texture, natural lighting, amateur photo",
+            negative_prompt: "blurry, smooth skin, plastic, airbrushed, painting, illustration, cartoon",
+            enable_safety_checker: false,
+          }),
+        });
+
+        if (!falRes.ok) {
+          const err = await falRes.text();
+          throw new Error(`Upscaler ${falRes.status}: ${err}`);
+        }
+
+        const falData = await falRes.json();
+        const resultUrl = falData.image?.url || falData.images?.[0]?.url || "";
+
+        // Save to generations
+        const character = await getCharacter(charName);
+        await saveGeneration({
+          character_id: character?.id,
+          character_name: charName,
+          scene: `[upscale ${scale}x]`,
+          model: "creative-upscaler",
+          image_url: resultUrl,
+          revised_prompt: "",
+        });
+
+        return Response.json({ ok: true, url: resultUrl, scale });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Send to Telegram
     if (url.pathname === "/api/send/telegram" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
