@@ -169,6 +169,32 @@
   .edit-status.loading { background: #1a1a2a; border: 1px solid #4158d0; color: #818cf8; }
   .edit-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 
+  /* Lightbox */
+  .lightbox {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.95); z-index: 200; align-items: center; justify-content: center;
+    flex-direction: column;
+  }
+  .lightbox.active { display: flex; }
+  .lb-img { max-width: 90vw; max-height: 75vh; border-radius: 8px; object-fit: contain; }
+  .lb-close {
+    position: absolute; top: 16px; right: 20px; background: none; border: none;
+    color: #888; font-size: 2rem; cursor: pointer; z-index: 210;
+  }
+  .lb-close:hover { color: #fff; }
+  .lb-arrow {
+    position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.08);
+    border: none; color: #ccc; font-size: 3rem; cursor: pointer; padding: 8px 16px;
+    border-radius: 8px; z-index: 210;
+  }
+  .lb-arrow:hover { background: rgba(255,255,255,0.15); color: #fff; }
+  .lb-arrow:disabled { opacity: 0.2; cursor: default; }
+  .lb-prev { left: 16px; }
+  .lb-next { right: 16px; }
+  .lb-info { color: #888; font-size: 0.82rem; margin-top: 12px; max-width: 600px; text-align: center; }
+  .lb-counter { color: #555; font-size: 0.75rem; margin-top: 4px; }
+  .lb-actions { display: flex; gap: 8px; margin-top: 12px; }
+
   /* Settings */
   .settings-container { display: flex; flex-direction: column; gap: 20px; }
   .settings-loading { color: #555; padding: 40px; text-align: center; }
@@ -658,6 +684,21 @@
   </div>
 </div>
 
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox(event)">
+  <button class="lb-close" onclick="closeLightbox()">&times;</button>
+  <button class="lb-arrow lb-prev" onclick="event.stopPropagation(); lbPrev()">&#8249;</button>
+  <img class="lb-img" id="lb-img" src="" onclick="event.stopPropagation()">
+  <button class="lb-arrow lb-next" onclick="event.stopPropagation(); lbNext()">&#8250;</button>
+  <div class="lb-info" id="lb-info"></div>
+  <div class="lb-counter" id="lb-counter"></div>
+  <div class="lb-actions">
+    <button class="action-btn" onclick="event.stopPropagation(); lbEdit()">Edit This</button>
+    <button class="action-btn" onclick="event.stopPropagation(); lbCopy()">Copy URL</button>
+    <button class="action-btn" onclick="event.stopPropagation(); lbDownload()">Download</button>
+  </div>
+</div>
+
 <!-- Edit character modal -->
 <div class="modal-overlay" id="modal-edit-char">
   <div class="modal">
@@ -1065,11 +1106,14 @@ async function loadHistory() {
   } catch (e) {}
 }
 
+let historyGens = [];
+
 function renderHistory(gens) {
+  historyGens = gens;
   const grid = document.getElementById('history-grid');
   if (!gens.length) { grid.innerHTML = '<div style="color:#555;padding:40px;text-align:center">No generations yet</div>'; return; }
-  grid.innerHTML = gens.map(g => `
-    <div class="hist-item" onclick="loadGen('${g.image_url}','${esc(g.scene)}','${g.character_name}')">
+  grid.innerHTML = gens.map((g, i) => `
+    <div class="hist-item" onclick="openLightbox(${i})">
       <img src="${g.image_url}" alt="${esc(g.scene)}" title="${g.character_name}: ${esc(g.scene)}">
       <div class="hist-char">${g.character_name}</div>
     </div>
@@ -1384,6 +1428,59 @@ async function sendChat() {
 }
 
 // --- Util ---
+
+// --- Lightbox ---
+let lbIndex = 0;
+
+function openLightbox(idx) {
+  lbIndex = idx;
+  renderLightbox();
+  document.getElementById('lightbox').classList.add('active');
+}
+
+function closeLightbox(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('lightbox').classList.remove('active');
+}
+
+function renderLightbox() {
+  const g = historyGens[lbIndex];
+  if (!g) return;
+  document.getElementById('lb-img').src = g.image_url;
+  document.getElementById('lb-info').textContent = `${g.character_name}: ${g.scene}`;
+  document.getElementById('lb-counter').textContent = `${lbIndex + 1} / ${historyGens.length}`;
+  document.querySelector('.lb-prev').disabled = lbIndex <= 0;
+  document.querySelector('.lb-next').disabled = lbIndex >= historyGens.length - 1;
+}
+
+function lbPrev() { if (lbIndex > 0) { lbIndex--; renderLightbox(); } }
+function lbNext() { if (lbIndex < historyGens.length - 1) { lbIndex++; renderLightbox(); } }
+
+function lbEdit() {
+  const g = historyGens[lbIndex];
+  closeLightbox();
+  loadGen(g.image_url, g.scene, g.character_name);
+}
+
+function lbCopy() {
+  const g = historyGens[lbIndex];
+  navigator.clipboard.writeText(g.image_url);
+  toast('URL copied');
+}
+
+function lbDownload() {
+  const g = historyGens[lbIndex];
+  const a = document.createElement('a');
+  a.href = g.image_url; a.download = `${g.character_name}-${Date.now()}.jpeg`; a.target = '_blank'; a.click();
+}
+
+// Keyboard nav for lightbox
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('lightbox').classList.contains('active')) return;
+  if (e.key === 'ArrowLeft') lbPrev();
+  else if (e.key === 'ArrowRight') lbNext();
+  else if (e.key === 'Escape') document.getElementById('lightbox').classList.remove('active');
+});
 
 // --- Settings ---
 const SETTING_LABELS = {
