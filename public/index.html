@@ -129,7 +129,15 @@
   .version-thumb.active { border-color: #c850c0; opacity: 1; }
   .version-label { position: absolute; bottom: 1px; right: 1px; background: rgba(0,0,0,0.7); color: #aaa; font-size: 0.5rem; padding: 1px 3px; border-radius: 2px; }
 
-  .result img { width: 100%; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
+  .result-img-wrap { position: relative; margin-bottom: 12px; }
+  .result-img-wrap img { width: 100%; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); display: block; }
+  .img-overlay {
+    display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7); border-radius: 12px;
+    flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  }
+  .img-overlay.active { display: flex; }
+  .img-overlay-text { color: #c850c0; font-size: 0.9rem; font-weight: 600; }
   .result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .action-btn {
     background: #1a1a1a; border: 1px solid #333; color: #ccc; padding: 8px 16px;
@@ -579,10 +587,16 @@
         <div class="version-thumbs" id="version-thumbs"></div>
         <button class="version-btn" id="redo-btn" onclick="redoEdit()" title="Redo">Redo &#8594;</button>
       </div>
-      <img id="result-img" src="" alt="Generated">
+      <div class="result-img-wrap">
+        <img id="result-img" src="" alt="Generated">
+        <div class="img-overlay" id="img-overlay">
+          <div class="spinner"></div>
+          <div class="img-overlay-text" id="img-overlay-text">Processing...</div>
+        </div>
+      </div>
       <div class="result-actions">
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')">Upscale</button>
-        <button class="action-btn" id="btn-upscale-creative" onclick="upscaleImage('creative')" style="border-color:#f59e0b;color:#f59e0b;">+ Texture</button>
+        <button class="action-btn" id="btn-upscale-creative" onclick="upscaleImage('creative')" style="border-color:#f59e0b;color:#f59e0b;">Sharpen</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
         <button class="action-btn" onclick="copyUrl()">Copy URL</button>
@@ -1228,6 +1242,15 @@ async function enhanceEdit() {
   }
 }
 
+function showImgOverlay(msg) {
+  const el = document.getElementById('img-overlay');
+  document.getElementById('img-overlay-text').textContent = msg;
+  el.classList.add('active');
+}
+function hideImgOverlay() {
+  document.getElementById('img-overlay').classList.remove('active');
+}
+
 function showEditStatus(msg, type) {
   const el = document.getElementById('edit-status');
   el.textContent = msg;
@@ -1244,6 +1267,7 @@ async function editImage() {
   const editEngine = document.getElementById('edit-engine-select').value;
   const btn = document.getElementById('edit-btn');
   btn.disabled = true; btn.textContent = 'Editing...';
+  showImgOverlay(`Editing with ${editEngine.toUpperCase()}...`);
   showEditStatus(`Editing with ${editEngine.toUpperCase()}... "${editPrompt.slice(0, 60)}"`, 'loading');
 
   try {
@@ -1268,8 +1292,10 @@ async function editImage() {
     document.getElementById('edit-input').value = '';
     resetSendBtns();
     loadHistory();
-    showEditStatus(`Edit applied via ${(data.engine || currentEngine).toUpperCase()} (v${versionIndex + 1}/${versionStack.length})`, 'success');
+    hideImgOverlay();
+    showEditStatus(`Edit applied via ${(data.engine || editEngine).toUpperCase()} (v${versionIndex + 1}/${versionStack.length})`, 'success');
   } catch (err) {
+    hideImgOverlay();
     showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Edit';
@@ -1282,9 +1308,8 @@ async function upscaleImage(mode) {
   const origText = btn.textContent;
   btn.disabled = true; btn.textContent = '...';
 
-  const label = mode === 'creative'
-    ? 'Creative upscale — adding texture (lower creativity to protect face)...'
-    : 'Faithful 4x upscale — sharpening without changing features...';
+  const label = mode === 'creative' ? 'Adding texture...' : 'Upscaling 4x...';
+  showImgOverlay(label);
   showEditStatus(label, 'loading');
 
   try {
@@ -1300,8 +1325,10 @@ async function upscaleImage(mode) {
     pushVersion(currentUrl, `upscale ${data.scale}x`);
     resetSendBtns();
     loadHistory();
-    showEditStatus(`Upscaled ${data.scale}x — enhanced texture and detail`, 'success');
+    hideImgOverlay();
+    showEditStatus(`Upscaled — enhanced texture and detail`, 'success');
   } catch (err) {
+    hideImgOverlay();
     showEditStatus('Upscale failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = origText;
