@@ -477,33 +477,78 @@ const server = Bun.serve({
         const sourceUrl = body.source_url || "";
         const editPrompt = body.edit_prompt || "";
         const model = body.model || "pro";
+        const engine = body.engine || "grok";
         const charName = body.character || "luna";
         if (!sourceUrl || !editPrompt) {
           return Response.json({ error: "source_url and edit_prompt required" }, { status: 400 });
         }
 
-        const res = await fetch("https://api.x.ai/v1/images/edits", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${env("XAI_API_KEY")}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: model === "basic" ? "grok-imagine-image" : "grok-imagine-image-pro",
-            prompt: `same person same scene but ${editPrompt}, ${REALISM_TAGS}, no smiling, lips parted`,
-            image: { url: sourceUrl, type: "image_url" },
-            n: 1,
-          }),
-        });
+        let resultUrl: string;
+        let revisedPrompt = "";
 
-        if (!res.ok) {
-          const err = await res.text();
-          throw new Error(`Grok API ${res.status}: ${err}`);
+        if (engine === "fal") {
+          // fal.ai Flux Kontext LoRA — image editing with LoRA consistency, zero filter
+          const character = await getCharacter(charName);
+          const loraUrl = character?.lora_url || "";
+          const loraScale = character?.lora_scale || 0.9;
+
+          const falBody: any = {
+            image_url: sourceUrl,
+            prompt: `${editPrompt}, ${REALISM_TAGS}, no smiling, lips parted`,
+            num_inference_steps: 30,
+            guidance_scale: 2.5,
+            num_images: 1,
+            enable_safety_checker: false,
+            output_format: "jpeg",
+            resolution_mode: "match_input",
+          };
+
+          // Add LoRA if character has one
+          if (loraUrl) {
+            falBody.loras = [{ path: loraUrl, scale: loraScale }];
+          }
+
+          const falRes = await fetch("https://fal.run/fal-ai/flux-kontext-lora", {
+            method: "POST",
+            headers: {
+              Authorization: `Key ${env("FAL_API_KEY")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(falBody),
+          });
+
+          if (!falRes.ok) {
+            const err = await falRes.text();
+            throw new Error(`fal.ai Kontext ${falRes.status}: ${err}`);
+          }
+
+          const falData = await falRes.json();
+          resultUrl = falData.images[0].url;
+        } else {
+          // Grok img2img edit
+          const grokRes = await fetch("https://api.x.ai/v1/images/edits", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${env("XAI_API_KEY")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: model === "basic" ? "grok-imagine-image" : "grok-imagine-image-pro",
+              prompt: `same person same scene but ${editPrompt}, ${REALISM_TAGS}, no smiling, lips parted`,
+              image: { url: sourceUrl, type: "image_url" },
+              n: 1,
+            }),
+          });
+
+          if (!grokRes.ok) {
+            const err = await grokRes.text();
+            throw new Error(`Grok API ${grokRes.status}: ${err}`);
+          }
+
+          const grokData = await grokRes.json();
+          resultUrl = grokData.data[0].url;
+          revisedPrompt = grokData.data[0].revised_prompt || "";
         }
-
-        const data = await res.json();
-        const resultUrl = data.data[0].url;
-        const revisedPrompt = data.data[0].revised_prompt || "";
 
         // Save as new generation
         const character = await getCharacter(charName);
@@ -511,12 +556,12 @@ const server = Bun.serve({
           character_id: character?.id,
           character_name: charName,
           scene: `[edit] ${editPrompt}`,
-          model,
+          model: `${engine}/${model}`,
           image_url: resultUrl,
           revised_prompt: revisedPrompt,
         });
 
-        return Response.json({ ok: true, url: resultUrl, revisedPrompt });
+        return Response.json({ ok: true, url: resultUrl, revisedPrompt, engine });
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
       }
