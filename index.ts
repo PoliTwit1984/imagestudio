@@ -200,6 +200,59 @@ const server = Bun.serve({
       }
     }
 
+    // Edit existing image (img2img with generated result as new ref)
+    if (url.pathname === "/api/edit" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const sourceUrl = body.source_url || "";
+        const editPrompt = body.edit_prompt || "";
+        const model = body.model || "pro";
+        const charName = body.character || "luna";
+        if (!sourceUrl || !editPrompt) {
+          return Response.json({ error: "source_url and edit_prompt required" }, { status: 400 });
+        }
+
+        const res = await fetch("https://api.x.ai/v1/images/edits", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env("XAI_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: model === "basic" ? "grok-imagine-image" : "grok-imagine-image-pro",
+            prompt: `same person same scene but ${editPrompt}, ${REALISM_TAGS}, no smiling, lips parted`,
+            image: { url: sourceUrl, type: "image_url" },
+            n: 1,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`Grok API ${res.status}: ${err}`);
+        }
+
+        const data = await res.json();
+        const resultUrl = data.data[0].url;
+        const revisedPrompt = data.data[0].revised_prompt || "";
+
+        // Save as new generation
+        const character = await getCharacter(charName);
+        await saveGeneration({
+          character_id: character?.id,
+          character_name: charName,
+          scene: `[edit] ${editPrompt}`,
+          model,
+          image_url: resultUrl,
+          revised_prompt: revisedPrompt,
+        });
+
+        return Response.json({ ok: true, url: resultUrl, revisedPrompt });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Generate image
     if (url.pathname === "/api/generate" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
