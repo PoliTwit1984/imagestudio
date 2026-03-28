@@ -149,6 +149,11 @@
   .action-btn.dc { border-color: #5865f2; color: #5865f2; }
   .action-btn.sent { border-color: #50c878; color: #50c878; pointer-events: none; }
 
+  /* Magnific editor */
+  .magnific-editor {
+    background: #151510; border: 1px solid #f59e0b33; border-radius: 10px; padding: 14px; margin-bottom: 14px;
+  }
+
   /* Edit section */
   .edit-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid #222; }
   .edit-label { font-size: 0.75rem; color: #c850c0; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; font-weight: 600; }
@@ -596,12 +601,22 @@
       </div>
       <div class="result-actions">
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')">Upscale</button>
-        <button class="action-btn" id="btn-upscale-creative" onclick="upscaleImage('creative')" style="border-color:#f59e0b;color:#f59e0b;">Magnific</button>
+        <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;">Magnific</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
         <button class="action-btn" onclick="copyUrl()">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()">Download</button>
       </div>
+      <!-- Magnific prompt editor -->
+      <div class="magnific-editor" id="magnific-editor" style="display:none;">
+        <div class="edit-label">Magnific Prompt <span style="font-weight:400;color:#888;">(edit before upscaling)</span></div>
+        <textarea class="setting-textarea" id="magnific-prompt-input" rows="4" style="min-height:60px;font-size:0.82rem;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="edit-btn" id="magnific-go" onclick="runMagnific()" style="background:linear-gradient(135deg,#f59e0b,#d97706);">Upscale with this prompt</button>
+          <button class="action-btn" onclick="closeMagnificEditor()">Cancel</button>
+        </div>
+      </div>
+
       <div class="edit-section">
         <div class="edit-label">Edit this image</div>
         <div class="edit-row">
@@ -1304,35 +1319,95 @@ async function editImage() {
 
 async function upscaleImage(mode) {
   if (!currentUrl) return;
-  const btn = document.getElementById(mode === 'creative' ? 'btn-upscale-creative' : 'btn-upscale');
+  const btn = document.getElementById('btn-upscale');
   const origText = btn.textContent;
   btn.disabled = true; btn.textContent = '...';
-
-  const label = mode === 'creative' ? 'Grok analyzing image → Magnific upscaling...' : 'Upscaling...';
-  showImgOverlay(label);
-  showEditStatus(label, 'loading');
+  showImgOverlay('Upscaling...');
+  showEditStatus('Upscaling...', 'loading');
 
   try {
     const res = await fetch('/api/upscale', {
       method: 'POST', headers: headers(),
-      body: JSON.stringify({ image_url: currentUrl, scale: 2, mode, character: selectedChar })
+      body: JSON.stringify({ image_url: currentUrl, scale: 2, mode: 'faithful', character: selectedChar })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Upscale failed');
 
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
-    pushVersion(currentUrl, `upscale ${data.scale}x`);
+    pushVersion(currentUrl, 'upscale');
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
-    const promptInfo = data.magnificPrompt ? `\nPrompt: "${data.magnificPrompt}"` : '';
-    showEditStatus(`Upscaled ${data.scale}x${promptInfo}`, 'success');
+    showEditStatus('Upscaled — faithful enhancement', 'success');
   } catch (err) {
     hideImgOverlay();
     showEditStatus('Upscale failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = origText;
+  }
+}
+
+// Magnific two-step: generate prompt → edit → upscale
+async function startMagnific() {
+  if (!currentUrl) return;
+  const btn = document.getElementById('btn-magnific');
+  btn.disabled = true; btn.textContent = '...';
+  showEditStatus('Grok analyzing image for Magnific prompt...', 'loading');
+
+  try {
+    const res = await fetch('/api/magnific-prompt', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Prompt generation failed');
+
+    document.getElementById('magnific-prompt-input').value = data.prompt;
+    document.getElementById('magnific-editor').style.display = 'block';
+    document.getElementById('magnific-prompt-input').focus();
+    showEditStatus('Edit the Magnific prompt below, then click "Upscale with this prompt"', 'success');
+  } catch (err) {
+    showEditStatus('Magnific prompt failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Magnific';
+  }
+}
+
+function closeMagnificEditor() {
+  document.getElementById('magnific-editor').style.display = 'none';
+}
+
+async function runMagnific() {
+  const prompt = document.getElementById('magnific-prompt-input').value.trim();
+  if (!prompt) { toast('Prompt is empty'); return; }
+
+  const btn = document.getElementById('magnific-go');
+  btn.disabled = true; btn.textContent = 'Upscaling...';
+  showImgOverlay('Magnific upscaling...');
+  showEditStatus('Magnific upscaling with your prompt...', 'loading');
+
+  try {
+    const res = await fetch('/api/upscale', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, scale: 2, mode: 'creative', prompt, character: selectedChar })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Magnific failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, 'magnific');
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    closeMagnificEditor();
+    showEditStatus(`Magnific upscaled ${data.scale}x\nPrompt: "${prompt.slice(0, 120)}"`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Magnific failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Upscale with this prompt';
   }
 }
 

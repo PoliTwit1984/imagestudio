@@ -899,6 +899,20 @@ const server = Bun.serve({
     }
 
     // Upscale image via fal.ai creative upscaler
+    // Generate Magnific prompt only (step 1 — user can edit before upscaling)
+    if (url.pathname === "/api/magnific-prompt" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const imageUrl = body.image_url || "";
+        if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
+        const prompt = await generateMagnificPrompt(imageUrl);
+        return Response.json({ ok: true, prompt });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     if (url.pathname === "/api/upscale" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
       try {
@@ -928,8 +942,8 @@ const server = Bun.serve({
 
         let magnificPrompt = "";
         if (mode === "creative") {
-          // Freepik Magnific Creative — Grok auto-generates the prompt
-          magnificPrompt = await generateMagnificPrompt(imageUrl);
+          // Freepik Magnific Creative — use provided prompt or fallback
+          magnificPrompt = body.prompt || "(photorealistic:1.3), (natural skin texture with visible pores:1.3), (8k detail:1.1), (fabric texture:1.2), natural lighting, 35mm film grain";
           endpoint = "image-upscaler";
           payload = {
             image: b64Data,
