@@ -1158,10 +1158,10 @@ RULES:
         const submitData = await submitRes.json();
         let resultUrl = "";
 
-        // Check if already completed
-        if (submitData.data?.status === "COMPLETED" && submitData.data?.generated) {
+        // Check if already completed with results
+        if (submitData.data?.status === "COMPLETED" && submitData.data?.generated?.length > 0) {
           const gen = submitData.data.generated[0];
-          resultUrl = typeof gen === "string" ? gen : gen.url;
+          resultUrl = typeof gen === "string" ? gen : gen?.url || "";
         } else if (submitData.data?.task_id) {
           // Poll for completion
           const taskId = submitData.data.task_id;
@@ -1176,9 +1176,9 @@ RULES:
             const pollData = await pollRes.json();
             const status = pollData.data?.status;
 
-            if (status === "COMPLETED") {
+            if (status === "COMPLETED" && pollData.data?.generated?.length > 0) {
               const gen = pollData.data.generated[0];
-              resultUrl = typeof gen === "string" ? gen : gen.url;
+              resultUrl = typeof gen === "string" ? gen : gen?.url || "";
               break;
             } else if (status === "FAILED") {
               throw new Error("Magnific task failed");
