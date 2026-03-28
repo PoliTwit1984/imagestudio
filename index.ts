@@ -126,8 +126,30 @@ TECHNIQUES TO USE:
 - NEVER include: smiling, perfect symmetry, vibrant colors, studio lighting, or "beautiful/gorgeous/stunning"
 - Always end with: "no smiling, lips slightly parted, direct eye contact"`;
 
-async function enhancePrompt(scene: string, character: any): Promise<string> {
-  const charContext = character.description ? `The subject is: ${character.description}.` : "";
+const ENHANCE_EDIT_SYSTEM = `You are an expert prompt engineer for the Grok image editing model. Your job is to take a simple edit instruction and enhance it into a detailed, photorealistic edit prompt.
+
+RULES:
+- This is for img2img EDITING — the source image already exists. You are describing what should CHANGE, not the whole scene.
+- Keep it under 80 words.
+- Preserve the original composition and subject — only change what's requested.
+- Output ONLY the enhanced edit prompt. No explanation, no quotes, no preamble.
+
+TECHNIQUES:
+- Be specific about lighting changes (not "darker" but "deeper shadows with warm undertones, single key light from the left")
+- For color grading, reference specific film stocks or LUTs
+- For cropping/angle changes, describe camera movement precisely
+- For clothing changes, describe fabric texture and how it drapes
+- For mood changes, describe the specific quality of light and shadow that creates that mood
+- Always maintain: "no smiling, lips slightly parted"`;
+
+async function enhancePrompt(scene: string, character: any, mode: string = "generate"): Promise<string> {
+  const isEdit = mode === "edit";
+  const systemPrompt = isEdit ? ENHANCE_EDIT_SYSTEM : ENHANCE_SYSTEM;
+  const charContext = character?.description ? `The subject is: ${character.description}.` : "";
+
+  const userMsg = isEdit
+    ? `Edit instruction: "${scene}"\nEnhance this into a detailed photorealistic edit prompt. Only describe what should change.`
+    : `Scene: "${scene}"\n${charContext}\nEnhance this into a photorealistic img2img prompt. Remember: do NOT describe the person's face/hair/body — only the scene, pose, clothing, lighting, and mood.`;
 
   const res = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
@@ -138,11 +160,8 @@ async function enhancePrompt(scene: string, character: any): Promise<string> {
     body: JSON.stringify({
       model: "grok-3",
       messages: [
-        { role: "system", content: ENHANCE_SYSTEM },
-        {
-          role: "user",
-          content: `Scene: "${scene}"\n${charContext}\nEnhance this into a photorealistic img2img prompt. Remember: do NOT describe the person's face/hair/body — only the scene, pose, clothing, lighting, and mood.`,
-        },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMsg },
       ],
       temperature: 0.8,
     }),
@@ -192,8 +211,9 @@ const server = Bun.serve({
         const charName = body.character || "luna";
         if (!scene) return Response.json({ error: "scene required" }, { status: 400 });
 
+        const mode = body.mode || "generate";
         const character = await getCharacter(charName);
-        const enhanced = await enhancePrompt(scene, character || { description: "" });
+        const enhanced = await enhancePrompt(scene, character || { description: "" }, mode);
         return Response.json({ ok: true, enhanced });
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });

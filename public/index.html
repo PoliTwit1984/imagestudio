@@ -388,6 +388,7 @@
         <div class="edit-label">Edit this image</div>
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
+          <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;">AI</button>
           <button class="edit-btn" id="edit-btn" onclick="editImage()">Edit</button>
         </div>
         <div class="edit-presets">
@@ -710,6 +711,31 @@ async function sendDiscord() {
 
 function setEdit(text) {
   document.getElementById('edit-input').value = text;
+}
+
+async function enhanceEdit() {
+  const input = document.getElementById('edit-input');
+  const text = input.value.trim();
+  if (!text) { toast('Type an edit first'); return; }
+
+  const btn = document.getElementById('edit-enhance-btn');
+  btn.disabled = true; btn.textContent = '...';
+
+  try {
+    const res = await fetch('/api/enhance', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ scene: text, character: selectedChar, mode: 'edit' })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed');
+
+    input.value = data.enhanced;
+    toast('Edit prompt enhanced');
+  } catch (err) {
+    toast('Enhance failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'AI';
+  }
 }
 
 async function editImage() {
