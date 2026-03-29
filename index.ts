@@ -710,6 +710,38 @@ const server = Bun.serve({
 
           const falData = await falRes.json();
           resultUrl = falData.images?.[0]?.url || falData.image?.url || "";
+        } else if (engine === "pedit") {
+          // prunaai/p-image-edit on Replicate — powerful natural language image editing
+          const repRes = await fetch("https://api.replicate.com/v1/models/prunaai/p-image-edit/predictions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${env("REPLICATE_API_TOKEN")}`,
+              "Content-Type": "application/json",
+              Prefer: "wait",
+            },
+            body: JSON.stringify({
+              input: {
+                images: [sourceUrl],
+                prompt: editPrompt,
+                disable_safety_checker: true,
+                turbo: false,
+                aspect_ratio: "match_input_image",
+              },
+            }),
+          });
+
+          if (!repRes.ok) {
+            const err = await repRes.text();
+            throw new Error(`P-Edit ${repRes.status}: ${err}`);
+          }
+
+          const repData = await repRes.json();
+          if (repData.status === "failed") {
+            throw new Error(`P-Edit failed: ${repData.error || "unknown error"}`);
+          }
+          // Output can be string or array
+          const output = repData.output;
+          resultUrl = Array.isArray(output) ? output[0] : output || "";
         } else {
           // Grok img2img edit
           const grokRes = await fetch("https://api.x.ai/v1/images/edits", {
