@@ -500,65 +500,37 @@ const server = Bun.serve({
     }
 
     // --- Public API: get characters (for UI) ---
-    // Pinterest pose search (proxy to avoid CORS)
-    if (url.pathname === "/api/pinterest" && req.method === "GET") {
+    // Pose image search (Freepik stock photos)
+    if (url.pathname === "/api/pose-search" && req.method === "GET") {
       try {
         const query = url.searchParams.get("q") || "boudoir pose";
-        const bookmark = url.searchParams.get("bookmark") || "";
+        const page = url.searchParams.get("page") || "1";
 
-        const pinterestUrl = `https://www.pinterest.com/resource/BaseSearchResource/get/`;
-        const params = new URLSearchParams({
-          source_url: `/search/pins/?q=${encodeURIComponent(query)}`,
-          data: JSON.stringify({
-            options: {
-              query,
-              scope: "pins",
-              bookmark: bookmark || undefined,
-              page_size: 25,
-            },
-          }),
-        });
+        const fpRes = await fetch(
+          `https://api.freepik.com/v1/resources?locale=en&page=${page}&limit=24&order=relevance&term=${encodeURIComponent(query)}&filters%5Bcontent_type%5D%5Bphoto%5D=1`,
+          { headers: { "x-freepik-api-key": env("FREEPIK_API_KEY") } }
+        );
 
-        const pRes = await fetch(`${pinterestUrl}?${params}`, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-            Accept: "application/json, text/javascript, */*",
-            "X-Requested-With": "XMLHttpRequest",
-            "X-Pinterest-AppState": "active",
-          },
-        });
-
-        if (!pRes.ok) {
-          // Fallback: return empty with suggestion to paste URL
-          return Response.json({
-            pins: [],
-            message: "Pinterest search unavailable — paste a Pinterest image URL directly",
-          });
+        if (!fpRes.ok) {
+          return Response.json({ images: [], message: "Search failed" });
         }
 
-        const pData = await pRes.json();
-        const results = pData?.resource_response?.data?.results || [];
-        const nextBookmark = pData?.resource_response?.bookmark || "";
+        const fpData = await fpRes.json();
+        const images = (fpData.data || []).map((item: any) => ({
+          id: item.id,
+          title: item.title || "",
+          thumbnail: item.image?.source?.url || item.thumbnail?.url || "",
+          image: item.image?.source?.url || "",
+          width: item.image?.source?.width || 0,
+          height: item.image?.source?.height || 0,
+        }));
 
-        const pins = results
-          .filter((r: any) => r?.images?.orig?.url)
-          .map((r: any) => ({
-            id: r.id,
-            description: (r.description || r.grid_title || "").slice(0, 100),
-            image: r.images.orig.url,
-            thumbnail: r.images["236x"]?.url || r.images.orig.url,
-            width: r.images.orig.width,
-            height: r.images.orig.height,
-            link: `https://pinterest.com/pin/${r.id}/`,
-          }));
+        const totalPages = fpData.meta?.last_page || fpData.meta?.pagination?.total_pages || 1;
+        const total = fpData.meta?.total || 0;
 
-        return Response.json({ pins, bookmark: nextBookmark });
+        return Response.json({ images, page: Number(page), totalPages, total });
       } catch (err: any) {
-        return Response.json({
-          pins: [],
-          message: "Pinterest search failed — paste a URL instead",
-          error: err.message,
-        });
+        return Response.json({ images: [], message: err.message });
       }
     }
 
