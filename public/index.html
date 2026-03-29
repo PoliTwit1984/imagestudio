@@ -714,7 +714,7 @@
       <div class="result-actions">
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
         <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Freepik Magnific Creative — Grok auto-generates a prompt, you edit it, then upscale with texture/detail injection. Can change face.">Magnific</button>
-        <button class="action-btn" id="btn-topaz" onclick="runTopaz()" style="border-color:#00bcd4;color:#00bcd4;" title="Topaz Bloom Realism — face enhancement (strength 0.5) + skin texture + upscale to 1536x2048. Best all-in-one. Creativity 2, texture 3, sharpen 0.4">Topaz</button>
+        <button class="action-btn" id="btn-topaz" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Topaz Bloom Realism — face enhancement + skin texture + upscale. Click to adjust settings.">Topaz</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="fal.ai face swap — pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
         <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;" title="VEED Fabric 1.0 — turn this image into a talking head video. Type text → ElevenLabs voice → lip-synced video. ~2-3 min processing.">Fabric Video</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
@@ -770,6 +770,47 @@
         <div style="display:flex;gap:8px;margin-top:10px;">
           <button class="edit-btn" id="faceswap-go" onclick="runFaceSwap()" style="background:linear-gradient(135deg,#a855f7,#7c3aed);">Swap Face</button>
           <button class="action-btn" onclick="closeFaceSwap()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Topaz settings panel -->
+      <div class="faceswap-panel" id="topaz-panel" style="display:none;border-color:#00bcd433;">
+        <div class="edit-label" style="color:#00bcd4;">Topaz Bloom Realism <span style="font-weight:400;color:#888;">— adjust settings</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Creativity (1-4)</div>
+            <input type="range" id="topaz-creativity" min="1" max="4" step="1" value="2" style="width:100%;">
+            <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-creativity-val">2</div>
+          </div>
+          <div>
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Texture (1-5)</div>
+            <input type="range" id="topaz-texture" min="1" max="5" step="1" value="3" style="width:100%;">
+            <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-texture-val">3</div>
+          </div>
+          <div>
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Sharpen (0-1)</div>
+            <input type="range" id="topaz-sharpen" min="0" max="1" step="0.1" value="0.4" style="width:100%;">
+            <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-sharpen-val">0.4</div>
+          </div>
+          <div>
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Denoise (0-1)</div>
+            <input type="range" id="topaz-denoise" min="0" max="1" step="0.1" value="0" style="width:100%;">
+            <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-denoise-val">0</div>
+          </div>
+          <div>
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Face Strength (0-1)</div>
+            <input type="range" id="topaz-face-str" min="0" max="1" step="0.1" value="0.5" style="width:100%;">
+            <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-face-str-val">0.5</div>
+          </div>
+          <div>
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Face Creativity (0-1)</div>
+            <input type="range" id="topaz-face-cre" min="0" max="1" step="0.1" value="0.3" style="width:100%;">
+            <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-face-cre-val">0.3</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="edit-btn" id="topaz-go" onclick="runTopazWithSettings()" style="background:linear-gradient(135deg,#00bcd4,#0097a7);">Enhance with Topaz</button>
+          <button class="action-btn" onclick="closeTopazSettings()">Cancel</button>
         </div>
       </div>
 
@@ -1472,6 +1513,74 @@ async function editImage() {
     showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Edit';
+  }
+}
+
+function openTopazSettings() {
+  if (!currentUrl) { toast('Generate an image first'); return; }
+  document.getElementById('topaz-panel').style.display = 'block';
+  // Wire up slider value displays
+  for (const [id, valId] of [
+    ['topaz-creativity','topaz-creativity-val'],
+    ['topaz-texture','topaz-texture-val'],
+    ['topaz-sharpen','topaz-sharpen-val'],
+    ['topaz-denoise','topaz-denoise-val'],
+    ['topaz-face-str','topaz-face-str-val'],
+    ['topaz-face-cre','topaz-face-cre-val'],
+  ]) {
+    const el = document.getElementById(id);
+    if (el) el.oninput = () => document.getElementById(valId).textContent = el.value;
+  }
+}
+
+function closeTopazSettings() {
+  document.getElementById('topaz-panel').style.display = 'none';
+}
+
+async function runTopazWithSettings() {
+  const creativity = parseInt(document.getElementById('topaz-creativity').value);
+  const texture = parseInt(document.getElementById('topaz-texture').value);
+  const sharpen = parseFloat(document.getElementById('topaz-sharpen').value);
+  const denoise = parseFloat(document.getElementById('topaz-denoise').value);
+  const faceStrength = parseFloat(document.getElementById('topaz-face-str').value);
+  const faceCreativity = parseFloat(document.getElementById('topaz-face-cre').value);
+
+  closeTopazSettings();
+
+  const btn = document.getElementById('btn-topaz');
+  btn.disabled = true; btn.textContent = '...';
+  showImgOverlay(`Topaz: creativity ${creativity}, texture ${texture}, sharpen ${sharpen}`);
+  showEditStatus(`Topaz processing — creativity ${creativity}, texture ${texture}, sharpen ${sharpen}, face ${faceStrength}...`, 'loading');
+
+  try {
+    const res = await fetch('/api/topaz', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        character: selectedChar,
+        creativity,
+        texture,
+        sharpen,
+        denoise,
+        face_strength: faceStrength,
+        face_creativity: faceCreativity,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Topaz failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, 'topaz bloom');
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    showEditStatus(`Topaz applied — creativity ${creativity}, texture ${texture}, sharpen ${sharpen}`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Topaz failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Topaz';
   }
 }
 

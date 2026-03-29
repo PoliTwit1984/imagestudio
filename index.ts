@@ -500,6 +500,53 @@ const server = Bun.serve({
     }
 
     // --- Public API: get characters (for UI) ---
+    // Favorite poses
+    if (url.pathname === "/api/favorites" && req.method === "GET") {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/favorite_poses?order=created_at.desc&limit=100`,
+        { headers: supaHeaders() }
+      );
+      return Response.json(await res.json());
+    }
+
+    if (url.pathname === "/api/favorites" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        await fetch(`${SUPABASE_URL}/rest/v1/favorite_poses`, {
+          method: "POST",
+          headers: { ...supaHeaders(), Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify({
+            image_url: body.image_url,
+            thumbnail_url: body.thumbnail_url || body.image_url,
+            title: body.title || "",
+            source: body.source || "freepik",
+            source_id: body.source_id || "",
+            width: body.width || 0,
+            height: body.height || 0,
+            tags: body.tags || [],
+          }),
+        });
+        return Response.json({ ok: true });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
+    if (url.pathname === "/api/favorites" && req.method === "DELETE") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/favorite_poses?image_url=eq.${encodeURIComponent(body.image_url)}`,
+          { method: "DELETE", headers: supaHeaders() }
+        );
+        return Response.json({ ok: true });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // Pose image search (Freepik stock photos)
     if (url.pathname === "/api/pose-search" && req.method === "GET") {
       try {
@@ -1213,6 +1260,7 @@ RULES:
         const creativity = body.creativity ?? 2;
         const texture = body.texture ?? 3;
         const sharpen = body.sharpen ?? 0.4;
+        const denoise = body.denoise ?? 0;
         const faceStrength = body.face_strength ?? 0.5;
         const faceCreativity = body.face_creativity ?? 0.3;
         if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
@@ -1233,6 +1281,7 @@ RULES:
         formData.append("face_enhancement", "true");
         formData.append("face_enhancement_strength", String(faceStrength));
         formData.append("face_enhancement_creativity", String(faceCreativity));
+        if (denoise > 0) formData.append("denoise", String(denoise));
         formData.append("autoprompt", "true");
 
         // Submit async
