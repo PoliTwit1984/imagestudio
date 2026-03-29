@@ -2171,18 +2171,28 @@ async function runFabric() {
   let audioUrl = document.getElementById('fabric-audio-url').value.trim();
   const resolution = document.getElementById('fabric-resolution').value;
 
-  // Upload audio file to Supabase if provided
-  if (fileInput.files[0] && !audioUrl) {
+  // Upload audio file to Supabase if provided (file takes priority over URL)
+  if (fileInput.files[0]) {
     const file = fileInput.files[0];
     const ts = Date.now();
     const ext = file.name.split('.').pop() || 'mp3';
     const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
-    const upRes = await fetch(
-      `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/audio/fabric-${ts}.${ext}`,
-      { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': file.type, 'x-upsert': 'true' }, body: await file.arrayBuffer() }
-    );
-    if (upRes.ok) {
-      audioUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/audio/fabric-${ts}.${ext}`;
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const upRes = await fetch(
+        `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/audio/fabric-${ts}.${ext}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': file.type || 'audio/mpeg', 'x-upsert': 'true' }, body: arrayBuf }
+      );
+      if (upRes.ok) {
+        audioUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/audio/fabric-${ts}.${ext}`;
+      } else {
+        const err = await upRes.text();
+        toast('Audio upload failed: ' + err.slice(0, 80));
+        return;
+      }
+    } catch (err) {
+      toast('Audio upload error: ' + err);
+      return;
     }
   }
 
