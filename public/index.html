@@ -2179,9 +2179,11 @@ async function runFabric() {
     const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
     try {
       const arrayBuf = await file.arrayBuffer();
+      const mimeMap = { mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm' };
+      const contentType = mimeMap[ext.toLowerCase()] || file.type || 'audio/mpeg';
       const upRes = await fetch(
         `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/audio/fabric-${ts}.${ext}`,
-        { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': file.type || 'audio/mpeg', 'x-upsert': 'true' }, body: arrayBuf }
+        { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': contentType, 'x-upsert': 'true' }, body: arrayBuf }
       );
       if (upRes.ok) {
         audioUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/audio/fabric-${ts}.${ext}`;

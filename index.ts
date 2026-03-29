@@ -1440,7 +1440,7 @@ RULES:
           headers: {
             Authorization: `Bearer ${env("REPLICATE_API_TOKEN")}`,
             "Content-Type": "application/json",
-            Prefer: "wait=120",
+            Prefer: "wait=60",
           },
           body: JSON.stringify({
             input: {
