@@ -705,6 +705,18 @@
         <button class="version-btn" id="redo-btn" onclick="redoEdit()" title="Redo">Redo &#8594;</button>
       </div>
       <div class="result-img-wrap">
+        <div id="pose-compare" style="display:none;">
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <div style="flex:1;text-align:center;">
+              <div style="font-size:0.7rem;color:#06b6d4;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px;">Pose Reference</div>
+              <img id="pose-compare-ref" src="" alt="Pose Reference" style="width:100%;border-radius:10px;border:1px solid #06b6d433;">
+            </div>
+            <div style="flex:1;text-align:center;">
+              <div style="font-size:0.7rem;color:#22c55e;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px;">Generated</div>
+              <img id="pose-compare-gen" src="" alt="Generated" style="width:100%;border-radius:10px;border:1px solid #22c55e33;">
+            </div>
+          </div>
+        </div>
         <img id="result-img" src="" alt="Generated">
         <div class="img-overlay" id="img-overlay">
           <div class="spinner"></div>
@@ -719,6 +731,7 @@
         <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;" title="VEED Fabric 1.0 — turn this image into a talking head video. Type text → ElevenLabs voice → lip-synced video. ~2-3 min processing.">Fabric Video</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
+        <button class="action-btn" id="btn-compare-pose" onclick="togglePoseCompare()" style="border-color:#06b6d4;color:#06b6d4;display:none;" title="Show pose reference alongside generated image for comparison">Compare Pose</button>
         <button class="action-btn" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()" title="Download the image to your device">Download</button>
       </div>
@@ -998,6 +1011,7 @@ let currentModel = 'pro';
 let currentEngine = 'grok';
 let currentLora = '';
 let currentUrl = '';
+let lastPoseRefUrl = '';
 let currentScene = '';
 let characters = [];
 let loras = [];
@@ -2069,6 +2083,9 @@ async function runPoseGenerate() {
   if (!poseUrl) { toast('Upload a pose image or enter a URL'); return; }
   if (!scene) { toast('Describe what to generate in this pose'); return; }
 
+  // Save pose ref for comparison
+  lastPoseRefUrl = poseUrl;
+
   const btn = document.getElementById('pose-go');
   btn.disabled = true; btn.textContent = 'Generating...';
   showImgOverlay('Generating with pose reference...');
@@ -2096,6 +2113,7 @@ async function runPoseGenerate() {
     loadHistory();
     hideImgOverlay();
     closePoseRef();
+    updatePoseCompareButton();
     showEditStatus(`Generated with pose reference (strength ${strength})`, 'success');
   } catch (err) {
     hideImgOverlay();
@@ -2292,6 +2310,42 @@ async function runFaceSwap() {
   } finally {
     btn.disabled = false; btn.textContent = 'Swap Face';
   }
+}
+
+function togglePoseCompare() {
+  const compare = document.getElementById('pose-compare');
+  const resultImg = document.getElementById('result-img');
+  const btn = document.getElementById('btn-compare-pose');
+
+  if (compare.style.display === 'none') {
+    // Show comparison
+    document.getElementById('pose-compare-ref').src = lastPoseRefUrl;
+    document.getElementById('pose-compare-gen').src = currentUrl;
+    compare.style.display = 'block';
+    resultImg.style.display = 'none';
+    btn.textContent = 'Hide Compare';
+    btn.style.background = '#06b6d420';
+  } else {
+    // Hide comparison
+    compare.style.display = 'none';
+    resultImg.style.display = '';
+    btn.textContent = 'Compare Pose';
+    btn.style.background = '';
+  }
+}
+
+function updatePoseCompareButton() {
+  const btn = document.getElementById('btn-compare-pose');
+  if (lastPoseRefUrl && currentUrl) {
+    btn.style.display = '';
+  } else {
+    btn.style.display = 'none';
+  }
+  // Reset comparison view
+  document.getElementById('pose-compare').style.display = 'none';
+  document.getElementById('result-img').style.display = '';
+  btn.textContent = 'Compare Pose';
+  btn.style.background = '';
 }
 
 function copyUrl() { if (!currentUrl) return; navigator.clipboard.writeText(currentUrl); toast('Copied'); }

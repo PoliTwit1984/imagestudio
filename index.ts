@@ -563,15 +563,24 @@ const server = Bun.serve({
         }
 
         const fpData = await fpRes.json();
-        const toHttps = (url: string) => url.replace(/^http:\/\//, 'https://');
-        const images = (fpData.data || []).map((item: any) => ({
-          id: item.id,
-          title: item.title || "",
-          thumbnail: toHttps(item.image?.source?.url || item.thumbnail?.url || ""),
-          image: toHttps(item.image?.source?.url || ""),
-          width: item.image?.source?.width || 0,
-          height: item.image?.source?.height || 0,
-        }));
+        const toFreepikCdn = (url: string) => {
+          // Convert b2bpic CDN (403s) to freepik public CDN (works)
+          return url
+            .replace(/^http:\/\//, 'https://')
+            .replace('img.b2bpic.net', 'img.freepik.com');
+        };
+        const images = (fpData.data || []).map((item: any) => {
+          const rawUrl = item.image?.source?.url || "";
+          const cdnUrl = toFreepikCdn(rawUrl);
+          return {
+            id: String(item.id),
+            title: item.title || "",
+            thumbnail: cdnUrl ? cdnUrl + '?w=400' : "",
+            image: cdnUrl || "",
+            width: 0,
+            height: 0,
+          };
+        });
 
         const totalPages = fpData.meta?.last_page || fpData.meta?.pagination?.total_pages || 1;
         const total = fpData.meta?.total || 0;
