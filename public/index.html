@@ -775,8 +775,18 @@
 
       <!-- Topaz settings panel -->
       <div class="faceswap-panel" id="topaz-panel" style="display:none;border-color:#00bcd433;">
-        <div class="edit-label" style="color:#00bcd4;">Topaz Bloom Realism <span style="font-weight:400;color:#888;">— adjust settings</span></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="edit-label" style="color:#00bcd4;">Topaz Enhance <span style="font-weight:400;color:#888;">— choose model & settings</span></div>
+        <div style="margin-bottom:10px;">
+          <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Model</div>
+          <select id="topaz-model" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#ccc;padding:8px 10px;border-radius:8px;font-size:0.85rem;">
+            <option value="Bloom Realism">Bloom Realism — adds texture & detail (generative)</option>
+            <option value="Bloom Precision">Bloom Precision — faithful, minimal changes</option>
+            <option value="Upscale High Fidelity">High Fidelity — pure upscale, zero changes</option>
+            <option value="Face Recovery Natural">Face Recovery — fix blurry/distorted faces</option>
+            <option value="Natural Enhance">Natural Enhance — subtle overall improvement</option>
+          </select>
+        </div>
+        <div id="topaz-sliders" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
           <div>
             <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Creativity (1-4)</div>
             <input type="range" id="topaz-creativity" min="1" max="4" step="1" value="2" style="width:100%;">
@@ -1538,6 +1548,7 @@ function closeTopazSettings() {
 }
 
 async function runTopazWithSettings() {
+  const topazModel = document.getElementById('topaz-model').value;
   const creativity = parseInt(document.getElementById('topaz-creativity').value);
   const texture = parseInt(document.getElementById('topaz-texture').value);
   const sharpen = parseFloat(document.getElementById('topaz-sharpen').value);
@@ -1549,8 +1560,8 @@ async function runTopazWithSettings() {
 
   const btn = document.getElementById('btn-topaz');
   btn.disabled = true; btn.textContent = '...';
-  showImgOverlay(`Topaz: creativity ${creativity}, texture ${texture}, sharpen ${sharpen}`);
-  showEditStatus(`Topaz processing — creativity ${creativity}, texture ${texture}, sharpen ${sharpen}, face ${faceStrength}...`, 'loading');
+  showImgOverlay(`Topaz ${topazModel}...`);
+  showEditStatus(`Topaz ${topazModel} processing...`, 'loading');
 
   try {
     const res = await fetch('/api/topaz', {
@@ -1558,6 +1569,7 @@ async function runTopazWithSettings() {
       body: JSON.stringify({
         image_url: currentUrl,
         character: selectedChar,
+        model: topazModel,
         creativity,
         texture,
         sharpen,
@@ -1575,7 +1587,7 @@ async function runTopazWithSettings() {
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
-    showEditStatus(`Topaz applied — creativity ${creativity}, texture ${texture}, sharpen ${sharpen}`, 'success');
+    showEditStatus(`Topaz ${topazModel} applied`, 'success');
   } catch (err) {
     hideImgOverlay();
     showEditStatus('Topaz failed: ' + err.message, 'error');

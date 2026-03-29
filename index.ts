@@ -1271,22 +1271,32 @@ RULES:
         const imgBuf = Buffer.from(await imgResp.arrayBuffer());
 
         // Build multipart form
+        const topazModel = body.model || "Bloom Realism";
+        const isGenerative = topazModel.startsWith("Bloom") || topazModel === "Redefine" || topazModel.startsWith("Wonder");
+        const endpoint = isGenerative ? "enhance-gen" : "enhance";
+
         const formData = new FormData();
-        formData.append("model", "Bloom Realism");
+        formData.append("model", topazModel);
         formData.append("image", new Blob([imgBuf], { type: "image/jpeg" }), "input.jpg");
         formData.append("output_width", "1536");
         formData.append("output_height", "2048");
-        formData.append("creativity", String(creativity));
-        formData.append("texture", String(texture));
-        formData.append("sharpen", String(sharpen));
-        formData.append("face_enhancement", "true");
-        formData.append("face_enhancement_strength", String(faceStrength));
-        formData.append("face_enhancement_creativity", String(faceCreativity));
+
+        // Only add generative params for generative models
+        if (isGenerative) {
+          formData.append("creativity", String(creativity));
+          formData.append("texture", String(texture));
+          formData.append("autoprompt", "true");
+        }
+        if (sharpen > 0) formData.append("sharpen", String(sharpen));
         if (denoise > 0) formData.append("denoise", String(denoise));
-        formData.append("autoprompt", "true");
+        if (faceStrength > 0) {
+          formData.append("face_enhancement", "true");
+          formData.append("face_enhancement_strength", String(faceStrength));
+          formData.append("face_enhancement_creativity", String(faceCreativity));
+        }
 
         // Submit async
-        const submitRes = await fetch("https://api.topazlabs.com/image/v1/enhance-gen/async", {
+        const submitRes = await fetch(`https://api.topazlabs.com/image/v1/${endpoint}/async`, {
           method: "POST",
           headers: { "X-API-Key": env("TOPAZ_API_KEY") },
           body: formData,
