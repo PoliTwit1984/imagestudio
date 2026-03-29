@@ -655,6 +655,7 @@
       <div class="result-actions">
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')">Upscale</button>
         <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;">Magnific</button>
+        <button class="action-btn" id="btn-topaz" onclick="runTopaz()" style="border-color:#00bcd4;color:#00bcd4;">Topaz</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;">Face Swap</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
@@ -1360,6 +1361,36 @@ async function editImage() {
     showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Edit';
+  }
+}
+
+async function runTopaz() {
+  if (!currentUrl) return;
+  const btn = document.getElementById('btn-topaz');
+  btn.disabled = true; btn.textContent = '...';
+  showImgOverlay('Topaz Bloom Realism enhancing...');
+  showEditStatus('Topaz processing — face enhancement + skin texture + upscale...', 'loading');
+
+  try {
+    const res = await fetch('/api/topaz', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, character: selectedChar })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Topaz failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, 'topaz bloom');
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    showEditStatus('Topaz Bloom Realism applied — face + skin + upscale', 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Topaz failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Topaz';
   }
 }
 

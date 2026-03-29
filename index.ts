@@ -1169,6 +1169,96 @@ RULES:
       }
     }
 
+    // Topaz Bloom Realism — AI-powered skin/face enhancement + upscale
+    if (url.pathname === "/api/topaz" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const imageUrl = body.image_url || "";
+        const charName = body.character || "luna";
+        const creativity = body.creativity ?? 2;
+        const texture = body.texture ?? 3;
+        const sharpen = body.sharpen ?? 0.4;
+        const faceStrength = body.face_strength ?? 0.5;
+        const faceCreativity = body.face_creativity ?? 0.3;
+        if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
+
+        // Download image to send as multipart form
+        const imgResp = await fetch(imageUrl);
+        const imgBuf = Buffer.from(await imgResp.arrayBuffer());
+
+        // Build multipart form
+        const formData = new FormData();
+        formData.append("model", "Bloom Realism");
+        formData.append("image", new Blob([imgBuf], { type: "image/jpeg" }), "input.jpg");
+        formData.append("output_width", "1536");
+        formData.append("output_height", "2048");
+        formData.append("creativity", String(creativity));
+        formData.append("texture", String(texture));
+        formData.append("sharpen", String(sharpen));
+        formData.append("face_enhancement", "true");
+        formData.append("face_enhancement_strength", String(faceStrength));
+        formData.append("face_enhancement_creativity", String(faceCreativity));
+        formData.append("autoprompt", "true");
+
+        // Submit async
+        const submitRes = await fetch("https://api.topazlabs.com/image/v1/enhance-gen/async", {
+          method: "POST",
+          headers: { "X-API-Key": env("TOPAZ_API_KEY") },
+          body: formData,
+        });
+
+        if (!submitRes.ok) {
+          const err = await submitRes.text();
+          throw new Error(`Topaz submit ${submitRes.status}: ${err}`);
+        }
+
+        const submitData = await submitRes.json();
+        const processId = submitData.process_id;
+
+        // Poll for completion
+        const maxWait = 120_000;
+        const start = Date.now();
+        while (Date.now() - start < maxWait) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const statusRes = await fetch(
+            `https://api.topazlabs.com/image/v1/status/${processId}`,
+            { headers: { "X-API-Key": env("TOPAZ_API_KEY") } }
+          );
+          const statusData = await statusRes.json();
+
+          if (statusData.status === "Completed") {
+            // Get download URL
+            const dlRes = await fetch(
+              `https://api.topazlabs.com/image/v1/download/${processId}`,
+              { headers: { "X-API-Key": env("TOPAZ_API_KEY") } }
+            );
+            const dlData = await dlRes.json();
+            const resultUrl = dlData.download_url;
+
+            // Save to generations
+            const character = await getCharacter(charName);
+            await saveGeneration({
+              character_id: character?.id,
+              character_name: charName,
+              scene: "[topaz-bloom-realism]",
+              model: "topaz-bloom-realism",
+              image_url: resultUrl,
+              revised_prompt: "",
+            });
+
+            return Response.json({ ok: true, url: resultUrl });
+          } else if (statusData.status === "Failed") {
+            throw new Error("Topaz processing failed");
+          }
+        }
+
+        throw new Error("Topaz timeout (120s)");
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     if (url.pathname === "/api/upscale" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
       try {
