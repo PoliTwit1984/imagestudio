@@ -665,15 +665,28 @@
       </div>
       <!-- Fabric video panel -->
       <div class="faceswap-panel" id="fabric-panel" style="display:none;border-color:#ff6b6b33;">
-        <div class="edit-label" style="color:#ff6b6b;">Fabric Video <span style="font-weight:400;color:#888;">— turn this image into a talking head video</span></div>
+        <div class="edit-label" style="color:#ff6b6b;">Fabric Video <span style="font-weight:400;color:#888;">— make her talk</span></div>
+
+        <!-- Option 1: Type text → ElevenLabs TTS -->
+        <div style="margin-bottom:12px;">
+          <div style="color:#ff6b6b;font-size:0.75rem;font-weight:600;margin-bottom:4px;">Option 1: Type what she says</div>
+          <textarea id="fabric-text" class="edit-input" rows="2" style="font-size:0.85rem;min-height:50px;" placeholder="Hey baby, I've been thinking about you all day..."></textarea>
+          <button class="action-btn" onclick="generateTTS()" id="tts-btn" style="margin-top:6px;border-color:#ff6b6b;color:#ff6b6b;font-size:0.75rem;">Generate Voice</button>
+          <span id="tts-status" style="font-size:0.72rem;color:#555;margin-left:8px;"></span>
+        </div>
+
+        <div style="color:#555;font-size:0.7rem;text-align:center;margin-bottom:8px;">— or —</div>
+
+        <!-- Option 2: Upload audio -->
         <div style="margin-bottom:8px;">
-          <div style="color:#888;font-size:0.75rem;">Upload audio (mp3/wav):</div>
+          <div style="color:#888;font-size:0.75rem;">Option 2: Upload audio (mp3/wav):</div>
           <input type="file" id="fabric-audio-upload" accept="audio/*" style="font-size:0.8rem;color:#888;margin-top:4px;">
         </div>
         <div style="margin-bottom:8px;">
           <div style="color:#555;font-size:0.72rem;">Or paste audio URL:</div>
           <input type="text" id="fabric-audio-url" class="edit-input" placeholder="https://..." style="margin-top:4px;font-size:0.8rem;">
         </div>
+
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
           <div style="color:#888;font-size:0.75rem;">Resolution:</div>
           <select id="fabric-resolution" style="background:#1a1a1a;border:1px solid #333;color:#ccc;padding:6px 10px;border-radius:6px;font-size:0.8rem;">
@@ -1676,6 +1689,36 @@ async function runPoseGenerate() {
 }
 
 // --- Fabric Video ---
+
+async function generateTTS() {
+  const text = document.getElementById('fabric-text').value.trim();
+  if (!text) { toast('Type something for her to say'); return; }
+
+  const btn = document.getElementById('tts-btn');
+  const status = document.getElementById('tts-status');
+  btn.disabled = true; btn.textContent = 'Generating...';
+  status.textContent = 'Creating voice...';
+
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'TTS failed');
+
+    // Set the audio URL in the URL field
+    document.getElementById('fabric-audio-url').value = data.url;
+    status.textContent = 'Voice ready — hit Generate Video';
+    status.style.color = '#50c878';
+    toast('Voice generated');
+  } catch (err) {
+    status.textContent = 'Failed: ' + err.message;
+    status.style.color = '#e08080';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Generate Voice';
+  }
+}
 
 function openFabric() {
   if (!currentUrl) { toast('Generate an image first'); return; }

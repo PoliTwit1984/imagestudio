@@ -1259,6 +1259,65 @@ RULES:
       }
     }
 
+    // ElevenLabs TTS — generate audio from text
+    if (url.pathname === "/api/tts" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const text = body.text || "";
+        const voiceId = body.voice_id || "LEnmbrrxYsUYS7vsRRwD"; // Holly's voice
+        if (!text) return Response.json({ error: "text required" }, { status: 400 });
+
+        const ttsRes = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": env("ELEVENLABS_API_KEY"),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              text,
+              model_id: "eleven_flash_v2_5",
+              voice_settings: {
+                stability: 0.5,
+                similarity_boost: 0.75,
+                style: 0.5,
+                use_speaker_boost: true,
+              },
+            }),
+          }
+        );
+
+        if (!ttsRes.ok) {
+          const err = await ttsRes.text();
+          throw new Error(`ElevenLabs ${ttsRes.status}: ${err}`);
+        }
+
+        // Upload audio to Supabase
+        const audioBuf = await ttsRes.arrayBuffer();
+        const ts = Date.now();
+        const audioPath = `audio/tts-${ts}.mp3`;
+        await fetch(
+          `${SUPABASE_URL}/storage/v1/object/image-studio/${audioPath}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${env("SUPABASE_ANON_KEY")}`,
+              "Content-Type": "audio/mpeg",
+              "x-upsert": "true",
+            },
+            body: audioBuf,
+          }
+        );
+
+        const audioUrl = `${SUPABASE_URL}/storage/v1/object/public/image-studio/${audioPath}`;
+        return Response.json({ ok: true, url: audioUrl });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // VEED Fabric 1.0 — image + audio → talking head video
     if (url.pathname === "/api/fabric" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
