@@ -787,33 +787,33 @@
           </select>
         </div>
         <div id="topaz-sliders" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <div>
+          <div class="topaz-bloom-only">
             <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Creativity (1-4)</div>
             <input type="range" id="topaz-creativity" min="1" max="4" step="1" value="2" style="width:100%;">
             <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-creativity-val">2</div>
           </div>
-          <div>
+          <div class="topaz-bloom-only">
             <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Texture (1-5)</div>
             <input type="range" id="topaz-texture" min="1" max="5" step="1" value="3" style="width:100%;">
             <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-texture-val">3</div>
           </div>
-          <div>
+          <div class="topaz-common">
             <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Sharpen (0-1)</div>
             <input type="range" id="topaz-sharpen" min="0" max="1" step="0.1" value="0.4" style="width:100%;">
             <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-sharpen-val">0.4</div>
           </div>
-          <div>
+          <div class="topaz-common">
             <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Denoise (0-1)</div>
             <input type="range" id="topaz-denoise" min="0" max="1" step="0.1" value="0" style="width:100%;">
             <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-denoise-val">0</div>
           </div>
-          <div>
-            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Face Strength (0-1)</div>
+          <div class="topaz-bloom-only">
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Face Sharpen (0-1)</div>
             <input type="range" id="topaz-face-str" min="0" max="1" step="0.1" value="0.5" style="width:100%;">
             <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-face-str-val">0.5</div>
           </div>
-          <div>
-            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Face Creativity (0-1)</div>
+          <div class="topaz-bloom-only">
+            <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Face Detail (0-1)</div>
             <input type="range" id="topaz-face-cre" min="0" max="1" step="0.1" value="0.3" style="width:100%;">
             <div style="text-align:center;font-size:0.75rem;color:#00bcd4;" id="topaz-face-cre-val">0.3</div>
           </div>
@@ -1526,9 +1526,26 @@ async function editImage() {
   }
 }
 
+function updateTopazSliderVisibility() {
+  const model = document.getElementById('topaz-model').value;
+  const isBloom = model.startsWith('Bloom');
+  const isFaceRecovery = model === 'Face Recovery Natural';
+
+  // Bloom-only sliders (creativity, texture, face)
+  document.querySelectorAll('.topaz-bloom-only').forEach(el => {
+    el.style.display = isBloom ? '' : 'none';
+  });
+
+  // Common sliders (sharpen, denoise) — hide for face recovery
+  document.querySelectorAll('.topaz-common').forEach(el => {
+    el.style.display = isFaceRecovery ? 'none' : '';
+  });
+}
+
 function openTopazSettings() {
   if (!currentUrl) { toast('Generate an image first'); return; }
   document.getElementById('topaz-panel').style.display = 'block';
+
   // Wire up slider value displays
   for (const [id, valId] of [
     ['topaz-creativity','topaz-creativity-val'],
@@ -1541,6 +1558,11 @@ function openTopazSettings() {
     const el = document.getElementById(id);
     if (el) el.oninput = () => document.getElementById(valId).textContent = el.value;
   }
+
+  // Wire model dropdown to show/hide sliders
+  const modelSelect = document.getElementById('topaz-model');
+  modelSelect.onchange = updateTopazSliderVisibility;
+  updateTopazSliderVisibility();
 }
 
 function closeTopazSettings() {
