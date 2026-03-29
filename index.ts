@@ -500,6 +500,68 @@ const server = Bun.serve({
     }
 
     // --- Public API: get characters (for UI) ---
+    // Pinterest pose search (proxy to avoid CORS)
+    if (url.pathname === "/api/pinterest" && req.method === "GET") {
+      try {
+        const query = url.searchParams.get("q") || "boudoir pose";
+        const bookmark = url.searchParams.get("bookmark") || "";
+
+        const pinterestUrl = `https://www.pinterest.com/resource/BaseSearchResource/get/`;
+        const params = new URLSearchParams({
+          source_url: `/search/pins/?q=${encodeURIComponent(query)}`,
+          data: JSON.stringify({
+            options: {
+              query,
+              scope: "pins",
+              bookmark: bookmark || undefined,
+              page_size: 25,
+            },
+          }),
+        });
+
+        const pRes = await fetch(`${pinterestUrl}?${params}`, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            Accept: "application/json, text/javascript, */*",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Pinterest-AppState": "active",
+          },
+        });
+
+        if (!pRes.ok) {
+          // Fallback: return empty with suggestion to paste URL
+          return Response.json({
+            pins: [],
+            message: "Pinterest search unavailable — paste a Pinterest image URL directly",
+          });
+        }
+
+        const pData = await pRes.json();
+        const results = pData?.resource_response?.data?.results || [];
+        const nextBookmark = pData?.resource_response?.bookmark || "";
+
+        const pins = results
+          .filter((r: any) => r?.images?.orig?.url)
+          .map((r: any) => ({
+            id: r.id,
+            description: (r.description || r.grid_title || "").slice(0, 100),
+            image: r.images.orig.url,
+            thumbnail: r.images["236x"]?.url || r.images.orig.url,
+            width: r.images.orig.width,
+            height: r.images.orig.height,
+            link: `https://pinterest.com/pin/${r.id}/`,
+          }));
+
+        return Response.json({ pins, bookmark: nextBookmark });
+      } catch (err: any) {
+        return Response.json({
+          pins: [],
+          message: "Pinterest search failed — paste a URL instead",
+          error: err.message,
+        });
+      }
+    }
+
     if (url.pathname === "/api/characters" && req.method === "GET") {
       const chars = await getCharacters();
       return Response.json(chars);

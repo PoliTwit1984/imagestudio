@@ -166,6 +166,13 @@
   .crop-btn.reset { background: #1a1a1a; border: 1px solid #333; color: #888; }
   .crop-hint { color: #555; font-size: 0.75rem; margin-top: 8px; }
 
+  /* Pinterest */
+  #pinterest-results img {
+    width: 100%; border-radius: 6px; cursor: pointer; border: 2px solid transparent;
+    transition: border-color 0.15s; object-fit: cover; aspect-ratio: 3/4;
+  }
+  #pinterest-results img:hover { border-color: #e60023; }
+
   /* Pose panel */
   .pose-panel {
     background: #101518; border: 1px solid #06b6d433; border-radius: 10px; padding: 14px; margin-bottom: 14px;
@@ -628,11 +635,34 @@
     <div class="controls">
       <button class="gen-btn" id="gen-btn" onclick="generate()" title="Generate image from your prompt using the selected engine and settings">Generate</button>
       <button class="pose-btn" onclick="openPoseRef()" title="Upload a reference photo to copy the pose — Grok analyzes the body position and feeds it into generation">Pose Ref</button>
+      <button class="pose-btn" onclick="openPinterest()" style="border-color:#e60023;color:#e60023;" title="Search Pinterest for pose references — find the pose you want, click to use it">Pinterest</button>
       <div class="engine-toggle grok" id="engine-toggle" onclick="toggleEngine()" title="GROK: img2img with face lock from character ref ($0.02-0.07/img) | FAL.AI: Flux LoRA with trained face model, zero content filter">GROK</div>
       <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()" title="PRO ($0.07): grok-imagine-image-pro, has content moderation | BASIC ($0.02): grok-imagine-image, no moderation but looser face lock">PRO $0.07</div>
       <select class="lora-select" id="lora-select" style="display:none;" title="Pick a LoRA for face consistency on fal.ai. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
         <option value="">Select LoRA...</option>
       </select>
+    </div>
+
+    <!-- Pinterest search panel -->
+    <div class="pose-panel" id="pinterest-panel" style="display:none;border-color:#e6002333;">
+      <div class="edit-label" style="color:#e60023;">Pinterest Pose Search</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <input type="text" id="pinterest-query" class="edit-input" value="boudoir pose ideas" placeholder="Search poses..." style="flex:1;font-size:0.85rem;">
+        <button class="action-btn" onclick="searchPinterest()" id="pinterest-search-btn" style="border-color:#e60023;color:#e60023;white-space:nowrap;">Search</button>
+        <button class="action-btn" onclick="closePinterest()">Close</button>
+      </div>
+      <div class="edit-presets" style="margin-bottom:8px;">
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='boudoir pose bedroom';searchPinterest()">bedroom</span>
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='boudoir pose standing';searchPinterest()">standing</span>
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='boudoir pose mirror';searchPinterest()">mirror</span>
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='lingerie pose ideas';searchPinterest()">lingerie</span>
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='boudoir pose couch sofa';searchPinterest()">couch</span>
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='boudoir pose bathtub';searchPinterest()">bathtub</span>
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='couples boudoir pose';searchPinterest()">couples</span>
+        <span class="chip" onclick="document.getElementById('pinterest-query').value='artistic nude pose photography';searchPinterest()">artistic</span>
+      </div>
+      <div id="pinterest-results" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:400px;overflow-y:auto;"></div>
+      <div id="pinterest-status" style="font-size:0.72rem;color:#555;margin-top:6px;text-align:center;"></div>
     </div>
 
     <!-- Pose reference panel -->
@@ -1568,6 +1598,68 @@ async function runMagnific() {
     btn.disabled = false; btn.textContent = 'Upscale with this prompt';
   }
 }
+
+// --- Pinterest Search ---
+
+function openPinterest() {
+  document.getElementById('pinterest-panel').style.display = 'block';
+}
+
+function closePinterest() {
+  document.getElementById('pinterest-panel').style.display = 'none';
+}
+
+async function searchPinterest() {
+  const query = document.getElementById('pinterest-query').value.trim();
+  if (!query) return;
+
+  const btn = document.getElementById('pinterest-search-btn');
+  const status = document.getElementById('pinterest-status');
+  const results = document.getElementById('pinterest-results');
+  btn.disabled = true; btn.textContent = '...';
+  status.textContent = 'Searching Pinterest...';
+  results.innerHTML = '';
+
+  try {
+    const res = await fetch(`/api/pinterest?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+
+    if (data.pins && data.pins.length > 0) {
+      results.innerHTML = data.pins.map(pin =>
+        `<img src="${pin.thumbnail}" alt="${pin.description}" title="${pin.description}" onclick="usePinterestPose('${pin.image}')" loading="lazy">`
+      ).join('');
+      status.textContent = `${data.pins.length} poses found — click one to use as reference`;
+    } else {
+      status.textContent = data.message || 'No results — try different keywords';
+    }
+  } catch (err) {
+    status.textContent = 'Search failed — paste a Pinterest URL in Pose Ref instead';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Search';
+  }
+}
+
+function usePinterestPose(imageUrl) {
+  // Close Pinterest, open Pose Ref with this URL pre-filled
+  closePinterest();
+  openPoseRef();
+  document.getElementById('pose-url-input').value = imageUrl;
+  // Show preview
+  const preview = document.getElementById('pose-preview');
+  preview.src = imageUrl;
+  preview.style.display = 'block';
+  toast('Pose selected — click Analyze or Generate with Pose');
+}
+
+// Handle Enter key in Pinterest search
+document.addEventListener('DOMContentLoaded', () => {
+  const pInput = document.getElementById('pinterest-query');
+  if (pInput) {
+    pInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') searchPinterest();
+    });
+  }
+});
 
 // --- Crop Tool ---
 let cropImage = null;
