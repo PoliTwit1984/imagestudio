@@ -1259,6 +1259,87 @@ RULES:
       }
     }
 
+    // VEED Fabric 1.0 — image + audio → talking head video
+    if (url.pathname === "/api/fabric" && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      try {
+        const body = await req.json();
+        const imageUrl = body.image_url || "";
+        const audioUrl = body.audio_url || "";
+        const resolution = body.resolution || "720p";
+        const charName = body.character || "luna";
+        if (!imageUrl || !audioUrl) {
+          return Response.json({ error: "image_url and audio_url required" }, { status: 400 });
+        }
+
+        // Submit to Replicate
+        const repRes = await fetch("https://api.replicate.com/v1/models/veed/fabric-1.0/predictions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env("REPLICATE_API_TOKEN")}`,
+            "Content-Type": "application/json",
+            Prefer: "wait=120",
+          },
+          body: JSON.stringify({
+            input: {
+              image: imageUrl,
+              audio: audioUrl,
+              resolution,
+            },
+          }),
+        });
+
+        if (!repRes.ok) {
+          const err = await repRes.text();
+          throw new Error(`Fabric ${repRes.status}: ${err}`);
+        }
+
+        const repData = await repRes.json();
+
+        if (repData.status === "failed") {
+          throw new Error(`Fabric failed: ${repData.error || "unknown"}`);
+        }
+
+        // If still processing, poll
+        let output = repData.output;
+        if (!output && repData.urls?.get) {
+          const maxWait = 300_000; // 5 min for video
+          const start = Date.now();
+          while (Date.now() - start < maxWait) {
+            await new Promise((r) => setTimeout(r, 5000));
+            const pollRes = await fetch(repData.urls.get, {
+              headers: { Authorization: `Bearer ${env("REPLICATE_API_TOKEN")}` },
+            });
+            const pollData = await pollRes.json();
+            if (pollData.status === "succeeded") {
+              output = pollData.output;
+              break;
+            } else if (pollData.status === "failed") {
+              throw new Error(`Fabric failed: ${pollData.error || "unknown"}`);
+            }
+          }
+          if (!output) throw new Error("Fabric timeout (5min)");
+        }
+
+        const videoUrl = typeof output === "string" ? output : output?.[0] || "";
+
+        // Save to generations
+        const character = await getCharacter(charName);
+        await saveGeneration({
+          character_id: character?.id,
+          character_name: charName,
+          scene: "[fabric-video]",
+          model: "veed-fabric-1.0",
+          image_url: videoUrl,
+          revised_prompt: "",
+        });
+
+        return Response.json({ ok: true, url: videoUrl, type: "video" });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     if (url.pathname === "/api/upscale" && req.method === "POST") {
       if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
       try {

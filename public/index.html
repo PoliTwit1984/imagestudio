@@ -657,11 +657,36 @@
         <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;">Magnific</button>
         <button class="action-btn" id="btn-topaz" onclick="runTopaz()" style="border-color:#00bcd4;color:#00bcd4;">Topaz</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;">Face Swap</button>
+        <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;">Fabric Video</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
         <button class="action-btn" onclick="copyUrl()">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()">Download</button>
       </div>
+      <!-- Fabric video panel -->
+      <div class="faceswap-panel" id="fabric-panel" style="display:none;border-color:#ff6b6b33;">
+        <div class="edit-label" style="color:#ff6b6b;">Fabric Video <span style="font-weight:400;color:#888;">— turn this image into a talking head video</span></div>
+        <div style="margin-bottom:8px;">
+          <div style="color:#888;font-size:0.75rem;">Upload audio (mp3/wav):</div>
+          <input type="file" id="fabric-audio-upload" accept="audio/*" style="font-size:0.8rem;color:#888;margin-top:4px;">
+        </div>
+        <div style="margin-bottom:8px;">
+          <div style="color:#555;font-size:0.72rem;">Or paste audio URL:</div>
+          <input type="text" id="fabric-audio-url" class="edit-input" placeholder="https://..." style="margin-top:4px;font-size:0.8rem;">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+          <div style="color:#888;font-size:0.75rem;">Resolution:</div>
+          <select id="fabric-resolution" style="background:#1a1a1a;border:1px solid #333;color:#ccc;padding:6px 10px;border-radius:6px;font-size:0.8rem;">
+            <option value="720p">720p</option>
+            <option value="1080p">1080p</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="edit-btn" id="fabric-go" onclick="runFabric()" style="background:linear-gradient(135deg,#ff6b6b,#ee5a24);">Generate Video</button>
+          <button class="action-btn" onclick="closeFabric()">Cancel</button>
+        </div>
+      </div>
+
       <!-- Face swap panel -->
       <div class="faceswap-panel" id="faceswap-panel" style="display:none;">
         <div class="edit-label">Face Swap <span style="font-weight:400;color:#888;">— pick a face to swap onto this image</span></div>
@@ -1647,6 +1672,84 @@ async function runPoseGenerate() {
     showEditStatus('Pose generate failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Generate with Pose';
+  }
+}
+
+// --- Fabric Video ---
+
+function openFabric() {
+  if (!currentUrl) { toast('Generate an image first'); return; }
+  document.getElementById('fabric-panel').style.display = 'block';
+  document.getElementById('fabric-audio-upload').value = '';
+  document.getElementById('fabric-audio-url').value = '';
+}
+
+function closeFabric() {
+  document.getElementById('fabric-panel').style.display = 'none';
+}
+
+async function runFabric() {
+  const fileInput = document.getElementById('fabric-audio-upload');
+  let audioUrl = document.getElementById('fabric-audio-url').value.trim();
+  const resolution = document.getElementById('fabric-resolution').value;
+
+  // Upload audio file to Supabase if provided
+  if (fileInput.files[0] && !audioUrl) {
+    const file = fileInput.files[0];
+    const ts = Date.now();
+    const ext = file.name.split('.').pop() || 'mp3';
+    const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
+    const upRes = await fetch(
+      `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/audio/fabric-${ts}.${ext}`,
+      { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': file.type, 'x-upsert': 'true' }, body: await file.arrayBuffer() }
+    );
+    if (upRes.ok) {
+      audioUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/audio/fabric-${ts}.${ext}`;
+    }
+  }
+
+  if (!audioUrl) { toast('Upload audio or paste a URL'); return; }
+
+  const btn = document.getElementById('fabric-go');
+  btn.disabled = true; btn.textContent = 'Generating video...';
+  showImgOverlay('Fabric generating talking video (~2-3 min)...');
+  showEditStatus('VEED Fabric processing — this takes 2-3 minutes...', 'loading');
+
+  try {
+    const res = await fetch('/api/fabric', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, audio_url: audioUrl, resolution, character: selectedChar })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Fabric failed');
+
+    // Show video instead of image
+    const resultArea = document.getElementById('result');
+    const img = document.getElementById('result-img');
+    img.style.display = 'none';
+    let vid = document.getElementById('result-video');
+    if (!vid) {
+      vid = document.createElement('video');
+      vid.id = 'result-video';
+      vid.controls = true;
+      vid.autoplay = true;
+      vid.style.cssText = 'width:100%;border-radius:12px;margin-bottom:12px;';
+      img.parentNode.insertBefore(vid, img);
+    }
+    vid.src = data.url;
+    vid.style.display = 'block';
+
+    pushVersion(data.url, 'fabric video');
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    closeFabric();
+    showEditStatus('Fabric video generated', 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Fabric failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Generate Video';
   }
 }
 
