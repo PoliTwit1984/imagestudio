@@ -563,11 +563,12 @@ const server = Bun.serve({
         }
 
         const fpData = await fpRes.json();
+        const toHttps = (url: string) => url.replace(/^http:\/\//, 'https://');
         const images = (fpData.data || []).map((item: any) => ({
           id: item.id,
           title: item.title || "",
-          thumbnail: item.image?.source?.url || item.thumbnail?.url || "",
-          image: item.image?.source?.url || "",
+          thumbnail: toHttps(item.image?.source?.url || item.thumbnail?.url || ""),
+          image: toHttps(item.image?.source?.url || ""),
           width: item.image?.source?.width || 0,
           height: item.image?.source?.height || 0,
         }));
