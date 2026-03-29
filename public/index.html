@@ -363,6 +363,23 @@
   .hist-item img:hover { border-color: #c850c0; }
   .hist-item .hist-char { position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #ccc; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; }
 
+  /* Tooltips — style native title with CSS where possible */
+  [title] { position: relative; }
+  .action-btn[title]:hover::after, .gen-btn[title]:hover::after, .enhance-btn[title]:hover::after,
+  .pose-btn[title]:hover::after, .engine-toggle[title]:hover::after, .model-toggle[title]:hover::after,
+  .edit-btn[title]:hover::after, .analyze-btn[title]:hover::after {
+    content: attr(title);
+    position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+    background: #222; color: #ccc; padding: 8px 12px; border-radius: 8px; font-size: 0.72rem;
+    white-space: normal; width: max-content; max-width: 280px; line-height: 1.4;
+    border: 1px solid #333; z-index: 100; pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  /* Hide native tooltip to avoid double */
+  .action-btn[title]:hover, .gen-btn[title]:hover, .enhance-btn[title]:hover,
+  .pose-btn[title]:hover, .engine-toggle[title]:hover, .model-toggle[title]:hover,
+  .edit-btn[title]:hover, .analyze-btn[title]:hover { title: none; }
+
   /* Prompt Builder */
   .builder { margin-bottom: 20px; }
   .builder-toggle {
@@ -445,7 +462,7 @@
     <textarea id="scene" placeholder="Build your prompt below, or just type freestyle and hit AI Enhance..."></textarea>
 
     <div class="enhance-row">
-      <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()">AI Enhance</button>
+      <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()" title="Grok 4.20 rewrites your prompt for maximum photorealism — adds lighting, camera, skin texture, film stock details">AI Enhance</button>
       <span class="enhance-hint">Grok rewrites your prompt for max realism</span>
       <button class="action-btn" style="margin-left:auto;font-size:0.75rem;" onclick="clearPrompt()">Clear</button>
     </div>
@@ -609,11 +626,11 @@
     </div>
 
     <div class="controls">
-      <button class="gen-btn" id="gen-btn" onclick="generate()">Generate</button>
-      <button class="pose-btn" onclick="openPoseRef()">Pose Ref</button>
-      <div class="engine-toggle grok" id="engine-toggle" onclick="toggleEngine()">GROK</div>
-      <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()">PRO $0.07</div>
-      <select class="lora-select" id="lora-select" style="display:none;">
+      <button class="gen-btn" id="gen-btn" onclick="generate()" title="Generate image from your prompt using the selected engine and settings">Generate</button>
+      <button class="pose-btn" onclick="openPoseRef()" title="Upload a reference photo to copy the pose — Grok analyzes the body position and feeds it into generation">Pose Ref</button>
+      <div class="engine-toggle grok" id="engine-toggle" onclick="toggleEngine()" title="GROK: img2img with face lock from character ref ($0.02-0.07/img) | FAL.AI: Flux LoRA with trained face model, zero content filter">GROK</div>
+      <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()" title="PRO ($0.07): grok-imagine-image-pro, has content moderation | BASIC ($0.02): grok-imagine-image, no moderation but looser face lock">PRO $0.07</div>
+      <select class="lora-select" id="lora-select" style="display:none;" title="Pick a LoRA for face consistency on fal.ai. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
         <option value="">Select LoRA...</option>
       </select>
     </div>
@@ -665,15 +682,15 @@
         </div>
       </div>
       <div class="result-actions">
-        <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')">Upscale</button>
-        <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;">Magnific</button>
-        <button class="action-btn" id="btn-topaz" onclick="runTopaz()" style="border-color:#00bcd4;color:#00bcd4;">Topaz</button>
-        <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;">Face Swap</button>
-        <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;">Fabric Video</button>
-        <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()">Telegram</button>
-        <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()">Discord</button>
-        <button class="action-btn" onclick="copyUrl()">Copy URL</button>
-        <button class="action-btn" onclick="downloadImg()">Download</button>
+        <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
+        <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Freepik Magnific Creative — Grok auto-generates a prompt, you edit it, then upscale with texture/detail injection. Can change face.">Magnific</button>
+        <button class="action-btn" id="btn-topaz" onclick="runTopaz()" style="border-color:#00bcd4;color:#00bcd4;" title="Topaz Bloom Realism — face enhancement (strength 0.5) + skin texture + upscale to 1536x2048. Best all-in-one. Creativity 2, texture 3, sharpen 0.4">Topaz</button>
+        <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="fal.ai face swap — pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
+        <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;" title="VEED Fabric 1.0 — turn this image into a talking head video. Type text → ElevenLabs voice → lip-synced video. ~2-3 min processing.">Fabric Video</button>
+        <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
+        <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
+        <button class="action-btn" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
+        <button class="action-btn" onclick="downloadImg()" title="Download the image to your device">Download</button>
       </div>
       <!-- Fabric video panel -->
       <div class="faceswap-panel" id="fabric-panel" style="display:none;border-color:#ff6b6b33;">
@@ -740,16 +757,16 @@
         <div class="edit-label">Edit this image</div>
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
-          <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;">AI</button>
-          <select class="edit-engine-select" id="edit-engine-select">
+          <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="Grok 4.20 rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
+          <select class="edit-engine-select" id="edit-engine-select" title="Grok: img2img re-generation (can change composition) | Bria: natural language edit (preserves composition) | P-Edit: Replicate prunaai edit (safety off, turbo off)">
             <option value="grok">Grok</option>
             <option value="fal">Bria Edit</option>
             <option value="pedit">P-Edit</option>
           </select>
-          <button class="edit-btn" id="edit-btn" onclick="editImage()">Edit</button>
+          <button class="edit-btn" id="edit-btn" onclick="editImage()" title="Apply the edit using the selected engine">Edit</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-          <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()">Grok Vision: Suggest Edits</button>
+          <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()" title="Sends the current image to the chat panel — your creative director prompt analyzes it and suggests edits as clickable tags">Grok Vision: Suggest Edits</button>
           <span class="enhance-hint" id="analyze-hint">Grok looks at the image and recommends improvements</span>
         </div>
         <div class="edit-status" id="edit-status" style="display:none;"></div>
