@@ -154,6 +154,18 @@
   .action-btn.dc { border-color: #5865f2; color: #5865f2; }
   .action-btn.sent { border-color: #50c878; color: #50c878; pointer-events: none; }
 
+  /* Crop tool */
+  .crop-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 200; flex-direction: column; align-items: center; justify-content: center; }
+  .crop-overlay.active { display: flex; }
+  .crop-container { position: relative; max-width: 90vw; max-height: 70vh; }
+  .crop-container canvas { border: 1px solid #333; border-radius: 8px; cursor: crosshair; max-width: 100%; max-height: 70vh; }
+  .crop-controls { display: flex; gap: 8px; margin-top: 12px; }
+  .crop-btn { padding: 8px 20px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: none; }
+  .crop-btn.confirm { background: #22c55e; color: black; }
+  .crop-btn.cancel { background: #333; color: #888; }
+  .crop-btn.reset { background: #1a1a1a; border: 1px solid #333; color: #888; }
+  .crop-hint { color: #555; font-size: 0.75rem; margin-top: 8px; }
+
   /* Pose panel */
   .pose-panel {
     background: #101518; border: 1px solid #06b6d433; border-radius: 10px; padding: 14px; margin-bottom: 14px;
@@ -842,6 +854,20 @@
   </div>
 </div>
 
+<!-- Crop tool overlay -->
+<div class="crop-overlay" id="crop-overlay">
+  <div style="color:#ccc;font-size:0.9rem;margin-bottom:8px;">Click and drag to select crop area</div>
+  <div class="crop-container">
+    <canvas id="crop-canvas"></canvas>
+  </div>
+  <div class="crop-controls">
+    <button class="crop-btn reset" onclick="cropReset()">Reset</button>
+    <button class="crop-btn cancel" onclick="cropCancel()">Cancel</button>
+    <button class="crop-btn confirm" onclick="cropConfirm()">Crop & Analyze</button>
+  </div>
+  <div class="crop-hint">Drag to select the area you want to keep</div>
+</div>
+
 <!-- Edit character modal -->
 <div class="modal-overlay" id="modal-edit-char">
   <div class="modal">
@@ -1526,6 +1552,141 @@ async function runMagnific() {
   }
 }
 
+// --- Crop Tool ---
+let cropImage = null;
+let cropCallback = null;
+let cropRect = { x: 0, y: 0, w: 0, h: 0 };
+let cropDragging = false;
+let cropStartX = 0, cropStartY = 0;
+let cropScale = 1;
+
+function openCropTool(imageSrc, callback) {
+  cropCallback = callback;
+  cropImage = new Image();
+  cropImage.crossOrigin = 'anonymous';
+  cropImage.onload = () => {
+    const canvas = document.getElementById('crop-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Scale to fit viewport
+    const maxW = window.innerWidth * 0.85;
+    const maxH = window.innerHeight * 0.65;
+    cropScale = Math.min(maxW / cropImage.width, maxH / cropImage.height, 1);
+    canvas.width = cropImage.width * cropScale;
+    canvas.height = cropImage.height * cropScale;
+
+    cropRect = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+    drawCrop(ctx, canvas);
+    document.getElementById('crop-overlay').classList.add('active');
+  };
+  cropImage.src = imageSrc;
+}
+
+function drawCrop(ctx, canvas) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(cropImage, 0, 0, canvas.width, canvas.height);
+
+  // Darken outside selection
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  // Top
+  ctx.fillRect(0, 0, canvas.width, cropRect.y);
+  // Bottom
+  ctx.fillRect(0, cropRect.y + cropRect.h, canvas.width, canvas.height - cropRect.y - cropRect.h);
+  // Left
+  ctx.fillRect(0, cropRect.y, cropRect.x, cropRect.h);
+  // Right
+  ctx.fillRect(cropRect.x + cropRect.w, cropRect.y, canvas.width - cropRect.x - cropRect.w, cropRect.h);
+
+  // Selection border
+  ctx.strokeStyle = '#22c55e';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const canvas = document.getElementById('crop-canvas');
+  if (!canvas) return;
+
+  canvas.addEventListener('mousedown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    cropStartX = e.clientX - rect.left;
+    cropStartY = e.clientY - rect.top;
+    cropDragging = true;
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (!cropDragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    cropRect = {
+      x: Math.min(cropStartX, x),
+      y: Math.min(cropStartY, y),
+      w: Math.abs(x - cropStartX),
+      h: Math.abs(y - cropStartY)
+    };
+    drawCrop(canvas.getContext('2d'), canvas);
+  });
+
+  canvas.addEventListener('mouseup', () => { cropDragging = false; });
+  canvas.addEventListener('mouseleave', () => { cropDragging = false; });
+
+  // Touch support
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    cropStartX = t.clientX - rect.left;
+    cropStartY = t.clientY - rect.top;
+    cropDragging = true;
+  });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (!cropDragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    const x = t.clientX - rect.left;
+    const y = t.clientY - rect.top;
+    cropRect = {
+      x: Math.min(cropStartX, x),
+      y: Math.min(cropStartY, y),
+      w: Math.abs(x - cropStartX),
+      h: Math.abs(y - cropStartY)
+    };
+    drawCrop(canvas.getContext('2d'), canvas);
+  });
+  canvas.addEventListener('touchend', () => { cropDragging = false; });
+});
+
+function cropReset() {
+  const canvas = document.getElementById('crop-canvas');
+  cropRect = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+  drawCrop(canvas.getContext('2d'), canvas);
+}
+
+function cropCancel() {
+  document.getElementById('crop-overlay').classList.remove('active');
+  cropCallback = null;
+}
+
+function cropConfirm() {
+  // Extract cropped area to a new canvas
+  const outCanvas = document.createElement('canvas');
+  const srcX = cropRect.x / cropScale;
+  const srcY = cropRect.y / cropScale;
+  const srcW = cropRect.w / cropScale;
+  const srcH = cropRect.h / cropScale;
+  outCanvas.width = srcW;
+  outCanvas.height = srcH;
+  outCanvas.getContext('2d').drawImage(cropImage, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+
+  // Convert to blob and callback
+  outCanvas.toBlob((blob) => {
+    document.getElementById('crop-overlay').classList.remove('active');
+    if (cropCallback) cropCallback(blob);
+  }, 'image/jpeg', 0.92);
+}
+
 // --- Pose Reference ---
 
 function openPoseRef() {
@@ -1540,49 +1701,53 @@ function closePoseRef() {
   document.getElementById('pose-panel').style.display = 'none';
 }
 
-// Auto-analyze pose when file uploaded
+// Auto-analyze pose when file uploaded — with crop tool
 document.addEventListener('DOMContentLoaded', () => {
   const poseUpload = document.getElementById('pose-upload');
   if (poseUpload) {
     poseUpload.addEventListener('change', async e => {
       const file = e.target.files[0];
       if (!file) return;
-      const preview = document.getElementById('pose-preview');
-      preview.src = URL.createObjectURL(file);
-      preview.style.display = 'block';
 
-      // Upload to Supabase then analyze
-      const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
-      const ts = Date.now();
-      const statusEl = document.getElementById('pose-analysis-status');
-      statusEl.textContent = 'Uploading & analyzing pose...';
-      statusEl.style.display = 'block';
+      // Open crop tool first
+      const objectUrl = URL.createObjectURL(file);
+      openCropTool(objectUrl, async (croppedBlob) => {
+        const preview = document.getElementById('pose-preview');
+        preview.src = URL.createObjectURL(croppedBlob);
+        preview.style.display = 'block';
 
-      try {
-        const upRes = await fetch(
-          `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/poses/pose-${ts}.jpeg`,
-          { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': file.type, 'x-upsert': 'true' }, body: await file.arrayBuffer() }
-        );
-        if (!upRes.ok) throw new Error('Upload failed');
-        const poseUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/poses/pose-${ts}.jpeg`;
-        document.getElementById('pose-url-input').value = poseUrl;
+        const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
+        const ts = Date.now();
+        const statusEl = document.getElementById('pose-analysis-status');
+        statusEl.textContent = 'Uploading cropped image & analyzing pose...';
+        statusEl.style.display = 'block';
+        statusEl.style.color = '#06b6d4';
 
-        // Analyze pose
-        statusEl.textContent = 'Grok analyzing pose...';
-        const res = await fetch('/api/analyze-pose', {
-          method: 'POST', headers: headers(),
-          body: JSON.stringify({ pose_image_url: poseUrl })
-        });
-        const data = await res.json();
-        if (data.ok) {
-          document.getElementById('pose-scene').value = data.poseDescription;
-          statusEl.textContent = 'Pose analyzed — edit the description below if needed';
-          statusEl.style.color = '#50c878';
-        } else throw new Error(data.error);
-      } catch (err) {
-        statusEl.textContent = 'Analysis failed: ' + err.message;
-        statusEl.style.color = '#e08080';
-      }
+        try {
+          const upRes = await fetch(
+            `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/poses/pose-${ts}.jpeg`,
+            { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': 'image/jpeg', 'x-upsert': 'true' }, body: croppedBlob }
+          );
+          if (!upRes.ok) throw new Error('Upload failed');
+          const poseUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/poses/pose-${ts}.jpeg`;
+          document.getElementById('pose-url-input').value = poseUrl;
+
+          statusEl.textContent = 'Grok analyzing pose...';
+          const res = await fetch('/api/analyze-pose', {
+            method: 'POST', headers: headers(),
+            body: JSON.stringify({ pose_image_url: poseUrl })
+          });
+          const data = await res.json();
+          if (data.ok) {
+            document.getElementById('pose-scene').value = data.poseDescription;
+            statusEl.textContent = 'Pose analyzed — edit the description below if needed';
+            statusEl.style.color = '#50c878';
+          } else throw new Error(data.error);
+        } catch (err) {
+          statusEl.textContent = 'Analysis failed: ' + err.message;
+          statusEl.style.color = '#e08080';
+        }
+      });
     });
   }
   const strengthSlider = document.getElementById('pose-strength');
