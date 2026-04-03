@@ -1056,7 +1056,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-let token = localStorage.getItem('studio-token') || '';
+let token = sessionStorage.getItem('studio-token') || localStorage.getItem('studio-token') || '';
 let selectedChar = 'luna';
 let currentModel = 'pro';
 let currentEngine = 'grok';
@@ -1069,12 +1069,47 @@ let loras = [];
 let versionStack = []; // [{url, label}]
 let versionIndex = -1;
 
-if (token) { showApp(); }
+localStorage.removeItem('studio-token');
+if (token) { restoreSession(); }
 
-function authenticate() {
-  token = document.getElementById('token-input').value;
-  if (!token) return;
-  localStorage.setItem('studio-token', token);
+async function verifySession(candidate = token) {
+  const authHeaders = candidate ? { 'Authorization': `Bearer ${candidate}` } : {};
+  try {
+    const res = await fetch('/api/session', { headers: authHeaders });
+    return await res.json();
+  } catch {
+    return { configured: false, authenticated: false };
+  }
+}
+
+async function restoreSession() {
+  const session = await verifySession(token);
+  if (session.authenticated) {
+    sessionStorage.setItem('studio-token', token);
+    showApp();
+    return;
+  }
+
+  token = '';
+  sessionStorage.removeItem('studio-token');
+}
+
+async function authenticate() {
+  const nextToken = document.getElementById('token-input').value.trim();
+  if (!nextToken) return;
+
+  const session = await verifySession(nextToken);
+  if (!session.configured) {
+    toast('Server auth is not configured');
+    return;
+  }
+  if (!session.authenticated) {
+    toast('Invalid studio token');
+    return;
+  }
+
+  token = nextToken;
+  sessionStorage.setItem('studio-token', token);
   showApp();
 }
 
@@ -1103,6 +1138,28 @@ async function loadLoras() {
 
 function headers() {
   return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+async function uploadAsset(fileOrBlob, { folder = 'uploads', filename = '' } = {}) {
+  const uploadFile = fileOrBlob instanceof File
+    ? fileOrBlob
+    : new File([fileOrBlob], filename || `${folder}-${Date.now()}`, {
+        type: fileOrBlob.type || 'application/octet-stream'
+      });
+
+  const form = new FormData();
+  form.append('file', uploadFile);
+  form.append('folder', folder);
+  if (filename) form.append('filename', filename);
+
+  const res = await fetch('/api/uploads', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}` },
+    body: form
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'Upload failed');
+  return data;
 }
 
 // --- Characters ---
@@ -2055,7 +2112,6 @@ document.addEventListener('DOMContentLoaded', () => {
         preview.src = URL.createObjectURL(croppedBlob);
         preview.style.display = 'block';
 
-        const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
         const ts = Date.now();
         const statusEl = document.getElementById('pose-analysis-status');
         statusEl.textContent = 'Uploading cropped image & analyzing pose...';
@@ -2063,12 +2119,11 @@ document.addEventListener('DOMContentLoaded', () => {
         statusEl.style.color = '#06b6d4';
 
         try {
-          const upRes = await fetch(
-            `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/poses/pose-${ts}.jpeg`,
-            { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': 'image/jpeg', 'x-upsert': 'true' }, body: croppedBlob }
-          );
-          if (!upRes.ok) throw new Error('Upload failed');
-          const poseUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/poses/pose-${ts}.jpeg`;
+          const upload = await uploadAsset(croppedBlob, {
+            folder: 'poses',
+            filename: `pose-${ts}.jpeg`
+          });
+          const poseUrl = upload.url;
           document.getElementById('pose-url-input').value = poseUrl;
 
           statusEl.textContent = 'Grok analyzing pose...';
@@ -2135,19 +2190,12 @@ async function runPoseGenerate() {
 
   // Upload file to Supabase if provided
   if (fileInput.files[0] && !poseUrl) {
-    const file = fileInput.files[0];
-    const ts = Date.now();
-    const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
-    const uploadRes = await fetch(
-      `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/poses/pose-${ts}.jpeg`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': file.type || 'image/jpeg', 'x-upsert': 'true' },
-        body: await file.arrayBuffer(),
-      }
-    );
-    if (uploadRes.ok) {
-      poseUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/poses/pose-${ts}.jpeg`;
+    try {
+      const upload = await uploadAsset(fileInput.files[0], { folder: 'poses' });
+      poseUrl = upload.url;
+    } catch (err) {
+      toast('Pose upload failed: ' + err.message);
+      return;
     }
   }
 
@@ -2241,9 +2289,7 @@ function closeFabric() {
 
 // --- Kling Video ---
 function openKling() {
-  if (!currentUrl) { toast('Generate an image first'); return; }
-  document.getElementById('kling-panel').style.display = 'block';
-  document.getElementById('kling-status').textContent = '';
+  toast('Kling video is not wired up on the server yet');
 }
 
 function closeKling() {
@@ -2251,52 +2297,7 @@ function closeKling() {
 }
 
 async function runKling() {
-  const prompt = document.getElementById('kling-prompt').value.trim();
-  const duration = document.getElementById('kling-duration').value;
-  const aspect = document.getElementById('kling-aspect').value;
-  const model = document.getElementById('kling-model').value;
-
-  const btn = document.getElementById('kling-go');
-  const status = document.getElementById('kling-status');
-  btn.disabled = true; btn.textContent = 'Generating...';
-  showImgOverlay(`Kling ${model} generating ${duration}s video...`);
-  status.textContent = 'Submitting to Kling...';
-  status.style.color = '#e879f9';
-
-  try {
-    const res = await fetch('/api/kling', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({ image_url: currentUrl, prompt, duration, aspect_ratio: aspect, model })
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Kling failed');
-
-    // Show video
-    const resultArea = document.getElementById('result');
-    const img = document.getElementById('result-img');
-    img.style.display = 'none';
-    let vid = document.getElementById('result-video');
-    if (!vid) {
-      vid = document.createElement('video');
-      vid.id = 'result-video';
-      vid.controls = true; vid.autoplay = true; vid.loop = true;
-      vid.style.cssText = 'max-width:100%;max-height:70vh;border-radius:8px;';
-      resultArea.insertBefore(vid, img);
-    }
-    vid.style.display = 'block';
-    vid.src = data.video_url;
-    status.textContent = `Done — ${duration}s ${model} video`;
-    status.style.color = '#50c878';
-    toast('Kling video ready');
-    hideImgOverlay();
-  } catch (err) {
-    hideImgOverlay();
-    status.textContent = 'Failed: ' + err.message;
-    status.style.color = '#e08080';
-    toast('Kling failed: ' + err.message);
-  } finally {
-    btn.disabled = false; btn.textContent = 'Generate Video';
-  }
+  toast('Kling video is not available yet');
 }
 
 async function runFabric() {
@@ -2307,26 +2308,11 @@ async function runFabric() {
   // Upload audio file to Supabase if provided (file takes priority over URL)
   if (fileInput.files[0]) {
     const file = fileInput.files[0];
-    const ts = Date.now();
-    const ext = file.name.split('.').pop() || 'mp3';
-    const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
     try {
-      const arrayBuf = await file.arrayBuffer();
-      const mimeMap = { mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm' };
-      const contentType = mimeMap[ext.toLowerCase()] || file.type || 'audio/mpeg';
-      const upRes = await fetch(
-        `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/audio/fabric-${ts}.${ext}`,
-        { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': contentType, 'x-upsert': 'true' }, body: arrayBuf }
-      );
-      if (upRes.ok) {
-        audioUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/audio/fabric-${ts}.${ext}`;
-      } else {
-        const err = await upRes.text();
-        toast('Audio upload failed: ' + err.slice(0, 80));
-        return;
-      }
+      const upload = await uploadAsset(file, { folder: 'audio' });
+      audioUrl = upload.url;
     } catch (err) {
-      toast('Audio upload error: ' + err);
+      toast('Audio upload error: ' + err.message);
       return;
     }
   }
@@ -2407,22 +2393,12 @@ async function runFaceSwap() {
 
   // If file uploaded, upload to Supabase first
   if (fileInput.files[0] && !faceUrl) {
-    const file = fileInput.files[0];
-    const ts = Date.now();
-    const uploadRes = await fetch(
-      `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/faces/upload-${ts}.jpeg`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${document.querySelector('meta[name="supabase-key"]')?.content || ''}`,
-          'Content-Type': file.type || 'image/jpeg',
-          'x-upsert': 'true',
-        },
-        body: await file.arrayBuffer(),
-      }
-    );
-    if (uploadRes.ok) {
-      faceUrl = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/faces/upload-${ts}.jpeg`;
+    try {
+      const upload = await uploadAsset(fileInput.files[0], { folder: 'faces' });
+      faceUrl = upload.url;
+    } catch (err) {
+      toast('Face upload failed: ' + err.message);
+      return;
     }
   }
 
@@ -2501,20 +2477,12 @@ function uploadImage() { (document.getElementById('upload-input-main') || docume
 async function handleUpload(input) {
   const file = input.files[0];
   if (!file) return;
-  const ts = Date.now();
-  const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYmF6ZmZucnV5aXRibHl4eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NzA4MTYsImV4cCI6MjA4NzI0NjgxNn0.e6vpdp1dM-xci3qxi7_cMc_ixWV16CcGhZPS-tJxLLo';
 
   showEditStatus('Uploading...', 'loading');
   try {
-    const arrayBuf = await file.arrayBuffer();
-    const ext = file.name.split('.').pop() || 'jpg';
-    const path = `uploads/upload-${ts}.${ext}`;
-    const upRes = await fetch(
-      `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/image-studio/${path}`,
-      { method: 'POST', headers: { Authorization: `Bearer ${anonKey}`, 'Content-Type': file.type || 'image/jpeg', 'x-upsert': 'true' }, body: arrayBuf }
-    );
-    if (upRes.ok) {
-      const url = `https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/${path}`;
+    const upload = await uploadAsset(file, { folder: 'uploads' });
+    if (upload.url) {
+      const url = upload.url;
       if (currentUrl) pushVersion(currentUrl, 'before upload');
       currentUrl = url;
       document.getElementById('result-img').src = url;
@@ -2522,12 +2490,9 @@ async function handleUpload(input) {
       resetSendBtns();
       showEditStatus('Uploaded — use the tools to edit, enhance, or face swap', 'success');
       toast('Image uploaded');
-    } else {
-      const err = await upRes.text();
-      showEditStatus('Upload failed: ' + err.slice(0, 80), 'error');
     }
   } catch (err) {
-    showEditStatus('Upload error: ' + err, 'error');
+    showEditStatus('Upload error: ' + err.message, 'error');
   }
   input.value = '';
 }
