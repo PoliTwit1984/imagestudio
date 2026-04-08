@@ -96,6 +96,77 @@ export async function handlePublicRoutes(
     }
   }
 
+  // Reddit pose search — server-side fetch from old.reddit.com JSON API
+  if (url.pathname === "/api/pose-search-reddit" && req.method === "GET") {
+    try {
+      const subreddit = url.searchParams.get("sub") || "DrawMeNSFW";
+      const sort = url.searchParams.get("sort") || "hot";
+      const after = url.searchParams.get("after") || "";
+      const limit = 24;
+
+      const redditUrl = `https://old.reddit.com/r/${subreddit}/${sort}.json?limit=${limit}&raw_json=1${after ? `&after=${after}` : ""}`;
+      let data: any;
+      const res = await fetch(redditUrl, {
+        headers: { "User-Agent": "StudioBot/1.0" },
+      });
+
+      if (!res.ok) {
+        const fallbackUrl = `https://www.reddit.com/r/${subreddit}/${sort}.json?limit=${limit}&raw_json=1${after ? `&after=${after}` : ""}`;
+        const res2 = await fetch(fallbackUrl, {
+          headers: { "User-Agent": "StudioBot/1.0" },
+        });
+        if (!res2.ok) {
+          return Response.json({ images: [], message: `Reddit ${res.status}/${res2.status}` });
+        }
+        data = await res2.json();
+      } else {
+        data = await res.json();
+      }
+
+      const posts = data?.data?.children || [];
+      const images = posts
+        .filter((p: any) => {
+          const d = p.data;
+          const u = d.url || "";
+          return (
+            !d.is_self &&
+            !d.is_video &&
+            (u.match(/\.(jpg|jpeg|png|gif|webp)$/i) ||
+              u.includes("i.redd.it") ||
+              u.includes("i.imgur.com"))
+          );
+        })
+        .map((p: any) => {
+          const d = p.data;
+          let imgUrl = d.url || "";
+          if (imgUrl.includes("imgur.com") && !imgUrl.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+            imgUrl = imgUrl.replace("imgur.com", "i.imgur.com") + ".jpg";
+          }
+          const thumb =
+            d.preview?.images?.[0]?.resolutions?.slice(-1)?.[0]?.url ||
+            d.thumbnail ||
+            imgUrl;
+          return {
+            id: d.id,
+            title: d.title || "",
+            thumbnail: thumb,
+            image: imgUrl,
+          };
+        });
+
+      const nextAfter = data?.data?.after || null;
+      return Response.json({
+        images,
+        page: after ? 2 : 1,
+        totalPages: nextAfter ? 99 : 1,
+        after: nextAfter,
+        subreddit,
+      });
+    } catch (err: any) {
+      return Response.json({ images: [], message: err.message });
+    }
+  }
+
   if (url.pathname === "/api/characters" && req.method === "GET") {
     const chars = await deps.getCharacters();
     return Response.json(chars);

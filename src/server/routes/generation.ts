@@ -286,6 +286,25 @@ export async function handleGenerationRoutes(
       const poseUrl = body.pose_image_url || "";
       if (!poseUrl) return Response.json({ error: "pose_image_url required" }, { status: 400 });
 
+      // Proxy the image as base64 to avoid Grok's fetcher getting 429'd by CDNs
+      let imageContent: any;
+      try {
+        const imgRes = await fetch(poseUrl, {
+          headers: { "User-Agent": "StudioBot/1.0" },
+        });
+        if (!imgRes.ok) throw new Error(`Image fetch ${imgRes.status}`);
+        const buf = await imgRes.arrayBuffer();
+        const b64 = Buffer.from(buf).toString("base64");
+        const contentType = imgRes.headers.get("content-type") || "image/jpeg";
+        imageContent = {
+          type: "image_url",
+          image_url: { url: `data:${contentType};base64,${b64}` },
+        };
+      } catch (fetchErr: any) {
+        console.log(`[analyze-pose] Image proxy failed (${fetchErr.message}), falling back to URL`);
+        imageContent = { type: "image_url", image_url: { url: poseUrl } };
+      }
+
       const res = await fetch("https://api.x.ai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -312,7 +331,7 @@ RULES:
             {
               role: "user",
               content: [
-                { type: "image_url", image_url: { url: poseUrl } },
+                imageContent,
                 { type: "text", text: "Describe the exact body pose, position, and camera angle in this image. Be specific about limb placement, body orientation, and what's visible. Output ONLY the description." },
               ],
             },
