@@ -736,6 +736,7 @@
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
         <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Freepik Magnific Creative — Grok auto-generates a prompt, you edit it, then upscale with texture/detail injection. Can change face.">Magnific</button>
         <button class="action-btn" id="btn-topaz" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Topaz Bloom Realism — face enhancement + skin texture + upscale. Click to adjust settings.">Topaz</button>
+        <button class="action-btn" id="btn-enhancor" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Enhancor v3 skin enhancement — body mode, level 65, face locked. Good for realistic skin texture on nudes where Topaz/Magnific blur out.">Enhancor</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="fal.ai face swap — pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
         <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;" title="VEED Fabric 1.0 — turn this image into a talking head video. Type text → ElevenLabs voice → lip-synced video. ~2-3 min processing.">Fabric Video</button>
         <button class="action-btn" id="btn-kling" onclick="openKling()" style="border-color:#e879f9;color:#e879f9;" title="Kling Pro — image to video with motion. 5s or 10s. High quality cinematic motion.">Kling Video</button>
@@ -1767,6 +1768,44 @@ async function runTopaz() {
     showEditStatus('Topaz failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Topaz';
+  }
+}
+
+async function runEnhancor() {
+  if (!currentUrl) return;
+  const btn = document.getElementById('btn-enhancor');
+  btn.disabled = true; btn.textContent = '...';
+  showImgOverlay('Enhancor v3 — body skin enhance, face locked...');
+  showEditStatus('Enhancor processing — this can take 30-90s...', 'loading');
+
+  try {
+    const res = await fetch('/api/enhancor', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        character: selectedChar,
+        enhancement_type: 'body',
+        refinement_level: 65,
+        realism_level: 1.5,
+        portrait_depth: 0.3,
+        output_resolution: 2048,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Enhancor failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, 'enhancor v3');
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    showEditStatus(`Enhancor v3 applied — skin realism (cost ${data.cost} credits)`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Enhancor failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Enhancor';
   }
 }
 

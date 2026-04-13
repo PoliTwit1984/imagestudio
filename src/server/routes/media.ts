@@ -179,6 +179,91 @@ export async function handleMediaRoutes(
     }
   }
 
+  if (url.pathname === "/api/enhancor" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    try {
+      const body = await req.json();
+      const imageUrl = body.image_url || "";
+      const charName = body.character || "luna";
+      const enhancementType = body.enhancement_type || "body";
+      const refinementLevel = body.refinement_level ?? 65;
+      const realismLevel = body.realism_level ?? 1.5;
+      const portraitDepth = body.portrait_depth ?? 0.3;
+      const outputResolution = body.output_resolution ?? 2048;
+      if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
+
+      const submitRes = await fetch("https://apireq.enhancor.ai/api/realistic-skin/v1/queue", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": env("ENHANCOR_API_KEY"),
+        },
+        body: JSON.stringify({
+          img_url: imageUrl,
+          webhookUrl: "https://webhook.site/placeholder",
+          model_version: "enhancorv3",
+          enhancementType,
+          skin_refinement_level: refinementLevel,
+          skin_realism_Level: realismLevel,
+          portrait_depth: portraitDepth,
+          output_resolution: outputResolution,
+          r_eye: true,
+          l_eye: true,
+          mouth: true,
+          u_lip: true,
+          l_lip: true,
+          hair: false,
+        }),
+      });
+
+      if (!submitRes.ok) {
+        const err = await submitRes.text();
+        throw new Error(`Enhancor submit ${submitRes.status}: ${err}`);
+      }
+
+      const submitData = await submitRes.json();
+      const requestId = submitData.requestId;
+      if (!requestId) throw new Error("Enhancor did not return requestId");
+
+      const maxWait = 180_000;
+      const start = Date.now();
+
+      while (Date.now() - start < maxWait) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        const statusRes = await fetch("https://apireq.enhancor.ai/api/realistic-skin/v1/status", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": env("ENHANCOR_API_KEY"),
+          },
+          body: JSON.stringify({ request_id: requestId }),
+        });
+        const statusData = await statusRes.json();
+
+        if (statusData.status === "COMPLETED" && statusData.result) {
+          const character = await deps.getCharacter(charName);
+          await deps.saveGeneration({
+            character_id: character?.id,
+            character_name: charName,
+            scene: `[enhancor-v3-${enhancementType}]`,
+            model: "enhancor-v3",
+            image_url: statusData.result,
+            revised_prompt: "",
+          });
+          return Response.json({ ok: true, url: statusData.result, cost: statusData.cost });
+        }
+
+        if (statusData.status === "FAILED") {
+          throw new Error("Enhancor processing failed");
+        }
+      }
+
+      throw new Error("Enhancor timeout (180s)");
+    } catch (err: any) {
+      return Response.json({ error: err.message }, { status: 500 });
+    }
+  }
+
   if (url.pathname === "/api/tts" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     try {
