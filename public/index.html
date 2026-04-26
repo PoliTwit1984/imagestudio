@@ -896,12 +896,22 @@
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
           <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="Grok 4.20 rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
-          <select class="edit-engine-select" id="edit-engine-select" title="Grok: img2img re-generation (can change composition) | Bria: natural language edit (preserves composition) | P-Edit: Replicate prunaai edit (safety off, turbo off)">
+          <select class="edit-engine-select" id="edit-engine-select" title="Grok: img2img re-gen (can change composition) | Bria: NL edit (preserves composition) | P-Edit: prunaai (safety off) | GPT-Image-2: April 2026 OpenAI model, best quality on safe edits | Smart: auto pick GPT first, fall back to P-Edit">
             <option value="grok">Grok</option>
             <option value="fal">Bria Edit</option>
             <option value="pedit">P-Edit</option>
+            <option value="gpt">GPT Image 2</option>
+            <option value="smart">Smart (auto)</option>
           </select>
           <button class="edit-btn" id="edit-btn" onclick="editImage()" title="Apply the edit using the selected engine">Edit</button>
+        </div>
+        <div class="edit-row" style="margin-top:8px;">
+          <button class="edit-btn" id="make-nsfw-btn" onclick="makeNsfw()" style="background:linear-gradient(135deg,#dc2626,#9333ea);border-color:transparent;flex:1;" title="P-Edit transforms the image (NSFW or anything) → Topaz Bloom Realism upscaler. The Joe pipeline in one click.">🔥 Make NSFW + Upscale</button>
+          <select class="edit-engine-select" id="make-nsfw-upscaler" title="Which upscaler to run after P-Edit">
+            <option value="topaz">Topaz Bloom</option>
+            <option value="freepik">Freepik Skin</option>
+            <option value="none">None (P-Edit only)</option>
+          </select>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()" title="Sends the current image to the chat panel — your creative director prompt analyzes it and suggests edits as clickable tags">Grok Vision: Suggest Edits</button>
@@ -1617,18 +1627,35 @@ async function editImage() {
   showImgOverlay(`Editing with ${editEngine.toUpperCase()}...`);
   showEditStatus(`Editing with ${editEngine.toUpperCase()}... "${editPrompt.slice(0, 60)}"`, 'loading');
 
+  // GPT Image 2 and Smart route through /api/smart-edit (different shape)
+  const isSmartEdit = editEngine === 'gpt' || editEngine === 'smart';
+
   try {
-    const res = await fetch('/api/edit', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({
-        source_url: currentUrl,
-        edit_prompt: editPrompt,
-        model: currentModel,
-        engine: editEngine,
-        lora: currentLora,
-        character: selectedChar
-      })
-    });
+    let res;
+    if (isSmartEdit) {
+      res = await fetch('/api/smart-edit', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({
+          image_url: currentUrl,
+          prompt: editPrompt,
+          prefer_model: editEngine === 'gpt' ? 'gpt' : 'auto',
+          character: selectedChar,
+          scene: editPrompt
+        })
+      });
+    } else {
+      res = await fetch('/api/edit', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({
+          source_url: currentUrl,
+          edit_prompt: editPrompt,
+          model: currentModel,
+          engine: editEngine,
+          lora: currentLora,
+          character: selectedChar
+        })
+      });
+    }
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Edit failed');
 
@@ -1640,12 +1667,56 @@ async function editImage() {
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
-    showEditStatus(`Edit applied via ${(data.engine || editEngine).toUpperCase()} (v${versionIndex + 1}/${versionStack.length})`, 'success');
+    const usedModel = data.model || data.engine || editEngine;
+    const fallbackNote = data.fallback_reason ? ` (fallback: ${data.fallback_reason})` : '';
+    showEditStatus(`Edit applied via ${String(usedModel).toUpperCase()}${fallbackNote} (v${versionIndex + 1}/${versionStack.length})`, 'success');
   } catch (err) {
     hideImgOverlay();
     showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Edit';
+  }
+}
+
+async function makeNsfw() {
+  if (!currentUrl) { toast('Generate an image first'); return; }
+  const editPrompt = document.getElementById('edit-input').value.trim();
+  if (!editPrompt) { toast('Describe what to transform (e.g., "remove the robe", "add lingerie")'); return; }
+
+  const upscaler = document.getElementById('make-nsfw-upscaler').value;
+  const btn = document.getElementById('make-nsfw-btn');
+  const originalText = btn.textContent;
+  btn.disabled = true; btn.textContent = '🔥 P-Edit + ' + upscaler.toUpperCase() + '...';
+  showImgOverlay(`P-Edit transform → ${upscaler}...`);
+  showEditStatus(`Make NSFW pipeline running... "${editPrompt.slice(0, 60)}"`, 'loading');
+
+  try {
+    const res = await fetch('/api/make-nsfw', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        prompt: editPrompt,
+        upscaler: upscaler,
+        character: selectedChar,
+        scene: editPrompt
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Make-NSFW failed');
+
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `make-nsfw: ${editPrompt.slice(0, 40)}`);
+    document.getElementById('edit-input').value = '';
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    showEditStatus(`Make NSFW + ${data.stages?.upscaler || upscaler} done (v${versionIndex + 1}/${versionStack.length})`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus(`Make NSFW failed: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = originalText;
   }
 }
 
