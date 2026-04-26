@@ -3,6 +3,7 @@ import { handleDeliveryRoutes } from "./delivery";
 import { handleGenerationRoutes } from "./generation";
 import { handleMediaRoutes } from "./media";
 import { handlePublicRoutes } from "./public";
+import { handleSafeEditRoutes } from "./safe-edit";
 import { handleSettingsRoutes } from "./settings";
 import type { AppRouteHandler, RouteDeps } from "./types";
 
@@ -14,6 +15,7 @@ export function createApiRouteHandlers(deps: RouteDeps): AppRouteHandler[] {
     (req, url) => handleGenerationRoutes(req, url, deps),
     (req, url) => handleMediaRoutes(req, url, deps),
     (req, url) => handleDeliveryRoutes(req, url, deps),
+    (req, url) => handleSafeEditRoutes(req, url, deps),
   ];
 }
 
