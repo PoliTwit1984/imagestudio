@@ -6,11 +6,17 @@
 // Purpose: Declare every available processing engine with its capabilities,
 //          cost model, and recommended use-cases so the API layer can do
 //          intent-based routing without hard-coding engine selection.
+//          Also exports pickEngine() for intent-based engine selection and
+//          retryWithFallback() for failure recovery with legacy engine fallback.
 //
-// Inputs:  (none — pure static data)
+// Inputs:  (none for static data; pickEngine/retryWithFallback take strings)
 // Outputs: Engine type definition + ENHANCOR_ENGINES const (7 entries)
-// Side effects: none
-// Failure behavior: n/a — no I/O at module load time
+//          pickEngine — best-matching Engine or null
+//          retryWithFallback — fallback engine id string or null; logs failure
+// Side effects: retryWithFallback makes an async POST to the engine_failures
+//               table via PostgREST (fire-and-forget, silent on error).
+// Failure behavior: pickEngine/retryWithFallback return null on no match.
+//                   retryWithFallback log POST failures are swallowed.
 //
 // Cost note: cost_credits values are estimated from observed Enhancor API
 // responses (cost field returned on COMPLETED status). Enhancor does not
@@ -19,6 +25,8 @@
 // =============================================================================
 
 import type { EnhancorModelSlug } from "./enhancor";
+import { SUPABASE_URL } from "./config";
+import { encodeFilterValue, supaHeaders } from "./supabase";
 
 // ---------------------------------------------------------------------------
 // Quality tiers — coarse resolution bands to aid routing decisions.
@@ -167,3 +175,130 @@ export const ENHANCOR_ENGINES: Engine[] = [
     recommended_for: ["general-upscale", "cheap-fallback"],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// pickEngine — intent-based engine selection
+//
+// Maps a free-text intent string (and optional inputShape hint) to the best
+// matching Engine from ENHANCOR_ENGINES using tag matching rules.
+//
+// Matching rules (evaluated in priority order — first match wins):
+//   "skin realism" / "portrait" / "make this skin look real" → skin-pro
+//   "cinematic" / "movie look" / "dramatic"                  → lens-cinema
+//   "realistic" / "photorealism"                             → lens-reality
+//   "upscale" + portrait inputShape                          → sharpen-portrait
+//   "upscale" (general)                                      → sharpen
+//   "finish" / "make it pop" / "cinematic finish"            → develop
+//   "generate" (no other modifier)                           → lens-pro
+//
+// Returns null if no rule matches.
+// ---------------------------------------------------------------------------
+
+export function pickEngine(intent: string, inputShape?: string): Engine | null {
+  const i = intent.toLowerCase();
+  const shape = (inputShape ?? "").toLowerCase();
+
+  // Skin / portrait realism — highest specificity first
+  if (
+    i.includes("skin realism") ||
+    i.includes("make this skin look real") ||
+    i.includes("portrait")
+  ) {
+    return ENHANCOR_ENGINES.find((e) => e.id === "skin-pro") ?? null;
+  }
+
+  // Cinematic / movie look / dramatic
+  if (i.includes("movie look") || i.includes("cinematic") || i.includes("dramatic")) {
+    // "cinematic finish" belongs to develop — check that it's not a finish intent
+    if (!i.includes("finish") && !i.includes("make it pop")) {
+      return ENHANCOR_ENGINES.find((e) => e.id === "lens-cinema") ?? null;
+    }
+  }
+
+  // Photorealism / realistic
+  if (i.includes("photorealism") || i.includes("realistic")) {
+    return ENHANCOR_ENGINES.find((e) => e.id === "lens-reality") ?? null;
+  }
+
+  // Upscale — check portrait hint first
+  if (i.includes("upscale")) {
+    if (shape.includes("portrait") || i.includes("portrait")) {
+      return ENHANCOR_ENGINES.find((e) => e.id === "sharpen-portrait") ?? null;
+    }
+    return ENHANCOR_ENGINES.find((e) => e.id === "sharpen") ?? null;
+  }
+
+  // Finish / make it pop / cinematic finish
+  if (i.includes("finish") || i.includes("make it pop")) {
+    return ENHANCOR_ENGINES.find((e) => e.id === "develop") ?? null;
+  }
+
+  // Generate (no other modifier — must be checked after more specific rules above)
+  if (i.includes("generate")) {
+    return ENHANCOR_ENGINES.find((e) => e.id === "lens-pro") ?? null;
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// retryWithFallback — failure recovery routing
+//
+// When an Enhancor engine returns FAILED, returns the id of the appropriate
+// legacy fallback engine and logs the failure to the engine_failures table.
+//
+// Fallback table:
+//   skin-pro                        → "topaz_skin"
+//   lens-pro / lens-cinema / lens-reality → "grok_image"
+//   develop / sharpen-portrait / sharpen  → "topaz_upscale"
+//
+// Returns null if originalEngineId is unrecognised.
+//
+// NOTE: The engine_failures table is expected to be created by a separate
+// database migration (not in scope for this file). The PostgREST INSERT will
+// silently fail until that migration is applied — this is intentional so the
+// fallback path remains available in dev / branch envs without a DB.
+// ---------------------------------------------------------------------------
+
+const FALLBACK_MAP: Record<string, string> = {
+  "skin-pro": "topaz_skin",
+  "lens-pro": "grok_image",
+  "lens-cinema": "grok_image",
+  "lens-reality": "grok_image",
+  "develop": "topaz_upscale",
+  "sharpen-portrait": "topaz_upscale",
+  "sharpen": "topaz_upscale",
+};
+
+export async function retryWithFallback(
+  originalEngineId: string,
+  intent: string,
+  inputShape?: string
+): Promise<string | null> {
+  const fallbackEngine = FALLBACK_MAP[originalEngineId] ?? null;
+
+  // Fire-and-forget: log the failure to engine_failures via PostgREST.
+  // Swallow all errors — a logging failure must never block the fallback path.
+  if (SUPABASE_URL) {
+    const logUrl = `${SUPABASE_URL}/rest/v1/engine_failures`;
+    const body = {
+      original_engine: originalEngineId,
+      fallback_engine: fallbackEngine,
+      reason: `engine FAILED — intent: "${intent}"${inputShape ? `, inputShape: "${inputShape}"` : ""}`,
+      created_at: new Date().toISOString(),
+    };
+    fetch(logUrl, {
+      method: "POST",
+      headers: {
+        ...supaHeaders(),
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(body),
+    }).catch(() => {
+      // Intentionally swallowed — logging is best-effort.
+    });
+  }
+
+  return fallbackEngine;
+}
