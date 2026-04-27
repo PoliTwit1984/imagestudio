@@ -96,7 +96,7 @@ async function updateGeneration(id: string, fields: any) {
 async function generateGrok(
   character: any,
   scene: string,
-  model: string,
+  _model: string,
   polish: boolean = false
 ): Promise<{ url: string; revisedPrompt: string; engine: string }> {
   const refUrl = character.ref_image_url;
@@ -108,6 +108,9 @@ async function generateGrok(
   // Darkroom Polish: Lens (Grok) gets the realism stanza when toggle is on.
   prompt = applyDarkroomPolish(prompt, "lens", polish);
 
+  // Lens always uses grok-imagine-image-pro — BASIC tier removed in Darkroom
+  // v1 cleanup. PRO's edit moderation is looser despite the surface
+  // contradiction with the BASIC/PRO label naming.
   const res = await fetch("https://api.x.ai/v1/images/edits", {
     method: "POST",
     headers: {
@@ -115,7 +118,7 @@ async function generateGrok(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: model === "basic" ? "grok-imagine-image" : "grok-imagine-image-pro",
+      model: "grok-imagine-image-pro",
       prompt,
       image: { url: refUrl, type: "image_url" },
       n: 1,
@@ -369,7 +372,7 @@ export function applyDarkroomPolish(prompt: string, engine: string, polish: bool
 // Grok is FLUX-based — natural language over tag stacks, NO negative prompts,
 // 5-part director-style structure, body-language anchors at the end.
 
-const ENHANCE_SYSTEM_DEFAULT = `You are an expert prompt engineer for xAI's Grok image generation model (grok-imagine-image / -pro). The model is FLUX.1-based, which means it rewards natural-language scene descriptions and IGNORES negative prompts.
+const ENHANCE_SYSTEM_DEFAULT = `You are an expert prompt engineer for xAI's Grok image generation model (grok-imagine-image-pro). The model is FLUX.1-based, which means it rewards natural-language scene descriptions and IGNORES negative prompts.
 
 # RULE ZERO — DO NOT INVENT MISSING DETAILS
 
@@ -433,7 +436,7 @@ If the user's prompt is missing required information, leave an angle-bracket pla
 Output: ONLY the enhanced prompt text. No JSON, no explanation, no quotes, no preamble.
 `;
 
-const ENHANCE_EDIT_SYSTEM_DEFAULT = `You are an expert prompt engineer for xAI's Grok image EDITING endpoint (/v1/images/edits, model grok-imagine-image / -pro). The model is FLUX.1-based: natural language wins, NEGATIVE PROMPTS ARE IGNORED.
+const ENHANCE_EDIT_SYSTEM_DEFAULT = `You are an expert prompt engineer for xAI's Grok image EDITING endpoint (/v1/images/edits, model grok-imagine-image-pro). The model is FLUX.1-based: natural language wins, NEGATIVE PROMPTS ARE IGNORED.
 
 # RULE ZERO — DO NOT INVENT MISSING DETAILS
 

@@ -166,7 +166,6 @@ export async function handleGenerationRoutes(
       const body = await req.json();
       const sourceUrl = body.source_url || "";
       const editPrompt = body.edit_prompt || "";
-      const model = body.model || "pro";
       const engine = body.engine || "grok";
       const charName = body.character || "luna";
       if (!sourceUrl || !editPrompt) {
@@ -243,7 +242,7 @@ export async function handleGenerationRoutes(
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: model === "basic" ? "grok-imagine-image" : "grok-imagine-image-pro",
+            model: "grok-imagine-image-pro",
             prompt: [
               IDENTITY_ANCHOR,
               `same person same scene but ${editPrompt}`,
@@ -273,7 +272,7 @@ export async function handleGenerationRoutes(
         character_id: character?.id,
         character_name: charName,
         scene: `[edit] ${editPrompt}`,
-        model: `${engine}/${model}`,
+        model: `${engine}/pro`,
         image_url: resultUrl,
         revised_prompt: revisedPrompt,
       });
@@ -290,7 +289,10 @@ export async function handleGenerationRoutes(
       const body = await req.json();
       const charName = body.character || "luna";
       const scene = body.scene || "";
-      const model = body.model || "pro";
+      // Lens uses grok-imagine-image-pro only — BASIC tier removed (Darkroom v1
+      // cleanup): PRO is more permissive for editing despite the surface
+      // contradiction.
+      const model = "pro";
       const engine = body.engine || "grok";
       if (!scene) return Response.json({ error: "scene required" }, { status: 400 });
 

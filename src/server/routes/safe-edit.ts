@@ -205,7 +205,11 @@ export async function handleSafeEditRoutes(
   if (url.pathname.startsWith("/api/preset/") && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     const slug = url.pathname.slice("/api/preset/".length);
-    return handleApplyPreset(req, slug, deps);
+    // ?with_lut=true asks the handler to also blend the curated Hald-CLUT
+    // (if any) for this slug on top of the engine result. Default = off so
+    // existing callers see no behavior change.
+    const withLut = url.searchParams.get("with_lut") === "true";
+    return handleApplyPreset(req, slug, deps, { withLut });
   }
 
   // ---------------------------------------------------------------------------
@@ -1038,11 +1042,16 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
 
 // /api/preset/:slug — apply a Darkroom preset to an image_url.
 // Body: { image_url, intensity? = 'low'|'medium'|'high' (default 'medium') }
-// Returns: { ok, url, slug, intensity, name }
+// Query: ?with_lut=true → if a curated Hald-CLUT exists for this slug
+//   (CURATED_LUT_REFS[slug] !== null), additionally apply it to the engine
+//   result and return the LUT-blended URL alongside the raw engine output.
+//   Default = off (additive feature, no behavior change for existing callers).
+// Returns: { ok, url, slug, intensity, name, lut_url?, lut_applied? }
 async function handleApplyPreset(
   req: Request,
   slug: string,
-  deps: Pick<RouteDeps, "saveGeneration">
+  deps: Pick<RouteDeps, "saveGeneration">,
+  opts: { withLut?: boolean } = {}
 ): Promise<Response> {
   try {
     const preset = DARKROOM_PRESETS[slug];
@@ -1151,12 +1160,40 @@ async function handleApplyPreset(
       } as any);
     } catch {}
 
+    // Optional: if the caller passed ?with_lut=true AND a curated Hald-CLUT
+    // exists for this slug in CURATED_LUT_REFS, blend it on top of the engine
+    // result and return BOTH urls. No-op when the registry entry is null
+    // (the seeded default for every slug today).
+    let lutUrl: string | undefined;
+    let lutAppliedUrl: string | undefined;
+    if (opts.withLut) {
+      const curated = getCuratedLutForPreset(slug);
+      if (curated) {
+        try {
+          const lutResult = await applyLutToImage({
+            imageUrl: finalUrl,
+            lutUrl: curated,
+            intensity: 1,
+            curve: "linear",
+          });
+          if (lutResult.ok) {
+            lutUrl = curated;
+            lutAppliedUrl = lutResult.url;
+          }
+        } catch {
+          // LUT path is additive — never let a LUT failure break the main
+          // preset response. Caller still gets the engine URL.
+        }
+      }
+    }
+
     return Response.json({
       ok: true,
       url: finalUrl,
       slug,
       name: preset.name,
       intensity,
+      ...(lutUrl ? { lut_url: lutUrl, lut_applied: lutAppliedUrl } : {}),
     });
   } catch (err: any) {
     return Response.json(
@@ -3341,7 +3378,7 @@ async function callGrokEdit(args: { imageUrl: string; prompt: string }): Promise
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "grok-imagine-image",
+      model: "grok-imagine-image-pro",
       prompt: args.prompt,
       image: { url: args.imageUrl, type: "image_url" },
       n: 1,
@@ -4063,6 +4100,260 @@ async function applyLutNearest(
 // Errors: 400 (missing url), 422 (fetch/decode failure), 500 (encode/upload).
 // =============================================================================
 
+// applyIntensityCurve — re-shapes the 0..1 blend factor used by handleLutApply
+// so callers can dial the perceived "feel" of an intensity slider:
+//   - 'linear'    (default): pass-through, t maps 1:1
+//   - 's-curve'   smoothstep — slower at extremes, faster through the middle
+//   - 'cinematic' skewed for "punch" at low intensities (fast lift early)
+// Pure function, no side effects, safe to call inside hot pixel loops once
+// per request (effectiveAlpha is computed once before the loop).
+function applyIntensityCurve(
+  t: number,
+  curve: "linear" | "s-curve" | "cinematic" = "linear"
+): number {
+  if (curve === "s-curve") return t * t * (3 - 2 * t);
+  if (curve === "cinematic") return 1 - Math.pow(1 - t, 1.6);
+  return t; // linear
+}
+
+// =============================================================================
+// CURATED_LUT_REFS — registry of curated Hald-CLUT URLs per Darkroom preset.
+// Initially null-populated. After running /api/lut/extract on a Glow (or other
+// preset) before/after pair, the operator manually pastes the resulting URL
+// into the entry so /api/preset/:slug?with_lut=true can blend the LUT-mapped
+// version on top of the engine result for snappier, server-side recall.
+//
+// NOTE: every value is null until a real LUT URL is harvested. getCuratedLut-
+// ForPreset() returns null for missing entries, which is the no-op fallback.
+// =============================================================================
+
+const CURATED_LUT_REFS: Record<string, string | null> = {
+  "darkroom-dawn": null,
+  "darkroom-glow": null,
+  "darkroom-lace": null,
+  "darkroom-noir": null,
+  "darkroom-polaroid": null,
+  "darkroom-studio": null,
+  "darkroom-sunkissed": null,
+  "darkroom-thirty-five-mm": null,
+  "darkroom-velvet": null,
+  "darkroom-wet-look": null,
+};
+
+function getCuratedLutForPreset(slug: string): string | null {
+  return CURATED_LUT_REFS[slug] ?? null;
+}
+
+// =============================================================================
+// applyLutToImage — reusable core for /api/lut/apply and the preset's optional
+// with_lut blend path. Fetches the target image + LUT PNG, decodes the
+// Hald-CLUT into a 33³ Float32 cube, and writes a per-pixel trilinearly-
+// interpolated PNG into Supabase storage. Returns a structured result with
+// either a URL+effective_alpha (success) or an error message + http status
+// hint (failure) — the caller decides how to surface the error.
+// =============================================================================
+
+type ApplyLutResult =
+  | {
+      ok: true;
+      url: string;
+      effective_alpha: number;
+    }
+  | {
+      ok: false;
+      error: string;
+      status: number;
+    };
+
+async function applyLutToImage(args: {
+  imageUrl: string;
+  lutUrl: string;
+  intensity?: number;
+  curve?: "linear" | "s-curve" | "cinematic";
+  outputSize?: number;
+}): Promise<ApplyLutResult> {
+  const intensity = Number.isFinite(args.intensity)
+    ? Math.max(0, Math.min(1, args.intensity as number))
+    : 1;
+  const curve = args.curve || "linear";
+  const effectiveAlpha = applyIntensityCurve(intensity, curve);
+  const outputSize =
+    Number.isFinite(args.outputSize) && (args.outputSize as number) > 0
+      ? Math.floor(args.outputSize as number)
+      : 0;
+
+  if (!args.imageUrl) return { ok: false, error: "image_url required", status: 400 };
+  if (!args.lutUrl) return { ok: false, error: "lut_url required", status: 400 };
+
+  const sharp = (await import("sharp")).default;
+  const { uploadToStorage, buildUploadPath } = await import("../supabase");
+
+  let imgBuf: Buffer;
+  let lutBuf: Buffer;
+  try {
+    const [iRes, lRes] = await Promise.all([fetch(args.imageUrl), fetch(args.lutUrl)]);
+    if (!iRes.ok) throw new Error(`image fetch ${iRes.status}`);
+    if (!lRes.ok) throw new Error(`lut fetch ${lRes.status}`);
+    imgBuf = Buffer.from(await iRes.arrayBuffer());
+    lutBuf = Buffer.from(await lRes.arrayBuffer());
+  } catch (err: any) {
+    return { ok: false, error: `fetch failed: ${err?.message || err}`, status: 422 };
+  }
+
+  let cube: Float32Array;
+  try {
+    cube = await decodeHaldClut(lutBuf);
+  } catch (err: any) {
+    return { ok: false, error: `lut decode failed: ${err?.message || err}`, status: 422 };
+  }
+  if (cube.length !== CUBE_FLOATS) {
+    return {
+      ok: false,
+      error: `lut cube size mismatch: expected ${CUBE_FLOATS} floats, got ${cube.length}`,
+      status: 422,
+    };
+  }
+
+  let srcData: Buffer;
+  let width: number;
+  let height: number;
+  let channels: number;
+  try {
+    let pipeline = sharp(imgBuf).toColorspace("srgb");
+    if (outputSize > 0) {
+      const meta = await sharp(imgBuf).metadata();
+      const srcMax = Math.max(meta.width || 0, meta.height || 0);
+      if (srcMax > outputSize) {
+        pipeline = pipeline.resize(outputSize, outputSize, {
+          fit: "inside",
+          withoutEnlargement: true,
+        });
+      }
+    }
+    const out = await pipeline.raw().toBuffer({ resolveWithObject: true });
+    srcData = out.data;
+    width = out.info.width;
+    height = out.info.height;
+    channels = out.info.channels;
+    if (channels !== 3 && channels !== 4) {
+      return {
+        ok: false,
+        error: `unsupported channel count ${channels}; expected 3 or 4`,
+        status: 422,
+      };
+    }
+  } catch (err: any) {
+    return { ok: false, error: `image decode failed: ${err?.message || err}`, status: 422 };
+  }
+
+  const STEP = LUT_SIZE - 1;
+  const SIZE = LUT_SIZE;
+  const SS = SIZE * SIZE;
+  const out = Buffer.alloc(srcData.length);
+  const inv255 = 1 / 255;
+  const blendLut = effectiveAlpha;
+  const blendSrc = 1 - effectiveAlpha;
+  const numPixels = width * height;
+
+  for (let p = 0; p < numPixels; p++) {
+    const i = p * channels;
+    const sr = srcData[i] * inv255;
+    const sg = srcData[i + 1] * inv255;
+    const sb = srcData[i + 2] * inv255;
+
+    const fr = sr * STEP;
+    const fg = sg * STEP;
+    const fb = sb * STEP;
+
+    let r0 = Math.floor(fr); if (r0 < 0) r0 = 0; else if (r0 > STEP) r0 = STEP;
+    let g0 = Math.floor(fg); if (g0 < 0) g0 = 0; else if (g0 > STEP) g0 = STEP;
+    let b0 = Math.floor(fb); if (b0 < 0) b0 = 0; else if (b0 > STEP) b0 = STEP;
+    const r1 = r0 < STEP ? r0 + 1 : STEP;
+    const g1 = g0 < STEP ? g0 + 1 : STEP;
+    const b1 = b0 < STEP ? b0 + 1 : STEP;
+
+    const dr = fr - r0;
+    const dg = fg - g0;
+    const db = fb - b0;
+    const idr = 1 - dr;
+    const idg = 1 - dg;
+    const idb = 1 - db;
+
+    const o000 = (b0 * SS + g0 * SIZE + r0) * 3;
+    const o100 = (b0 * SS + g0 * SIZE + r1) * 3;
+    const o010 = (b0 * SS + g1 * SIZE + r0) * 3;
+    const o110 = (b0 * SS + g1 * SIZE + r1) * 3;
+    const o001 = (b1 * SS + g0 * SIZE + r0) * 3;
+    const o101 = (b1 * SS + g0 * SIZE + r1) * 3;
+    const o011 = (b1 * SS + g1 * SIZE + r0) * 3;
+    const o111 = (b1 * SS + g1 * SIZE + r1) * 3;
+
+    const w000 = idr * idg * idb;
+    const w100 = dr  * idg * idb;
+    const w010 = idr * dg  * idb;
+    const w110 = dr  * dg  * idb;
+    const w001 = idr * idg * db;
+    const w101 = dr  * idg * db;
+    const w011 = idr * dg  * db;
+    const w111 = dr  * dg  * db;
+
+    const lr =
+      cube[o000]     * w000 + cube[o100]     * w100 +
+      cube[o010]     * w010 + cube[o110]     * w110 +
+      cube[o001]     * w001 + cube[o101]     * w101 +
+      cube[o011]     * w011 + cube[o111]     * w111;
+    const lg =
+      cube[o000 + 1] * w000 + cube[o100 + 1] * w100 +
+      cube[o010 + 1] * w010 + cube[o110 + 1] * w110 +
+      cube[o001 + 1] * w001 + cube[o101 + 1] * w101 +
+      cube[o011 + 1] * w011 + cube[o111 + 1] * w111;
+    const lb =
+      cube[o000 + 2] * w000 + cube[o100 + 2] * w100 +
+      cube[o010 + 2] * w010 + cube[o110 + 2] * w110 +
+      cube[o001 + 2] * w001 + cube[o101 + 2] * w101 +
+      cube[o011 + 2] * w011 + cube[o111 + 2] * w111;
+
+    let or = (sr * blendSrc + lr * blendLut) * 255;
+    let og = (sg * blendSrc + lg * blendLut) * 255;
+    let ob = (sb * blendSrc + lb * blendLut) * 255;
+    if (or < 0) or = 0; else if (or > 255) or = 255;
+    if (og < 0) og = 0; else if (og > 255) og = 255;
+    if (ob < 0) ob = 0; else if (ob > 255) ob = 255;
+    out[i]     = Math.round(or);
+    out[i + 1] = Math.round(og);
+    out[i + 2] = Math.round(ob);
+    if (channels === 4) out[i + 3] = srcData[i + 3];
+  }
+
+  let outPng: Buffer;
+  try {
+    outPng = await sharp(out, {
+      raw: { width, height, channels: channels as 3 | 4 },
+    })
+      .png()
+      .toBuffer();
+  } catch (err: any) {
+    return { ok: false, error: `image encode failed: ${err?.message || err}`, status: 500 };
+  }
+
+  let resultUrl: string;
+  try {
+    const filename = `apply-${Date.now().toString(36)}-${Math.random()
+      .toString(16)
+      .slice(2, 8)}.png`;
+    const path = buildUploadPath("luts-applied", filename, "image/png");
+    resultUrl = await uploadToStorage(
+      path,
+      outPng.buffer.slice(outPng.byteOffset, outPng.byteOffset + outPng.byteLength),
+      "image/png"
+    );
+  } catch (err: any) {
+    return { ok: false, error: `upload failed: ${err?.message || err}`, status: 500 };
+  }
+
+  return { ok: true, url: resultUrl, effective_alpha: effectiveAlpha };
+}
+
 async function handleLutApply(req: Request): Promise<Response> {
   const startedAt = Date.now();
   try {
@@ -4077,209 +4368,40 @@ async function handleLutApply(req: Request): Promise<Response> {
     const outputSize = Number.isFinite(rawOutputSize) && rawOutputSize > 0
       ? Math.floor(rawOutputSize)
       : 0;
-
-    if (!imageUrl) {
-      return Response.json({ error: "image_url required" }, { status: 400 });
-    }
-    if (!lutUrl) {
-      return Response.json({ error: "lut_url required" }, { status: 400 });
-    }
-
-    const sharp = (await import("sharp")).default;
-    const { uploadToStorage, buildUploadPath } = await import("../supabase");
-
-    // -------- Fetch target image + LUT PNG --------
-    let imgBuf: Buffer;
-    let lutBuf: Buffer;
-    try {
-      const [iRes, lRes] = await Promise.all([fetch(imageUrl), fetch(lutUrl)]);
-      if (!iRes.ok) throw new Error(`image fetch ${iRes.status}`);
-      if (!lRes.ok) throw new Error(`lut fetch ${lRes.status}`);
-      imgBuf = Buffer.from(await iRes.arrayBuffer());
-      lutBuf = Buffer.from(await lRes.arrayBuffer());
-    } catch (err: any) {
+    // Curve re-shapes how `intensity` blends into the per-pixel mix. Default
+    // 'linear' preserves prior behavior exactly.
+    const ALLOWED_CURVES = ["linear", "s-curve", "cinematic"] as const;
+    type IntensityCurve = (typeof ALLOWED_CURVES)[number];
+    const rawCurve = body.curve === undefined ? "linear" : String(body.curve);
+    if (!ALLOWED_CURVES.includes(rawCurve as IntensityCurve)) {
       return Response.json(
-        { error: `fetch failed: ${err?.message || err}` },
-        { status: 422 }
+        {
+          error: `invalid curve '${rawCurve}'; expected one of: ${ALLOWED_CURVES.join(", ")}`,
+        },
+        { status: 400 }
       );
     }
+    const curve: IntensityCurve = rawCurve as IntensityCurve;
 
-    // -------- Decode the Hald-CLUT into a Float32 cube --------
-    let cube: Float32Array;
-    try {
-      cube = await decodeHaldClut(lutBuf);
-    } catch (err: any) {
-      return Response.json(
-        { error: `lut decode failed: ${err?.message || err}` },
-        { status: 422 }
-      );
-    }
-    if (cube.length !== CUBE_FLOATS) {
-      return Response.json(
-        { error: `lut cube size mismatch: expected ${CUBE_FLOATS} floats, got ${cube.length}` },
-        { status: 422 }
-      );
-    }
+    const result = await applyLutToImage({
+      imageUrl,
+      lutUrl,
+      intensity,
+      curve,
+      outputSize,
+    });
 
-    // -------- Decode the target image to raw pixels --------
-    let srcData: Buffer;
-    let width: number;
-    let height: number;
-    let channels: number;
-    try {
-      let pipeline = sharp(imgBuf).toColorspace("srgb");
-      if (outputSize > 0) {
-        const meta = await sharp(imgBuf).metadata();
-        const srcMax = Math.max(meta.width || 0, meta.height || 0);
-        if (srcMax > outputSize) {
-          pipeline = pipeline.resize(outputSize, outputSize, {
-            fit: "inside",
-            withoutEnlargement: true,
-          });
-        }
-      }
-      const out = await pipeline.raw().toBuffer({ resolveWithObject: true });
-      srcData = out.data;
-      width = out.info.width;
-      height = out.info.height;
-      channels = out.info.channels;
-      if (channels !== 3 && channels !== 4) {
-        return Response.json(
-          { error: `unsupported channel count ${channels}; expected 3 or 4` },
-          { status: 422 }
-        );
-      }
-    } catch (err: any) {
-      return Response.json(
-        { error: `image decode failed: ${err?.message || err}` },
-        { status: 422 }
-      );
-    }
-
-    // -------- Apply LUT pixel-by-pixel with trilinear interpolation --------
-    // STEP = LUT_SIZE - 1 = 32. Walk in B-outer/G-mid/R-inner order so that
-    // cellIdx(R,G,B) = (B*S² + G*S + R) — matches encodeHaldClut.
-    const STEP = LUT_SIZE - 1;
-    const SIZE = LUT_SIZE;
-    const SS = SIZE * SIZE;
-    const out = Buffer.alloc(srcData.length);
-    const inv255 = 1 / 255;
-    const blendLut = intensity;
-    const blendSrc = 1 - intensity;
-    const numPixels = width * height;
-
-    for (let p = 0; p < numPixels; p++) {
-      const i = p * channels;
-      const sr = srcData[i] * inv255;
-      const sg = srcData[i + 1] * inv255;
-      const sb = srcData[i + 2] * inv255;
-
-      // Cube coordinates in [0, STEP]
-      const fr = sr * STEP;
-      const fg = sg * STEP;
-      const fb = sb * STEP;
-
-      let r0 = Math.floor(fr); if (r0 < 0) r0 = 0; else if (r0 > STEP) r0 = STEP;
-      let g0 = Math.floor(fg); if (g0 < 0) g0 = 0; else if (g0 > STEP) g0 = STEP;
-      let b0 = Math.floor(fb); if (b0 < 0) b0 = 0; else if (b0 > STEP) b0 = STEP;
-      const r1 = r0 < STEP ? r0 + 1 : STEP;
-      const g1 = g0 < STEP ? g0 + 1 : STEP;
-      const b1 = b0 < STEP ? b0 + 1 : STEP;
-
-      const dr = fr - r0;
-      const dg = fg - g0;
-      const db = fb - b0;
-      const idr = 1 - dr;
-      const idg = 1 - dg;
-      const idb = 1 - db;
-
-      // Eight corner byte-offsets (cellIdx * 3) into the cube.
-      const o000 = (b0 * SS + g0 * SIZE + r0) * 3;
-      const o100 = (b0 * SS + g0 * SIZE + r1) * 3;
-      const o010 = (b0 * SS + g1 * SIZE + r0) * 3;
-      const o110 = (b0 * SS + g1 * SIZE + r1) * 3;
-      const o001 = (b1 * SS + g0 * SIZE + r0) * 3;
-      const o101 = (b1 * SS + g0 * SIZE + r1) * 3;
-      const o011 = (b1 * SS + g1 * SIZE + r0) * 3;
-      const o111 = (b1 * SS + g1 * SIZE + r1) * 3;
-
-      // Trilinear weights — eight corners summed once per channel.
-      const w000 = idr * idg * idb;
-      const w100 = dr  * idg * idb;
-      const w010 = idr * dg  * idb;
-      const w110 = dr  * dg  * idb;
-      const w001 = idr * idg * db;
-      const w101 = dr  * idg * db;
-      const w011 = idr * dg  * db;
-      const w111 = dr  * dg  * db;
-
-      const lr =
-        cube[o000]     * w000 + cube[o100]     * w100 +
-        cube[o010]     * w010 + cube[o110]     * w110 +
-        cube[o001]     * w001 + cube[o101]     * w101 +
-        cube[o011]     * w011 + cube[o111]     * w111;
-      const lg =
-        cube[o000 + 1] * w000 + cube[o100 + 1] * w100 +
-        cube[o010 + 1] * w010 + cube[o110 + 1] * w110 +
-        cube[o001 + 1] * w001 + cube[o101 + 1] * w101 +
-        cube[o011 + 1] * w011 + cube[o111 + 1] * w111;
-      const lb =
-        cube[o000 + 2] * w000 + cube[o100 + 2] * w100 +
-        cube[o010 + 2] * w010 + cube[o110 + 2] * w110 +
-        cube[o001 + 2] * w001 + cube[o101 + 2] * w101 +
-        cube[o011 + 2] * w011 + cube[o111 + 2] * w111;
-
-      // Blend LUT-mapped vs original pixel via intensity (1.0 = full LUT).
-      let or = (sr * blendSrc + lr * blendLut) * 255;
-      let og = (sg * blendSrc + lg * blendLut) * 255;
-      let ob = (sb * blendSrc + lb * blendLut) * 255;
-      if (or < 0) or = 0; else if (or > 255) or = 255;
-      if (og < 0) og = 0; else if (og > 255) og = 255;
-      if (ob < 0) ob = 0; else if (ob > 255) ob = 255;
-      out[i]     = Math.round(or);
-      out[i + 1] = Math.round(og);
-      out[i + 2] = Math.round(ob);
-      if (channels === 4) out[i + 3] = srcData[i + 3];
-    }
-
-    // -------- Re-encode + upload --------
-    let outPng: Buffer;
-    try {
-      outPng = await sharp(out, {
-        raw: { width, height, channels: channels as 3 | 4 },
-      })
-        .png()
-        .toBuffer();
-    } catch (err: any) {
-      return Response.json(
-        { error: `image encode failed: ${err?.message || err}` },
-        { status: 500 }
-      );
-    }
-
-    let resultUrl: string;
-    try {
-      const filename = `apply-${Date.now().toString(36)}-${Math.random()
-        .toString(16)
-        .slice(2, 8)}.png`;
-      const path = buildUploadPath("luts-applied", filename, "image/png");
-      resultUrl = await uploadToStorage(
-        path,
-        outPng.buffer.slice(outPng.byteOffset, outPng.byteOffset + outPng.byteLength),
-        "image/png"
-      );
-    } catch (err: any) {
-      return Response.json(
-        { error: `upload failed: ${err?.message || err}` },
-        { status: 500 }
-      );
+    if (!result.ok) {
+      return Response.json({ error: result.error }, { status: result.status });
     }
 
     return Response.json({
       ok: true,
-      url: resultUrl,
+      url: result.url,
       applied_lut: lutUrl,
       intensity,
+      curve,
+      effective_alpha: result.effective_alpha,
       duration_ms: Date.now() - startedAt,
     });
   } catch (err: any) {

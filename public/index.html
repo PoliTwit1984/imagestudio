@@ -700,7 +700,6 @@
         <option value="fal">Flux LoRA</option>
         <option value="gpt">Eye</option>
       </select>
-      <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()" title="PRO ($0.07): Lens Pro, has content moderation | BASIC ($0.02): Lens Basic, no moderation but looser face lock">PRO $0.07</div>
       <select class="lora-select" id="lora-select" style="display:none;" title="Pick a LoRA for face consistency. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
         <option value="">Select LoRA...</option>
       </select>
@@ -1858,17 +1857,15 @@ function addChip(text) {
 function onEngineChange() {
   const sel = document.getElementById('engine-select');
   currentEngine = sel.value;
-  const modelEl = document.getElementById('model-toggle');
   const loraEl = document.getElementById('lora-select');
-  // Show/hide context-specific controls per engine
+  // Show/hide context-specific controls per engine.
+  // Lens (Grok) cheap tier was removed in Darkroom v1 cleanup — only the
+  // permissive PRO model remains, so there is no longer a tier toggle.
   if (currentEngine === 'grok') {
-    modelEl.style.display = '';      // basic/pro toggle
     loraEl.style.display = 'none';
   } else if (currentEngine === 'fal') {
-    modelEl.style.display = 'none';
     loraEl.style.display = '';        // LoRA picker
   } else if (currentEngine === 'gpt') {
-    modelEl.style.display = 'none';
     loraEl.style.display = 'none';
   }
 }
@@ -1878,12 +1875,6 @@ function toggleEngine() {
   const order = ['grok', 'fal', 'gpt'];
   sel.value = order[(order.indexOf(sel.value) + 1) % order.length];
   onEngineChange();
-}
-
-function toggleModel() {
-  const el = document.getElementById('model-toggle');
-  if (currentModel === 'pro') { currentModel = 'basic'; el.textContent = 'BASIC $0.02'; el.className = 'model-toggle basic'; }
-  else { currentModel = 'pro'; el.textContent = 'PRO $0.07'; el.className = 'model-toggle pro'; }
 }
 
 async function enhancePrompt() {
