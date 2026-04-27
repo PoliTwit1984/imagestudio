@@ -2650,16 +2650,40 @@ async function bakeOverlayToMask() {
   }
 }
 
-async function loadImageNoTaint(url) {
+async function loadImageNoTaint(url, options = {}) {
   // Fetch as blob → object URL → Image() avoids CORS-taint problems entirely.
-  const res = await fetch(url, { mode: 'cors' });
+  // Accepts options.signal (AbortSignal) so callers can cancel mid-fetch when
+  // state changes (e.g. currentUrl mutates during an in-flight load).
+  const signal = options.signal;
+  if (signal && signal.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException('Aborted', 'AbortError');
+  }
+  const res = await fetch(url, { mode: 'cors', signal });
   if (!res.ok) throw new Error('garment fetch ' + res.status);
   const blob = await res.blob();
   const objUrl = URL.createObjectURL(blob);
   return new Promise((resolve, reject) => {
     const i = new Image();
-    i.onload = () => { URL.revokeObjectURL(objUrl); resolve(i); };
-    i.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('garment image failed to decode')); };
+    let abortHandler = null;
+    const cleanup = () => {
+      URL.revokeObjectURL(objUrl);
+      if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
+    };
+    if (signal) {
+      abortHandler = () => {
+        cleanup();
+        i.src = '';
+        reject(signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException('Aborted', 'AbortError'));
+      };
+      if (signal.aborted) { abortHandler(); return; }
+      signal.addEventListener('abort', abortHandler);
+    }
+    i.onload = () => { cleanup(); resolve(i); };
+    i.onerror = () => { cleanup(); reject(new Error('garment image failed to decode')); };
     i.src = objUrl;
   });
 }
