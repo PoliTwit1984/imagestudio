@@ -203,7 +203,7 @@ async function handleFluxEdit(
       maskSource = `grok:${regions.length} region${regions.length === 1 ? "" : "s"}`;
     }
 
-    const maskUrl = await uploadBufferToStorage(maskBuf, "image/png", buildUploadPath, uploadToStorage);
+    const maskUrl = await uploadBufferToStorage(maskBuf, "image/png", buildUploadPath, uploadToStorage, "flux-edit-mask");
 
     // Optional Redux ref (collage if multiple)
     let imagePromptUrl: string | undefined;
@@ -216,7 +216,7 @@ async function handleFluxEdit(
       prompt,
       imagePromptUrl,
     });
-    const resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage);
+    const resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage, "flux-edit");
 
     try {
       await deps.saveGeneration({
@@ -878,7 +878,7 @@ async function handleStampAsset(
       .png()
       .toBuffer();
 
-    const url = await uploadBufferToStorage(outBuf, "image/png", buildUploadPath, uploadToStorage);
+    const url = await uploadBufferToStorage(outBuf, "image/png", buildUploadPath, uploadToStorage, "darkroom-stamp");
 
     try {
       await deps.saveGeneration({
@@ -943,7 +943,7 @@ async function handleDetailBrush(
       .png()
       .toBuffer();
 
-    const maskUrl = await uploadBufferToStorage(maskBufFinal, "image/png", buildUploadPath, uploadToStorage);
+    const maskUrl = await uploadBufferToStorage(maskBufFinal, "image/png", buildUploadPath, uploadToStorage, "darkroom-detail-brush-mask");
 
     const editedBuf = await callFluxFillPro({
       imageUrl,
@@ -962,7 +962,7 @@ async function handleDetailBrush(
       }, { status: 422 });
     }
 
-    const resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage);
+    const resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage, "darkroom-detail-brush");
 
     try {
       await deps.saveGeneration({
@@ -1079,7 +1079,7 @@ async function handleDarkroomSkin(
     if (!dl.ok) return Response.json({ error: "Darkroom Skin re-host failed" }, { status: 502 });
     const buf = Buffer.from(await dl.arrayBuffer());
     const { uploadToStorage, buildUploadPath } = await import("../supabase");
-    const finalUrl = await uploadBufferToStorage(buf, "image/png", buildUploadPath, uploadToStorage);
+    const finalUrl = await uploadBufferToStorage(buf, "image/png", buildUploadPath, uploadToStorage, "darkroom-skin");
 
     try {
       await deps.saveGeneration({
@@ -1136,7 +1136,7 @@ async function handleBlend(req: Request): Promise<Response> {
       .png()
       .toBuffer();
 
-    const url = await uploadBufferToStorage(out, "image/png", buildUploadPath, uploadToStorage);
+    const url = await uploadBufferToStorage(out, "image/png", buildUploadPath, uploadToStorage, "blend");
     return Response.json({ ok: true, image_url: url });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
@@ -1337,7 +1337,7 @@ async function handleRemoveBg(req: Request): Promise<Response> {
     if (!dl.ok) throw new Error(`download ${dl.status}`);
     const buf = Buffer.from(await dl.arrayBuffer());
     const { uploadToStorage, buildUploadPath } = await import("../supabase");
-    const finalUrl = await uploadBufferToStorage(buf, "image/png", buildUploadPath, uploadToStorage);
+    const finalUrl = await uploadBufferToStorage(buf, "image/png", buildUploadPath, uploadToStorage, "cutout");
 
     return Response.json({ ok: true, image_url: finalUrl });
   } catch (err: any) {
@@ -1653,7 +1653,7 @@ async function handleResize(req: Request): Promise<Response> {
       .toBuffer();
 
     const meta = await sharp(resized).metadata();
-    const url = await uploadBufferToStorage(resized, "image/png", buildUploadPath, uploadToStorage);
+    const url = await uploadBufferToStorage(resized, "image/png", buildUploadPath, uploadToStorage, "resize");
 
     return Response.json({
       ok: true,
@@ -1726,7 +1726,7 @@ async function handleInpaint(
       .png()
       .toBuffer();
 
-    const maskUrl = await uploadBufferToStorage(cleanMaskBuf, "image/png", buildUploadPath, uploadToStorage);
+    const maskUrl = await uploadBufferToStorage(cleanMaskBuf, "image/png", buildUploadPath, uploadToStorage, "inpaint-mask");
 
     let imagePromptUrl: string | undefined;
     if (garmentUrls.length === 1) {
@@ -1743,7 +1743,7 @@ async function handleInpaint(
       imagePromptUrl,
       imagePromptStrength: garmentStrength,
     });
-    let resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage);
+    let resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage, "inpaint");
 
     if (upscaler === "topaz") {
       resultUrl = await callTopaz(resultUrl);
@@ -2290,6 +2290,7 @@ async function handleSurgicalEdit(
         "image/png",
         buildUploadPath,
         uploadToStorage,
+        "surgical-sanitized",
       );
       const maskUploadBuf = await invertMaskForFluxFill(maskAlphaBuf, width, height);
       const maskUrl = await uploadBufferToStorage(
@@ -2297,6 +2298,7 @@ async function handleSurgicalEdit(
         "image/png",
         buildUploadPath,
         uploadToStorage,
+        "surgical-mask",
       );
       editedBuf = await callFluxFillPro({
         imageUrl: sanitizedUrl,
@@ -2328,6 +2330,7 @@ async function handleSurgicalEdit(
       "image/png",
       buildUploadPath,
       uploadToStorage,
+      "surgical",
     );
 
     // Optional Topaz pass
@@ -2533,7 +2536,7 @@ async function flattenTransparencyToWhite(url: string): Promise<string> {
       .flatten({ background: { r: 255, g: 255, b: 255 } })
       .png()
       .toBuffer();
-    return await uploadBufferToStorage(flattened, "image/png", buildUploadPath, uploadToStorage);
+    return await uploadBufferToStorage(flattened, "image/png", buildUploadPath, uploadToStorage, "garment-flattened");
   } catch {
     return url;
   }
@@ -2576,16 +2579,15 @@ async function collageImagesToSingle(
     .png()
     .toBuffer();
 
-  return uploadBufferToStorage(out, "image/png", buildUploadPath, uploadToStorage);
+  return uploadBufferToStorage(out, "image/png", buildUploadPath, uploadToStorage, "garment-collage");
 }
 
 async function uploadBufferToStorage(
-  buf: Buffer,
-  contentType: string,
-  buildUploadPath: any,
-  uploadToStorage: any,
+  buf: Buffer, contentType: string,
+  buildUploadPath: any, uploadToStorage: any,
+  filename_prefix: string = "asset",
 ): Promise<string> {
-  const filename = `surgical-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.png`;
+  const filename = `${filename_prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.png`;
   const path = buildUploadPath("uploads", filename, contentType);
   return uploadToStorage(path, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), contentType);
 }
