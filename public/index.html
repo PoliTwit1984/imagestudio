@@ -1157,6 +1157,180 @@
   .history-drawer-empty {
     color: #888; font-style: italic; padding: 20px 8px; text-align: center;
   }
+
+  /* Chain Builder — drag-drop multi-stage chain composer. Lives in
+     Develop mode (data-mode="develop"). Two-column grid: 140px palette,
+     1fr canvas; actions bar spans both columns. */
+  .chain-builder {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    grid-template-rows: 1fr auto;
+    gap: 8px;
+    padding: 8px;
+    min-height: 240px;
+  }
+  .chain-builder-palette {
+    border-right: 1px solid #2a2a2a;
+    padding-right: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .chain-stage-tile {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    padding: 6px 8px;
+    cursor: grab;
+    font-size: 12px;
+    color: #f5f5f5;
+    user-select: none;
+    transition: border-color 0.15s;
+  }
+  .chain-stage-tile:hover { border-color: #a78bfa; }
+  .chain-stage-tile:active { cursor: grabbing; }
+  .chain-builder-canvas {
+    border: 2px dashed #2a2a2a;
+    border-radius: 6px;
+    min-height: 220px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #0a0a0a;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .chain-builder-canvas.drop-active {
+    border-color: #a78bfa;
+    background: rgba(167, 139, 250, 0.08);
+  }
+  .chain-builder-empty {
+    color: #666;
+    font-style: italic;
+    text-align: center;
+    margin: auto;
+  }
+  .chain-step {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    padding: 8px;
+    position: relative;
+  }
+  .chain-step.dragging { opacity: 0.4; }
+  .chain-step-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .chain-step-number {
+    background: #a78bfa;
+    color: #fff;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .chain-step-engine {
+    color: #a78bfa;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex: 1;
+  }
+  .chain-step-grip {
+    cursor: grab;
+    color: #444;
+    font-size: 16px;
+  }
+  .chain-step-grip:active { cursor: grabbing; }
+  .chain-step-remove {
+    background: transparent;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+  }
+  .chain-step-remove:hover { color: #ef4444; }
+  .chain-step-prompt {
+    width: 100%;
+    background: #0a0a0a;
+    color: #f5f5f5;
+    border: 1px solid #2a2a2a;
+    padding: 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 40px;
+    box-sizing: border-box;
+  }
+  .chain-step-params-toggle {
+    font-size: 10px;
+    color: #888;
+    cursor: pointer;
+    margin-top: 4px;
+    user-select: none;
+  }
+  .chain-step-params {
+    display: none;
+    margin-top: 4px;
+    padding: 4px;
+    background: #0a0a0a;
+    border-radius: 3px;
+  }
+  .chain-step-params.open { display: block; }
+  .chain-step-params label {
+    display: inline-block;
+    color: #888;
+    font-size: 10px;
+    margin: 2px 4px 2px 0;
+  }
+  .chain-step-params input,
+  .chain-step-params select {
+    background: #1a1a1a;
+    color: #f5f5f5;
+    border: 1px solid #2a2a2a;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin: 2px;
+  }
+  .chain-builder-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 8px;
+    border-top: 1px solid #2a2a2a;
+    padding-top: 8px;
+  }
+  .chain-run-btn {
+    background: linear-gradient(135deg, #a78bfa, #f472b6);
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .chain-run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .chain-clear-btn {
+    background: #1a1a1a;
+    color: #888;
+    border: 1px solid #2a2a2a;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
 </style>
 </head>
 <body>
@@ -1601,6 +1775,36 @@
         </div>
         <div id="history-graph-container" class="history-graph">
           <div class="history-graph-empty">No image loaded yet.</div>
+        </div>
+      </details>
+
+      <!-- Chain Builder — visual drag-drop multi-stage editor. Stage palette
+           on the left (Lens/Glance/Strip/Brush/Eye/Skin/Reveal as draggable
+           tiles), canvas in the center where stages drop and link
+           sequentially. Each step exposes a prompt textarea plus a
+           collapsible engine-specific params panel. Run posts to
+           /api/chains/run, which spawns an async job — progress shows up in
+           the Active Jobs panel below. See darkroom.chains.builder-ui. -->
+      <details class="chain-builder-panel" data-mode="develop" style="margin: 12px 0;">
+        <summary style="cursor:pointer;font-weight:600;color:#a78bfa;">⛓ Chain Builder ▾</summary>
+        <div class="chain-builder">
+          <div class="chain-builder-palette">
+            <h4 style="margin:4px 0;color:#888;font-size:11px;text-transform:uppercase;">Stages</h4>
+            <div class="chain-stage-tile" draggable="true" data-engine="lens">Lens</div>
+            <div class="chain-stage-tile" draggable="true" data-engine="glance">Glance</div>
+            <div class="chain-stage-tile" draggable="true" data-engine="strip">Strip</div>
+            <div class="chain-stage-tile" draggable="true" data-engine="brush">Brush</div>
+            <div class="chain-stage-tile" draggable="true" data-engine="eye">Eye</div>
+            <div class="chain-stage-tile" draggable="true" data-engine="skin">Skin</div>
+            <div class="chain-stage-tile" draggable="true" data-engine="reveal">Reveal</div>
+          </div>
+          <div class="chain-builder-canvas" id="chain-canvas">
+            <div class="chain-builder-empty">Drag stages here to build a chain.</div>
+          </div>
+          <div class="chain-builder-actions">
+            <button class="chain-run-btn" id="chain-run-btn" disabled>▶ Run Chain</button>
+            <button class="chain-clear-btn" id="chain-clear-btn">Clear</button>
+          </div>
         </div>
       </details>
 
@@ -8576,6 +8780,235 @@ document.getElementById('edit-input').addEventListener('keydown', e => {
 document.getElementById('chat-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Chain Builder — visual drag-drop multi-stage chain composer.
+// State: _chainSteps holds the working chain definition. Render walks
+// the array into the canvas and re-wires events. Drop on canvas appends;
+// dragover on existing step reorders live. Run button validates each
+// step has a prompt + a source image is loaded, then posts the chain
+// to /api/chains/run. Server returns a job_id which surfaces in the
+// Active Jobs panel automatically (it polls /api/jobs).
+// ─────────────────────────────────────────────────────────────────────────
+const _chainSteps = [];  // [{ engine, prompt, params }]
+let _draggingStepIndex = null;
+let _draggingPaletteEngine = null;
+
+function renderChainCanvas() {
+  const canvas = document.getElementById('chain-canvas');
+  if (!canvas) return;
+
+  if (_chainSteps.length === 0) {
+    canvas.innerHTML = '<div class="chain-builder-empty">Drag stages here to build a chain.</div>';
+  } else {
+    canvas.innerHTML = _chainSteps.map((step, i) => `
+      <div class="chain-step" data-index="${i}" draggable="true">
+        <div class="chain-step-header">
+          <span class="chain-step-grip">⋮⋮</span>
+          <div class="chain-step-number">${i + 1}</div>
+          <div class="chain-step-engine">${step.engine}</div>
+          <button class="chain-step-remove" data-index="${i}" title="Remove step">×</button>
+        </div>
+        <textarea class="chain-step-prompt" data-index="${i}" placeholder="Prompt for this stage...">${(step.prompt || '').replace(/</g, '&lt;')}</textarea>
+        <div class="chain-step-params-toggle" data-index="${i}">⚙ Params</div>
+        <div class="chain-step-params" id="chain-step-params-${i}">
+          ${renderEngineParams(step.engine, step.params || {})}
+        </div>
+      </div>
+    `).join('');
+    wireChainStepEvents();
+  }
+
+  const runBtn = document.getElementById('chain-run-btn');
+  if (runBtn) runBtn.disabled = _chainSteps.length === 0;
+}
+
+function renderEngineParams(engine, params) {
+  // Engine-specific param controls. Keep minimal for v1 — server applies
+  // defaults when fields are blank.
+  const common = `
+    <label>guidance_scale <input type="number" data-param="guidance_scale" min="1" max="30" step="0.5" value="${params.guidance_scale ?? ''}" placeholder="default" /></label>
+  `;
+  if (engine === 'reveal') {
+    return common + `
+      <label>scale <select data-param="scale">
+        <option value="2" ${params.scale == 2 ? 'selected' : ''}>2x</option>
+        <option value="4" ${(params.scale == 4 || !params.scale) ? 'selected' : ''}>4x</option>
+      </select></label>
+    `;
+  }
+  if (engine === 'brush') {
+    return common + `
+      <label>strength <input type="number" data-param="strength" min="0" max="1" step="0.05" value="${params.strength ?? ''}" placeholder="default" /></label>
+    `;
+  }
+  return common;
+}
+
+function wireChainStepEvents() {
+  document.querySelectorAll('.chain-step-prompt').forEach(el => {
+    el.addEventListener('input', (e) => {
+      const idx = +e.target.dataset.index;
+      if (_chainSteps[idx]) _chainSteps[idx].prompt = e.target.value;
+    });
+  });
+  document.querySelectorAll('.chain-step-remove').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const idx = +e.currentTarget.dataset.index;
+      _chainSteps.splice(idx, 1);
+      renderChainCanvas();
+    });
+  });
+  document.querySelectorAll('.chain-step-params-toggle').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const idx = +e.currentTarget.dataset.index;
+      const panel = document.getElementById(`chain-step-params-${idx}`);
+      if (panel) panel.classList.toggle('open');
+    });
+  });
+  document.querySelectorAll('.chain-step-params input, .chain-step-params select').forEach(el => {
+    el.addEventListener('change', (e) => {
+      const stepDiv = e.currentTarget.closest('.chain-step');
+      if (!stepDiv) return;
+      const idx = +stepDiv.dataset.index;
+      const param = e.currentTarget.dataset.param;
+      if (_chainSteps[idx]) {
+        if (!_chainSteps[idx].params) _chainSteps[idx].params = {};
+        const raw = e.currentTarget.value;
+        const value = e.currentTarget.type === 'number' ? parseFloat(raw) : raw;
+        if (raw === '' || (typeof value === 'number' && Number.isNaN(value))) {
+          delete _chainSteps[idx].params[param];
+        } else {
+          _chainSteps[idx].params[param] = value;
+        }
+      }
+    });
+  });
+
+  // Drag-reorder existing steps
+  document.querySelectorAll('.chain-step').forEach(step => {
+    step.addEventListener('dragstart', (e) => {
+      _draggingStepIndex = +step.dataset.index;
+      step.classList.add('dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('application/x-darkroom-chain-step', String(_draggingStepIndex)); } catch (_) {}
+      }
+    });
+    step.addEventListener('dragend', () => {
+      step.classList.remove('dragging');
+      _draggingStepIndex = null;
+    });
+    step.addEventListener('dragover', (e) => {
+      if (_draggingStepIndex === null) return;
+      e.preventDefault();
+      const overIdx = +step.dataset.index;
+      if (overIdx === _draggingStepIndex) return;
+      // Reorder live
+      const moved = _chainSteps.splice(_draggingStepIndex, 1)[0];
+      _chainSteps.splice(overIdx, 0, moved);
+      _draggingStepIndex = overIdx;
+      renderChainCanvas();
+    });
+  });
+}
+
+// Palette drag start — mark the engine being dragged so the canvas drop
+// handler knows whether to append a new step or treat it as a reorder.
+document.querySelectorAll('.chain-stage-tile').forEach(tile => {
+  tile.addEventListener('dragstart', (e) => {
+    _draggingPaletteEngine = tile.dataset.engine;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'copy';
+      try { e.dataTransfer.setData('application/x-darkroom-chain-engine', _draggingPaletteEngine); } catch (_) {}
+    }
+  });
+  tile.addEventListener('dragend', () => { _draggingPaletteEngine = null; });
+});
+
+// Canvas drop — accept palette tiles (append) or step reorders (handled
+// in the per-step dragover listener above).
+const _chainCanvasEl = document.getElementById('chain-canvas');
+if (_chainCanvasEl) {
+  _chainCanvasEl.addEventListener('dragover', (e) => {
+    if (_draggingPaletteEngine || _draggingStepIndex !== null) {
+      e.preventDefault();
+      _chainCanvasEl.classList.add('drop-active');
+    }
+  });
+  _chainCanvasEl.addEventListener('dragleave', () => _chainCanvasEl.classList.remove('drop-active'));
+  _chainCanvasEl.addEventListener('drop', (e) => {
+    e.preventDefault();
+    _chainCanvasEl.classList.remove('drop-active');
+    if (_draggingPaletteEngine) {
+      _chainSteps.push({ engine: _draggingPaletteEngine, prompt: '', params: {} });
+      _draggingPaletteEngine = null;
+      renderChainCanvas();
+    }
+    // Step reorder is handled in step.dragover above.
+  });
+}
+
+// Run button — validate each step has a prompt, currentUrl is set, then
+// POST /api/chains/run. The Active Jobs panel below picks up progress.
+const _chainRunBtnEl = document.getElementById('chain-run-btn');
+if (_chainRunBtnEl) {
+  _chainRunBtnEl.addEventListener('click', async () => {
+    if (_chainSteps.length === 0) return;
+
+    for (const [i, s] of _chainSteps.entries()) {
+      if (!s.prompt || !s.prompt.trim()) {
+        if (typeof toast === 'function') toast(`Step ${i + 1} (${s.engine}) needs a prompt`);
+        return;
+      }
+    }
+
+    const sourceUrl = (typeof currentUrl !== 'undefined' && currentUrl) ? currentUrl : null;
+    if (!sourceUrl) {
+      if (typeof toast === 'function') toast('Load an image first');
+      return;
+    }
+
+    try {
+      _chainRunBtnEl.disabled = true;
+      const resp = await fetch('/api/chains/run', {
+        method: 'POST',
+        headers: { ...headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chain_definition: _chainSteps.map(s => ({
+            engine: s.engine,
+            prompt: s.prompt.trim(),
+            params: s.params && Object.keys(s.params).length ? s.params : undefined,
+          })),
+          source_url: sourceUrl,
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) throw new Error(data.error || resp.statusText);
+      if (typeof toast === 'function') {
+        const jobShort = data.job_id ? data.job_id.slice(0, 8) : '?';
+        toast(`Chain queued: ${data.step_count} steps, job ${jobShort}. Watch Active Jobs panel.`);
+      }
+    } catch (e) {
+      if (typeof toast === 'function') toast('Chain run failed: ' + (e.message || e));
+      else console.error(e);
+    } finally {
+      _chainRunBtnEl.disabled = _chainSteps.length === 0;
+    }
+  });
+}
+
+// Clear button
+const _chainClearBtnEl = document.getElementById('chain-clear-btn');
+if (_chainClearBtnEl) {
+  _chainClearBtnEl.addEventListener('click', () => {
+    _chainSteps.length = 0;
+    renderChainCanvas();
+  });
+}
+
+// Initial render on app boot
+renderChainCanvas();
 </script>
 </body>
 </html>
