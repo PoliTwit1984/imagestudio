@@ -7,6 +7,8 @@ import {
   SIZE as LUT_SIZE,
   encodeHaldClut,
   decodeHaldClut,
+  cubeToText,
+  cubeToXmp,
 } from "../lut";
 import type { RouteDeps } from "./types";
 
@@ -234,6 +236,19 @@ export async function handleSafeEditRoutes(
   if (url.pathname === "/api/lut/apply" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handleLutApply(req);
+  }
+
+  // ---------------------------------------------------------------------------
+  // LUT export — fetch a Hald-CLUT PNG by URL, decode it, and return it as a
+  // portable LUT file for use in external editors.
+  //   GET /api/lut/export?format=cube|xmp&lut_url=<url>&title=<optional>
+  // .cube  → Adobe / DaVinci Resolve standard ASCII format.
+  // .xmp   → Lightroom Profile sidecar (simplified — see cubeToXmp docstring).
+  // ---------------------------------------------------------------------------
+
+  if (url.pathname === "/api/lut/export" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleLutExport(req);
   }
 
   // ---------------------------------------------------------------------------
@@ -4426,6 +4441,96 @@ async function handleLutApply(req: Request): Promise<Response> {
       { status: 500 }
     );
   }
+}
+
+// /api/lut/export — fetch a Hald-CLUT PNG by URL, decode it, and serialize it
+// to a portable .cube (Adobe / DaVinci Resolve) or .xmp (Lightroom Profile)
+// file. Returns the file body inline with a Content-Disposition header so the
+// browser downloads it.
+//
+// Query params:
+//   format   "cube" | "xmp" (default "cube")
+//   lut_url  required — URL to the Hald-CLUT PNG (e.g., from /api/lut/extract)
+//   title    optional — profile/LUT name; default "Darkroom Custom"
+//
+// Errors:
+//   400 — bad format / missing lut_url
+//   422 — lut_url fetch failed / decode failed
+//   500 — unexpected
+async function handleLutExport(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const format = (url.searchParams.get("format") || "cube").toLowerCase();
+  const lutUrl = url.searchParams.get("lut_url");
+  const title = url.searchParams.get("title") || "Darkroom Custom";
+
+  if (format !== "cube" && format !== "xmp") {
+    return Response.json(
+      { error: "format must be cube or xmp" },
+      { status: 400 }
+    );
+  }
+  if (!lutUrl) {
+    return Response.json({ error: "lut_url required" }, { status: 400 });
+  }
+
+  let png: Buffer;
+  try {
+    const resp = await fetch(lutUrl);
+    if (!resp.ok) {
+      return Response.json(
+        { error: `lut_url fetch ${resp.status}` },
+        { status: 422 }
+      );
+    }
+    png = Buffer.from(await resp.arrayBuffer());
+  } catch (err: any) {
+    return Response.json(
+      { error: `lut_url fetch failed: ${err?.message || err}` },
+      { status: 422 }
+    );
+  }
+
+  let cube: Float32Array;
+  try {
+    cube = await decodeHaldClut(png);
+  } catch (err: any) {
+    return Response.json(
+      { error: `lut decode failed: ${err?.message || err}` },
+      { status: 422 }
+    );
+  }
+
+  let body: string;
+  let contentType: string;
+  let ext: string;
+  try {
+    if (format === "cube") {
+      body = cubeToText(cube, title);
+      contentType = "text/plain; charset=utf-8";
+      ext = "cube";
+    } else {
+      body = cubeToXmp(cube, title);
+      contentType = "application/xml; charset=utf-8";
+      ext = "xmp";
+    }
+  } catch (err: any) {
+    return Response.json(
+      { error: err?.message || "lut export failed" },
+      { status: 500 }
+    );
+  }
+
+  const safeTitle =
+    (title.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "darkroom-lut");
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": contentType,
+      "content-disposition": `attachment; filename="${safeTitle}.${ext}"`,
+      "cache-control": "no-store",
+    },
+  });
 }
 
 async function handlePresetsSoftDelete(id: string): Promise<Response> {
