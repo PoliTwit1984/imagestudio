@@ -164,6 +164,22 @@ export async function handleGenerationRoutes(
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     try {
       const body = await req.json();
+
+      // Watch engine: pre-flight content classification + auto-route into a
+      // concrete engine, handled in safe-edit.ts. We re-dispatch through the
+      // safe-edit handler with the body we already parsed.
+      if (body?.engine === "watch" && !body?._watch) {
+        const { handleSafeEditRoutes } = await import("./safe-edit");
+        const proxyReq = new Request(req.url, {
+          method: req.method,
+          headers: req.headers,
+          body: JSON.stringify(body),
+        });
+        const watchResp = await handleSafeEditRoutes(proxyReq, url, deps);
+        if (watchResp) return watchResp;
+        // Fall-through if safe-edit didn't claim it (shouldn't happen)
+      }
+
       const sourceUrl = body.source_url || "";
       const editPrompt = body.edit_prompt || "";
       const engine = body.engine || "grok";
