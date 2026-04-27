@@ -1,5 +1,5 @@
 {
-  "name": "image-studio",
+  "name": "darkroom",
   "version": "1.0.0",
   "scripts": {
     "start": "bun run index.ts",
