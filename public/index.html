@@ -28,6 +28,41 @@
 
   #app { display: none; }
 
+  /* Mode switcher — Compose / Develop / Print pills.
+     Partitions the visible action surface so users only see panels relevant
+     to the current workflow stage. Mode persists in localStorage as
+     'darkroom-mode'; default = compose. Each panel carries data-mode listing
+     which modes it should appear in (comma-separated, with 'all' for always-
+     visible elements). See darkroom.ui-polish.three-mode-layout. */
+  .mode-switcher {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    margin: 8px 0;
+    padding: 4px;
+    background: #1a1a1a;
+    border-radius: 999px;
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .mode-pill {
+    background: transparent;
+    color: #888;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .mode-pill:hover { color: #fff; }
+  .mode-pill.active {
+    background: #a78bfa;
+    color: #fff;
+  }
+
   /* Tabs */
   .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
   .tab { padding: 8px 18px; background: #151515; border: 1px solid #222; border-radius: 8px 8px 0 0; cursor: pointer; color: #666; font-size: 0.85rem; }
@@ -1007,6 +1042,19 @@
 <div id="app">
   <h1><span>Darkroom</span></h1>
 
+  <!-- Mode switcher — partitions the result section into Compose / Develop /
+       Print workflow stages. setDarkroomMode() toggles display:none on every
+       [data-mode] element. Compose = generation surface (prompt + scene +
+       engine pills + Watch dots). Develop = LUTs / Presets / Skin / Brush /
+       Strip / Wardrobe / History Graph. Print = Upscale / Reveal / Lock /
+       export. Mode persists in localStorage 'darkroom-mode'. Default = compose.
+       See darkroom.ui-polish.three-mode-layout. -->
+  <div id="mode-switcher" class="mode-switcher">
+    <button type="button" class="mode-pill active" data-mode="compose">Compose</button>
+    <button type="button" class="mode-pill" data-mode="develop">Develop</button>
+    <button type="button" class="mode-pill" data-mode="print">Print</button>
+  </div>
+
   <div class="tabs">
     <div class="tab active" onclick="switchTab('generate')">Generate</div>
     <div class="tab" onclick="switchTab('history')">History</div>
@@ -1020,16 +1068,16 @@
   <div class="tab-content active" id="tab-generate">
     <div class="char-row" id="char-row"></div>
 
-    <textarea id="scene" placeholder="Build your prompt below, or just type freestyle and hit AI Enhance..."></textarea>
+    <textarea id="scene" data-mode="compose" placeholder="Build your prompt below, or just type freestyle and hit AI Enhance..."></textarea>
 
-    <div class="enhance-row">
+    <div class="enhance-row" data-mode="compose">
       <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()" title="AI rewrites your prompt for maximum photorealism — adds lighting, camera, skin texture, film stock details">AI Enhance</button>
       <span class="enhance-hint">AI rewrites your prompt for max realism</span>
       <button class="action-btn" style="margin-left:auto;font-size:0.75rem;" onclick="clearPrompt()">Clear</button>
     </div>
 
     <!-- Prompt Builder Steps -->
-    <div class="builder" id="builder">
+    <div class="builder" id="builder" data-mode="compose">
       <div class="builder-toggle" onclick="toggleBuilder()">
         <span id="builder-arrow">&#9654;</span> Prompt Builder <span style="color:#555;font-size:0.75rem;margin-left:8px;">click options to build your prompt step by step</span>
       </div>
@@ -1186,7 +1234,7 @@
       </div>
     </div>
 
-    <div class="controls">
+    <div class="controls" data-mode="compose">
       <button class="gen-btn" id="gen-btn" onclick="generate()" title="Generate image from your prompt using the selected engine and settings">Generate</button>
       <button class="pose-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload Image</button>
       <input type="file" id="upload-input-main" accept="image/*" style="display:none;" onchange="handleUpload(this)">
@@ -1214,7 +1262,7 @@
     </div>
 
     <!-- Pinterest search panel -->
-    <div class="pose-panel" id="pinterest-panel" style="display:none;border-color:#e6002333;">
+    <div class="pose-panel" id="pinterest-panel" data-mode="compose" style="display:none;border-color:#e6002333;">
       <div class="edit-label" style="color:#e60023;">Pinterest Pose Search</div>
       <div style="display:flex;gap:6px;margin-bottom:10px;">
         <input type="text" id="pinterest-query" class="edit-input" value="boudoir pose ideas" placeholder="Search poses..." style="flex:1;font-size:0.85rem;">
@@ -1236,7 +1284,7 @@
     </div>
 
     <!-- Pose reference panel -->
-    <div class="pose-panel" id="pose-panel" style="display:none;">
+    <div class="pose-panel" id="pose-panel" data-mode="compose" style="display:none;">
       <div class="edit-label">Pose Reference <span style="font-weight:400;color:#888;">— upload any image, AI vision analyzes the pose</span></div>
       <div style="display:flex;gap:12px;align-items:flex-start;">
         <div style="flex:1;">
@@ -1315,30 +1363,30 @@
         <button class="action-btn" onclick="closeEditStrength()" style="border-color:#888;color:#888;" title="Hide this slider (the current image stays)">Hide</button>
       </div>
       <div class="result-actions">
-        <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
-        <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Reveal — creative detail injection upscale. AI auto-generates a prompt, you edit it, then upscale with texture. Can change face.">Reveal</button>
-        <button class="action-btn" id="btn-topaz" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Develop — face enhancement + skin texture + upscale. Click to adjust settings.">Develop</button>
-        <button class="action-btn" id="btn-enhancor" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Skin — body skin enhance, level 65, face locked. Good for realistic skin texture on nudes where Develop/Reveal blur out.">Skin</button>
-        <button class="action-btn" id="btn-darkroom-skin" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
-        <button class="action-btn" id="btn-darkroom-glow" onclick="runDarkroomPreset('darkroom-glow')" style="border-color:#e8a46b;color:#e8a46b;" title="Darkroom Glow — boudoir warmth, soft golden highlights with subtle bloom and gentle halation. Color-grade only; preserves face, pose, wardrobe, composition.">Darkroom Glow</button>
-        <button class="action-btn" id="btn-detail-brush" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
-        <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
-        <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
-        <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
-        <button class="action-btn" id="btn-resize" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" title="Shrink image to 1200px on the long edge. Useful before Lens edits — Lens is slow on big images.">Resize 1200</button>
-        <button class="action-btn" id="btn-paint-mask" onclick="openMaskPainter()" style="border-color:#c850c0;color:#c850c0;" title="Paint a mask over the image, then inpaint with Brush (NSFW-permissive, true mask-aware inpainting).">Paint Mask</button>
-        <button class="action-btn" id="btn-sandwich" onclick="openSandwich()" style="border-color:#f472b6;color:#f472b6;" title="Sandwich edit: Strip clothes the subject → Glance / Eye edits the scene → Strip unclothes. Lets you use safe editors on NSFW source.">Sandwich Edit</button>
-        <button class="action-btn" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
-        <button class="action-btn" onclick="downloadImg()" title="Download the image to your device">Download</button>
-        <button class="action-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
-        <button class="action-btn" id="btn-extract-lut" onclick="showLutExtractModal()" style="border-color:#c9842b;color:#c9842b;" title="Extract a 3D LUT cube from a before/after pair in the version stack. Useful for capturing a color grade you can reuse.">Extract LUT</button>
+        <button class="action-btn upscale" id="btn-upscale" data-mode="print" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
+        <button class="action-btn" id="btn-magnific" data-mode="print" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Reveal — creative detail injection upscale. AI auto-generates a prompt, you edit it, then upscale with texture. Can change face.">Reveal</button>
+        <button class="action-btn" id="btn-topaz" data-mode="print" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Develop — face enhancement + skin texture + upscale. Click to adjust settings.">Develop</button>
+        <button class="action-btn" id="btn-enhancor" data-mode="print" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Skin — body skin enhance, level 65, face locked. Good for realistic skin texture on nudes where Develop/Reveal blur out.">Skin</button>
+        <button class="action-btn" id="btn-darkroom-skin" data-mode="develop" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
+        <button class="action-btn" id="btn-darkroom-glow" data-mode="develop" onclick="runDarkroomPreset('darkroom-glow')" style="border-color:#e8a46b;color:#e8a46b;" title="Darkroom Glow — boudoir warmth, soft golden highlights with subtle bloom and gentle halation. Color-grade only; preserves face, pose, wardrobe, composition.">Darkroom Glow</button>
+        <button class="action-btn" id="btn-detail-brush" data-mode="develop" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
+        <button class="action-btn" id="btn-faceswap" data-mode="print" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
+        <button class="action-btn tg" id="btn-tg" data-mode="print" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
+        <button class="action-btn dc" id="btn-dc" data-mode="print" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
+        <button class="action-btn" id="btn-resize" data-mode="all" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" title="Shrink image to 1200px on the long edge. Useful before Lens edits — Lens is slow on big images.">Resize 1200</button>
+        <button class="action-btn" id="btn-paint-mask" data-mode="develop" onclick="openMaskPainter()" style="border-color:#c850c0;color:#c850c0;" title="Paint a mask over the image, then inpaint with Brush (NSFW-permissive, true mask-aware inpainting).">Paint Mask</button>
+        <button class="action-btn" id="btn-sandwich" data-mode="develop" onclick="openSandwich()" style="border-color:#f472b6;color:#f472b6;" title="Sandwich edit: Strip clothes the subject → Glance / Eye edits the scene → Strip unclothes. Lets you use safe editors on NSFW source.">Sandwich Edit</button>
+        <button class="action-btn" data-mode="all" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
+        <button class="action-btn" data-mode="all" onclick="downloadImg()" title="Download the image to your device">Download</button>
+        <button class="action-btn" data-mode="all" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
+        <button class="action-btn" id="btn-extract-lut" data-mode="develop" onclick="showLutExtractModal()" style="border-color:#c9842b;color:#c9842b;" title="Extract a 3D LUT cube from a before/after pair in the version stack. Useful for capturing a color grade you can reuse.">Extract LUT</button>
         <input type="file" id="upload-input" accept="image/*" style="display:none;" onchange="handleUpload(this)">
       </div>
 
       <!-- Darkroom presets grid — clickable tiles for all 10 LUT/aesthetic presets.
            Each tile POSTs to /api/preset/:slug via runDarkroomPreset() (defined in JS).
            Collapsed by default to keep the UI quiet for users who don't want presets. -->
-      <details class="preset-grid-wrapper">
+      <details class="preset-grid-wrapper" data-mode="develop">
         <summary>Darkroom Presets</summary>
         <div class="preset-intensity-row">
           <button type="button" class="preset-intensity-pill active" data-intensity="medium">Medium</button>
@@ -1352,7 +1400,7 @@
            Lists wardrobe table rows joined with assets so each card has a
            thumbnail. Click a card to open the mask painter and seed it with
            that garment URL — feeds the existing setGarmentUrl flow. -->
-      <details class="wardrobe-panel" id="wardrobe-tab">
+      <details class="wardrobe-panel" id="wardrobe-tab" data-mode="develop">
         <summary>Wardrobe <span style="font-weight:400;color:#888;font-size:0.78rem;">— curated garments for Brush refs</span></summary>
         <!-- Style preset quick-filter pills — saved category+tag combos. Click to filter the grid below. -->
         <div class="wardrobe-style-presets wardrobe-quick-filter" id="wardrobe-style-presets" role="toolbar" aria-label="Wardrobe style presets">
@@ -1395,7 +1443,7 @@
            the analyzeCurrentImage hook). Click a node to navigate to that
            version. Falls back gracefully when the asset isn't in the
            assets table (no chain data) or the network errors. -->
-      <details class="history-graph-panel">
+      <details class="history-graph-panel" data-mode="develop">
         <summary style="cursor:pointer;font-weight:600;color:#a78bfa;">History Graph <span style="font-weight:400;color:#888;font-size:0.78rem;">— edit-tree / chain-graph for this image</span></summary>
         <!-- Search bar — filters .history-graph-node by prompt or engine
              substring match. Pure client-side: walks the rendered DOM, hides
@@ -1669,7 +1717,7 @@
         </div>
       </div>
 
-      <div class="edit-section">
+      <div class="edit-section" data-mode="compose,develop">
         <div class="edit-label">Edit this image</div>
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
@@ -2121,6 +2169,47 @@ let characters = [];
 let loras = [];
 let versionStack = []; // [{url, label}]
 let versionIndex = -1;
+
+// --- Three-mode layout (darkroom.ui-polish.three-mode-layout) ----------------
+// Compose / Develop / Print pills partition the visible action surface so the
+// user only sees panels relevant to the current workflow stage. Each panel is
+// tagged with data-mode (comma-separated, with 'all' for always-visible
+// elements). setDarkroomMode() toggles display:none on every [data-mode]
+// element. Mode persists in localStorage as 'darkroom-mode'; default = compose.
+// Tokens not in DARKROOM_MODE_TOKENS (e.g. forge-tab data-mode="upload") are
+// ignored so unrelated data-mode usages don't get partition-toggled.
+const DARKROOM_MODES = ['compose', 'develop', 'print'];
+const DARKROOM_MODE_TOKENS = new Set([...DARKROOM_MODES, 'all']);
+function setDarkroomMode(mode) {
+  if (!DARKROOM_MODES.includes(mode)) mode = 'compose';
+  try { localStorage.setItem('darkroom-mode', mode); } catch (_) { /* storage may be disabled */ }
+  document.querySelectorAll('.mode-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.mode === mode);
+  });
+  document.querySelectorAll('[data-mode]').forEach((el) => {
+    if (el.classList.contains('mode-pill')) return;
+    const tokens = String(el.dataset.mode || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    // Only partition elements whose data-mode uses our recognized tokens.
+    // Other usages (forge-tab data-mode="upload") are left untouched.
+    const ours = tokens.some((t) => DARKROOM_MODE_TOKENS.has(t));
+    if (!ours) return;
+    const visible = tokens.includes('all') || tokens.includes(mode);
+    el.style.display = visible ? '' : 'none';
+  });
+}
+window.setDarkroomMode = setDarkroomMode;
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = (() => {
+    try { return localStorage.getItem('darkroom-mode'); } catch (_) { return null; }
+  })();
+  setDarkroomMode(DARKROOM_MODES.includes(saved) ? saved : 'compose');
+  document.querySelectorAll('.mode-pill').forEach((p) => {
+    p.addEventListener('click', () => setDarkroomMode(p.dataset.mode));
+  });
+});
 
 // --- Smart routing (darkroom.active.smart-routing-mvp) -----------------------
 // Engine compatibility map (engine × content_profile → verdict). Populated
