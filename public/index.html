@@ -910,6 +910,90 @@
     font-weight: 600;
   }
   #active-jobs-count.zero { background: #2a2a2a; color: #888; }
+  /* Edit-history drawer (darkroom.catalog.edit-history-drawer) */
+  .history-drawer-toggle {
+    position: fixed; top: 8px; right: 8px;
+    background: #a78bfa; color: #fff; border: none;
+    padding: 6px 10px; border-radius: 4px;
+    cursor: pointer; font-size: 12px; z-index: 200;
+  }
+  .history-drawer-toggle:hover { background: #8b5cf6; }
+  .history-drawer {
+    position: fixed; top: 0; right: -400px; bottom: 0;
+    width: 380px; max-width: 80vw;
+    background: #0a0a0a;
+    border-left: 1px solid #2a2a2a;
+    transition: right 0.25s ease;
+    z-index: 199;
+    display: flex; flex-direction: column;
+    padding: 16px;
+    overflow-y: auto;
+    font-size: 12px;
+    box-shadow: -4px 0 16px rgba(0,0,0,0.5);
+  }
+  .history-drawer.open { right: 0; }
+  .history-drawer-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+  .history-drawer-header h3 { margin: 0; color: #a78bfa; font-size: 14px; }
+  .history-drawer-close {
+    background: none; color: #888; border: none;
+    font-size: 22px; cursor: pointer; line-height: 1; padding: 0 4px;
+  }
+  .history-drawer-close:hover { color: #fff; }
+  .history-drawer-filters {
+    display: flex; flex-direction: column; gap: 4px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #1a1a1a;
+    color: #ccc;
+  }
+  .history-drawer-filters label {
+    display: flex; align-items: center; gap: 6px;
+    cursor: pointer; user-select: none;
+  }
+  .history-drawer-filter-tag {
+    background: #1a1a1a; color: #ccc;
+    border: 1px solid #2a2a2a; border-radius: 4px;
+    padding: 4px 6px; font-size: 11px;
+    width: 100%; box-sizing: border-box;
+  }
+  .history-drawer-list { display: flex; flex-direction: column; gap: 6px; }
+  .history-drawer-item {
+    display: flex; gap: 8px; padding: 6px;
+    border: 1px solid #2a2a2a; border-radius: 4px;
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    background: #0f0f0f;
+  }
+  .history-drawer-item:hover { border-color: #a78bfa; background: #141414; }
+  .history-drawer-item.active { border-color: #a78bfa; background: #1a132a; }
+  .history-drawer-item img {
+    width: 48px; height: 48px; object-fit: cover;
+    border-radius: 3px; background: #1a1a1a; flex-shrink: 0;
+  }
+  .history-drawer-item-meta {
+    font-size: 11px; color: #888; flex: 1;
+    min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  }
+  .history-drawer-item-engine {
+    color: #a78bfa; font-weight: 600; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .history-drawer-item-prompt {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: #ccc;
+  }
+  .history-drawer-item-tags {
+    display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px;
+  }
+  .history-drawer-item-tag {
+    background: #1f1530; color: #c4b5fd;
+    border-radius: 3px; padding: 1px 5px; font-size: 9px;
+  }
+  .history-drawer-empty {
+    color: #888; font-style: italic; padding: 20px 8px; text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -1992,6 +2076,25 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- Edit-history drawer (darkroom.catalog.edit-history-drawer) -->
+<button id="history-drawer-toggle" class="history-drawer-toggle"
+  title="Recent assets in this session">📚 History</button>
+<div id="history-drawer" class="history-drawer" aria-hidden="true">
+  <div class="history-drawer-header">
+    <h3>Recent Assets</h3>
+    <button class="history-drawer-close" type="button" aria-label="Close">×</button>
+  </div>
+  <div class="history-drawer-filters">
+    <label><input type="checkbox" id="history-drawer-starred-only" /> Starred only</label>
+    <label><input type="checkbox" id="history-drawer-include-archived" /> Show archived</label>
+    <input type="text" id="history-drawer-tag-filter" class="history-drawer-filter-tag"
+      placeholder="Filter by tag..." />
+  </div>
+  <div id="history-drawer-list" class="history-drawer-list">
+    <div class="history-drawer-empty">No assets in this session.</div>
+  </div>
+</div>
+
 <script>
 let token = sessionStorage.getItem('studio-token') || localStorage.getItem('studio-token') || '';
 let selectedChar = 'luna';
@@ -2428,6 +2531,158 @@ function renderHistoryGraphNode(node, activeId) {
 
 window.loadHistoryGraph = loadHistoryGraph;
 
+// --- Edit-history drawer (darkroom.catalog.edit-history-drawer) -------------
+// Slide-in drawer listing recent assets in the current session. Sources:
+//   1. versionStack — anything pushed via pushVersion() in this session.
+//   2. /api/asset-chain — ancestors + descendants of currentUrl, providing
+//      tags/starred/archived/prompt for filtering.
+// Click an asset → setCurrentUrl (or fallback). Filters apply client-side.
+async function loadHistoryDrawerList() {
+  const list = document.getElementById('history-drawer-list');
+  if (!list) return;
+
+  const items = [];
+  const seen = new Set();  // dedupe by source_url
+
+  // Source 1: versionStack — fast, always present.
+  if (Array.isArray(window.versionStack)) {
+    for (const v of window.versionStack) {
+      if (!v || !v.url || seen.has(v.url)) continue;
+      seen.add(v.url);
+      items.push({
+        source_url: v.url,
+        prompt: v.label || '',
+        engine: 'session',
+        starred: false,
+        archived: false,
+        tags: [],
+      });
+    }
+  }
+
+  // Source 2: chain of currentUrl. Best-effort — never throw.
+  if (typeof currentUrl !== 'undefined' && currentUrl) {
+    try {
+      const resp = await fetch(`/api/asset-chain?source_url=${encodeURIComponent(currentUrl)}`, {
+        headers: headers(),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+        for (const node of nodes) {
+          const url = node.source_url;
+          if (!url) continue;
+          if (seen.has(url)) {
+            // Enrich the existing item (versionStack lacks tags/starred).
+            const existing = items.find(i => i.source_url === url);
+            if (existing) {
+              existing.asset_id = node.id || existing.asset_id;
+              existing.engine = node.engine || node.asset_type || existing.engine;
+              existing.starred = !!node.starred;
+              existing.archived = !!node.archived;
+              existing.tags = Array.isArray(node.tags) ? node.tags : [];
+              if (node.prompt && !existing.prompt) existing.prompt = node.prompt;
+            }
+            continue;
+          }
+          seen.add(url);
+          items.push({
+            source_url: url,
+            asset_id: node.id || '',
+            prompt: node.prompt || '',
+            engine: node.engine || node.asset_type || 'asset',
+            starred: !!node.starred,
+            archived: !!node.archived,
+            tags: Array.isArray(node.tags) ? node.tags : [],
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // Apply filters
+  const starredOnly = document.getElementById('history-drawer-starred-only')?.checked;
+  const includeArchived = document.getElementById('history-drawer-include-archived')?.checked;
+  const tagFilter = (document.getElementById('history-drawer-tag-filter')?.value || '').trim().toLowerCase();
+  const filtered = items.filter(i => {
+    if (starredOnly && !i.starred) return false;
+    if (i.archived && !includeArchived) return false;
+    if (tagFilter && !(i.tags || []).some(t => String(t).toLowerCase().includes(tagFilter))) return false;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="history-drawer-empty">No assets match filters.</div>';
+    return;
+  }
+
+  const esc = (typeof _historyGraphEscape === 'function' ? _historyGraphEscape : (s => String(s == null ? '' : s)));
+  list.innerHTML = filtered.map(i => {
+    const safeUrl = esc(i.source_url);
+    const safeEngine = esc(i.engine || 'asset');
+    const safePrompt = esc((i.prompt || '').slice(0, 80));
+    const isActive = (typeof currentUrl !== 'undefined' && currentUrl === i.source_url);
+    const tagsHtml = (i.tags && i.tags.length)
+      ? `<div class="history-drawer-item-tags">${i.tags.slice(0, 4).map(t => `<span class="history-drawer-item-tag">${esc(t)}</span>`).join('')}</div>`
+      : '';
+    return `
+      <div class="history-drawer-item${isActive ? ' active' : ''}" data-url="${safeUrl}">
+        <img src="${safeUrl}" alt="" loading="lazy" />
+        <div class="history-drawer-item-meta">
+          <div class="history-drawer-item-engine">${safeEngine}${i.starred ? ' ★' : ''}${i.archived ? ' 🗄' : ''}</div>
+          <div class="history-drawer-item-prompt">${safePrompt || '(no prompt)'}</div>
+          ${tagsHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.history-drawer-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const url = el.dataset.url;
+      if (!url) return;
+      // Same fallback ladder used by job-result loader / history-graph nodes.
+      if (typeof setCurrentUrl === 'function') {
+        setCurrentUrl(url);
+      } else if (typeof pushVersion === 'function') {
+        pushVersion(url, 'history-drawer');
+        currentUrl = url;
+        const img = document.getElementById('result-img');
+        if (img) img.src = url;
+      } else {
+        currentUrl = url;
+        const img = document.getElementById('result-img');
+        if (img) img.src = url;
+      }
+      closeHistoryDrawer();
+    });
+  });
+}
+
+function openHistoryDrawer() {
+  const drawer = document.getElementById('history-drawer');
+  if (!drawer) return;
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  loadHistoryDrawerList();
+}
+function closeHistoryDrawer() {
+  const drawer = document.getElementById('history-drawer');
+  if (!drawer) return;
+  drawer.classList.remove('open');
+  drawer.setAttribute('aria-hidden', 'true');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('history-drawer-toggle')?.addEventListener('click', openHistoryDrawer);
+  document.querySelector('#history-drawer .history-drawer-close')?.addEventListener('click', closeHistoryDrawer);
+  document.getElementById('history-drawer-starred-only')?.addEventListener('change', loadHistoryDrawerList);
+  document.getElementById('history-drawer-include-archived')?.addEventListener('change', loadHistoryDrawerList);
+  // Tag filter — debounce-light: every keystroke is fine since filtering is
+  // client-side and cheap, but the asset-chain re-fetch is gated by seen set.
+  document.getElementById('history-drawer-tag-filter')?.addEventListener('input', loadHistoryDrawerList);
+});
+
 // Poll for currentUrl changes — when the visible image flips, refresh the
 // chain graph. Same cadence as the wave 11 compat-row poller.
 let _lastCheckedHistoryUrl = null;
@@ -2797,6 +3052,11 @@ let _jobsPollTimer = null;
 let _knownCompletedJobs = new Set();
 let _seenCompletedSeed = false;
 let _jobsActiveLastTickAt = 0;
+// Failed-job tracking (darkroom.async.failed-job-toast) — separate set from
+// completed so a flip across statuses still toasts each variant once. Seeded
+// on first /api/jobs?status=failed call so old failures don't spam on boot.
+let _knownFailedJobs = new Set();
+let _seenFailedSeed = false;
 
 function _activeJobsEscape(s) {
   return String(s == null ? '' : s)
@@ -2979,6 +3239,66 @@ async function checkCompletedJobs() {
   } catch {}
 }
 
+// --- Failed-job toast (darkroom.async.failed-job-toast) ---------------------
+// Polls /api/jobs?status=failed and surfaces a red, dismissible toast for
+// every newly-failed job. Distinct from the completion toast so users
+// notice errors. Seeds known set on first call to avoid spamming for old
+// failures that happened in prior sessions.
+async function checkFailedJobs() {
+  try {
+    const resp = await fetch('/api/jobs?status=failed&limit=10', { headers: headers() });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!_seenFailedSeed) {
+      for (const job of items) {
+        if (job && job.id) _knownFailedJobs.add(job.id);
+      }
+      _seenFailedSeed = true;
+      return;
+    }
+    for (const job of items) {
+      if (!job || !job.id) continue;
+      if (_knownFailedJobs.has(job.id)) continue;
+      _knownFailedJobs.add(job.id);
+      showFailedJobToast(job);
+    }
+  } catch {}
+}
+
+// Build a sticky red toast on its own #failed-job-toasts container so it
+// doesn't collide with the single-instance #toast helper. Auto-removes
+// after 6s; user can dismiss earlier via the × button.
+function showFailedJobToast(job) {
+  if (!job) return;
+  let container = document.getElementById('failed-job-toasts');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'failed-job-toasts';
+    container.style.cssText = 'position:fixed;top:60px;right:16px;z-index:100001;display:flex;flex-direction:column;gap:8px;max-width:380px;pointer-events:none;';
+    document.body.appendChild(container);
+  }
+  const engine = _activeJobsEscape(job.engine || job.job_type || 'job');
+  const errClass = _activeJobsEscape(job.error_class || 'error');
+  const errDetail = _activeJobsEscape(String(job.error_detail || '').slice(0, 120));
+  const idShort = _activeJobsEscape(String(job.id || '').slice(0, 8));
+  const el = document.createElement('div');
+  el.className = 'failed-job-toast';
+  el.style.cssText = 'background:#3b0a0a;border:1px solid #ef4444;color:#fecaca;padding:10px 14px;border-radius:6px;font-size:0.85rem;line-height:1.35;box-shadow:0 4px 12px rgba(239,68,68,0.25);pointer-events:auto;display:flex;gap:10px;align-items:flex-start;';
+  el.innerHTML = `
+    <div style="flex:1;min-width:0;">
+      <div style="font-weight:600;color:#fca5a5;margin-bottom:2px;">❌ Job failed: ${engine} <span style="opacity:0.6;font-weight:400;">(${idShort})</span></div>
+      <div style="word-break:break-word;"><strong>${errClass}</strong>${errDetail ? ': ' + errDetail : ''}</div>
+    </div>
+    <button type="button" aria-label="Dismiss" style="background:none;border:none;color:#fecaca;font-size:1.1rem;cursor:pointer;padding:0;line-height:1;">×</button>
+  `;
+  const dismiss = () => { if (el.parentNode) el.parentNode.removeChild(el); };
+  el.querySelector('button')?.addEventListener('click', dismiss);
+  container.appendChild(el);
+  // Auto-remove after 6s. Persists ≥4s per spec; 6s gives extra read time.
+  setTimeout(dismiss, 6000);
+}
+
 // When a job finishes, prepend a "Load Result" row at the top of the
 // Active Jobs container so the user can pick the result back up. Rows
 // auto-evict on the next renderActiveJobs() call once the user dismisses
@@ -3026,6 +3346,7 @@ async function _jobsTick() {
   if (!token) return;  // not authenticated yet
   const activeCount = await renderActiveJobs();
   await checkCompletedJobs();
+  await checkFailedJobs();
   _jobsActiveLastTickAt = activeCount > 0 ? Date.now() : _jobsActiveLastTickAt;
 }
 
@@ -3808,6 +4129,7 @@ async function editImage() {
         method: 'POST', headers: headers(),
         body: JSON.stringify({
           image_url: currentUrl,
+          source_url: currentUrl,  // alias — wave-26 saveAsset() resolves parent_id via this
           prompt: editPrompt,
           polish: getPolish(),
         })
@@ -3820,6 +4142,7 @@ async function editImage() {
         method: 'POST', headers: headers(),
         body: JSON.stringify({
           image_url: currentUrl,
+          source_url: currentUrl,  // alias — wave-26 saveAsset() resolves parent_id via this
           prompt: editPrompt,
           prefer_model: preferModel,
           character: selectedChar,
@@ -5100,6 +5423,7 @@ async function runSandwich() {
       method: 'POST', headers: headers(),
       body: JSON.stringify({
         image_url: currentUrl,
+        source_url: currentUrl,  // alias for wave-26 parent_id resolution
         edit_prompt: editPrompt,
         edit_engine: editEngine,
         upscaler,
@@ -5143,6 +5467,7 @@ async function surgicalEdit() {
       method: 'POST', headers: headers(),
       body: JSON.stringify({
         image_url: currentUrl,
+        source_url: currentUrl,  // alias for wave-26 parent_id resolution
         prompt: editPrompt,
         upscale_after: upscaleAfter,
         character: selectedChar,
