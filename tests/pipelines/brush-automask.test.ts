@@ -178,16 +178,12 @@ test("flux-edit — auto_mask:true is accepted (no 400 from extra param)", async
   });
   const resp = await handleSafeEditRoutes(req, url, stubDeps());
   expect(resp).not.toBeNull();
-  expect(resp!.status).not.toBe(400 + 0); // 400 only if a REQUIRED field missing
-  // Accept anything past validation: 400 only allowed if it's the fetch-source
-  // error from the stubbed downstream — body.error string should reflect it.
+  // Whatever the status, the error must NOT be about auto_mask or guidance_scale
+  // being unrecognized — the handler accepts those as documented params.
   const body = await resp!.json();
   expect(body.error).toBeDefined();
-  // If status is 400, error must be about the fetch step, NOT a missing field.
-  if (resp!.status === 400) {
-    expect(String(body.error).toLowerCase()).not.toContain("auto_mask");
-    expect(String(body.error).toLowerCase()).not.toContain("guidance_scale");
-  }
+  expect(String(body.error).toLowerCase()).not.toContain("auto_mask");
+  expect(String(body.error).toLowerCase()).not.toContain("guidance_scale");
 });
 
 // --- delegation contract ---
