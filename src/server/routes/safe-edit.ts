@@ -268,6 +268,22 @@ export async function handleSafeEditRoutes(
     return handlePresetsSoftDelete(id);
   }
 
+  // ---------------------------------------------------------------------------
+  // Wardrobe — curated garment library (migration 0043). Each row points at an
+  // entry in `assets` via asset_id. The list endpoint joins back to assets so
+  // the client gets the actual image URL alongside the catalog metadata.
+  // ---------------------------------------------------------------------------
+
+  if (url.pathname === "/api/wardrobe" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleWardrobeList(url);
+  }
+
+  if (url.pathname === "/api/wardrobe" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleWardrobeCreate(req);
+  }
+
   return null;
 }
 
@@ -4449,6 +4465,221 @@ async function handlePresetsSoftDelete(id: string): Promise<Response> {
   } catch (err: any) {
     return Response.json(
       { error: "presets_delete_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+// =============================================================================
+// Wardrobe — list / create endpoints over the `wardrobe` table (migration 0043).
+//
+// Each wardrobe row references an `assets` row via asset_id (FK CASCADE). The
+// list endpoint joins back so the client gets source_url / storage_path / dims
+// in a single request — the wardrobe grid renders thumbnails from those URLs.
+//
+// Two-step join (wardrobe rows → unique asset_ids → assets) over PostgREST
+// embed because the embedded form requires an explicit FK relationship to be
+// declared in the Postgres schema. The two-step version is robust against any
+// schema-cache state and degrades gracefully when an asset row has been hard
+// deleted (wardrobe row still surfaces, asset field is null).
+//
+// All routes auth-gated upstream via checkAuth. Reads default to live
+// (archived = false) unless ?archived=true|all is set.
+// =============================================================================
+
+const WARDROBE_VALID_CATEGORIES = new Set([
+  "top",
+  "bottom",
+  "dress",
+  "lingerie",
+  "outerwear",
+  "swimwear",
+  "accessory",
+  "footwear",
+  "hosiery",
+]);
+
+async function handleWardrobeList(url: URL): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const filters: string[] = [];
+
+    const category = url.searchParams.get("category");
+    if (category) {
+      filters.push(`category=eq.${encodeFilterValue(category)}`);
+    }
+
+    const subcategory = url.searchParams.get("subcategory");
+    if (subcategory) {
+      filters.push(`subcategory=eq.${encodeFilterValue(subcategory)}`);
+    }
+
+    const featured = url.searchParams.get("featured");
+    if (featured === "true") {
+      filters.push("featured=eq.true");
+    } else if (featured === "false") {
+      filters.push("featured=eq.false");
+    }
+
+    // archived defaults to false (live only) unless explicitly set to true/all.
+    const archivedParam = url.searchParams.get("archived");
+    if (archivedParam === "true") {
+      filters.push("archived=eq.true");
+    } else if (archivedParam !== "all") {
+      filters.push("archived=eq.false");
+    }
+
+    filters.push("order=created_at.desc");
+
+    // Cap return size — wardrobe grid is meant to be browsed, not paginated to
+    // infinity. Callers can paginate by passing ?offset and ?limit.
+    const limitRaw = Number(url.searchParams.get("limit") ?? 200);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.max(1, Math.min(500, Math.floor(limitRaw)))
+      : 200;
+    filters.push(`limit=${limit}`);
+    const offsetRaw = Number(url.searchParams.get("offset") ?? 0);
+    const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
+    if (offset > 0) filters.push(`offset=${offset}`);
+
+    const qs = filters.join("&");
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/wardrobe?${qs}`, {
+      headers: supaHeaders(),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return Response.json(
+        { error: "wardrobe_list_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const items: any[] = await res.json();
+    if (!Array.isArray(items) || items.length === 0) {
+      return Response.json({ items: [], count: 0 });
+    }
+
+    // Two-step join: collect unique asset_ids, fetch them in one batched call,
+    // then merge each asset onto its parent wardrobe row.
+    const assetIds = Array.from(
+      new Set(items.map((it) => it?.asset_id).filter((v) => typeof v === "string" && v))
+    );
+
+    let assetsById: Record<string, any> = {};
+    if (assetIds.length > 0) {
+      const inList = assetIds.map((id) => encodeFilterValue(id)).join(",");
+      const assetsRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/assets?id=in.(${inList})&select=id,source_url,storage_path,mime_type,width,height`,
+        { headers: supaHeaders() }
+      );
+      if (assetsRes.ok) {
+        const rows: any[] = await assetsRes.json();
+        if (Array.isArray(rows)) {
+          for (const row of rows) {
+            if (row?.id) assetsById[row.id] = row;
+          }
+        }
+      }
+      // If assets fetch fails we still return wardrobe rows — clients render a
+      // placeholder when asset is null. Failure to enrich != failure of list.
+    }
+
+    const enriched = items.map((it) => ({
+      ...it,
+      asset: it?.asset_id ? assetsById[it.asset_id] || null : null,
+    }));
+
+    return Response.json({ items: enriched, count: enriched.length });
+  } catch (err: any) {
+    return Response.json(
+      { error: "wardrobe_list_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleWardrobeCreate(req: Request): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const body: any = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+
+    const assetId = typeof body.asset_id === "string" ? body.asset_id.trim() : "";
+    const category = typeof body.category === "string" ? body.category.trim() : "";
+
+    if (!assetId) {
+      return Response.json({ error: "asset_id required", field: "asset_id" }, { status: 400 });
+    }
+    if (!category) {
+      return Response.json({ error: "category required", field: "category" }, { status: 400 });
+    }
+    // Soft validation only — the schema stores category as free text on
+    // purpose so new categories don't need a migration. We warn on unknowns
+    // by rejecting only the obviously empty/whitespace case above.
+    // (If you want to enforce, uncomment the guard below.)
+    // if (!WARDROBE_VALID_CATEGORIES.has(category)) {
+    //   return Response.json({ error: "unknown category", field: "category" }, { status: 400 });
+    // }
+
+    const now = new Date().toISOString();
+    const row: Record<string, any> = {
+      asset_id: assetId,
+      category,
+      created_at: now,
+      updated_at: now,
+    };
+
+    if (typeof body.subcategory === "string" && body.subcategory.trim()) {
+      row.subcategory = body.subcategory.trim();
+    }
+    if (typeof body.name === "string" && body.name.trim()) {
+      row.name = body.name.trim();
+    }
+    if (Array.isArray(body.tags)) {
+      row.tags = body.tags.filter((t: any) => typeof t === "string");
+    }
+    if (body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)) {
+      row.attributes = body.attributes;
+    }
+    if (typeof body.featured === "boolean") row.featured = body.featured;
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/wardrobe`, {
+      method: "POST",
+      headers: supaHeaders(),
+      body: JSON.stringify(row),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      // FK violation on asset_id → 422 (the asset row doesn't exist).
+      if (errText.includes("23503") || /violates foreign key/i.test(errText)) {
+        return Response.json(
+          { error: "asset_not_found", field: "asset_id", asset_id: assetId, detail: errText },
+          { status: 422 }
+        );
+      }
+      return Response.json(
+        { error: "wardrobe_create_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const created = await res.json();
+    const out = Array.isArray(created) ? created[0] : created;
+    return Response.json(out, { status: 201 });
+  } catch (err: any) {
+    return Response.json(
+      { error: "wardrobe_create_error", detail: err?.message || String(err) },
       { status: 500 }
     );
   }
