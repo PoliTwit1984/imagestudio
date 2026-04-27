@@ -722,6 +722,115 @@
     padding-left: 8px;
     margin-top: 4px;
   }
+
+  /* Active Jobs panel — collapsible list of running/queued async jobs.
+     Polls GET /api/jobs?status=running|queued every ~3s while panel
+     contains items (or always — see startJobsPolling for cadence
+     details). One row per job with engine, status, progress bar,
+     progress message, and Cancel button. Completed-job toast is
+     surfaced via checkCompletedJobs() so the user can pick the
+     result back up. */
+  .active-jobs-panel { margin: 12px 0; }
+  .active-jobs-panel > summary {
+    padding: 8px 12px; background: #1a1a1a; border-radius: 6px;
+    color: #a78bfa; font-weight: 600; cursor: pointer;
+  }
+  .active-jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .active-jobs-empty {
+    color: #888;
+    font-style: italic;
+    padding: 8px;
+    font-size: 12px;
+  }
+  .active-job-row {
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    padding: 8px;
+    background: #1a1a1a;
+  }
+  .active-job-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .active-job-engine {
+    color: #a78bfa;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .active-job-type {
+    color: #888;
+    font-size: 10px;
+    margin-left: 6px;
+    text-transform: lowercase;
+  }
+  .active-job-status {
+    color: #888;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .active-job-status.running { color: #f59e0b; }
+  .active-job-status.queued { color: #888; }
+  .active-job-status.completed { color: #22c55e; }
+  .active-job-status.failed { color: #ef4444; }
+  .active-job-status.cancelled { color: #888; text-decoration: line-through; }
+  .active-job-progress-bar {
+    height: 4px;
+    background: #2a2a2a;
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 4px 0;
+  }
+  .active-job-progress-fill {
+    height: 100%;
+    background: #a78bfa;
+    transition: width 0.3s;
+  }
+  .active-job-message {
+    color: #888;
+    font-size: 11px;
+    margin: 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .active-job-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .active-job-actions button {
+    background: #2a2a2a;
+    color: #fff;
+    border: none;
+    padding: 3px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .active-job-actions button:hover { background: #a78bfa; }
+  .active-job-actions button.cancel { background: #1a1a1a; color: #ef4444; }
+  .active-job-actions button.cancel:hover { background: #ef4444; color: #fff; }
+  .active-job-actions button.load-result { background: #1a1a1a; color: #22c55e; }
+  .active-job-actions button.load-result:hover { background: #22c55e; color: #fff; }
+  #active-jobs-count {
+    background: #a78bfa; color: #fff; border-radius: 99px;
+    padding: 1px 6px; font-size: 10px; margin-left: 4px;
+    font-weight: 600;
+  }
+  #active-jobs-count.zero { background: #2a2a2a; color: #888; }
 </style>
 </head>
 <body>
@@ -1110,6 +1219,20 @@
         <summary style="cursor:pointer;font-weight:600;color:#a78bfa;">History Graph <span style="font-weight:400;color:#888;font-size:0.78rem;">— edit-tree / chain-graph for this image</span></summary>
         <div id="history-graph-container" class="history-graph">
           <div class="history-graph-empty">No image loaded yet.</div>
+        </div>
+      </details>
+
+      <!-- Active Jobs panel — running/queued async jobs from spawnJob.
+           Polls GET /api/jobs?status=running|queued every 3s, surfaces
+           progress bar + progress_message per row, and offers a
+           Cancel button per job. When a previously-unseen job lands
+           in 'completed', a toast fires + a Load Result button is
+           offered so the user can swap currentUrl to the produced
+           asset. See darkroom.async.jobs-polling. -->
+      <details class="active-jobs-panel" id="active-jobs-panel">
+        <summary>Active Jobs <span id="active-jobs-count" class="zero">0</span> <span style="font-weight:400;color:#888;font-size:0.78rem;">— running / queued async work</span></summary>
+        <div id="active-jobs-container" class="active-jobs-list">
+          <div class="active-jobs-empty">No active jobs.</div>
         </div>
       </details>
 
@@ -2206,6 +2329,308 @@ setInterval(() => {
   }
 }, 1500);
 // --- /History Graph ----------------------------------------------------------
+
+// --- Active Jobs panel ------------------------------------------------------
+// Polls GET /api/jobs?status=running|queued every 3s while the panel exists,
+// renders one row per active job with progress bar + message, exposes a
+// Cancel button per row (DELETE /api/jobs/:id), and notifies the user when
+// a previously-unseen completed job lands so they can swap currentUrl to
+// the result via a Load Result button.
+//
+// Polling intelligence:
+//   * Always run once on app boot (startJobsPolling) — surfaces stale jobs
+//     from prior sessions immediately.
+//   * Cadence is 3s when at least one job is running/queued, 10s otherwise
+//     (saves bandwidth — see _jobsAdaptiveCadence).
+//   * Pauses while document.hidden so background tabs don't hammer the API.
+let _jobsPollTimer = null;
+let _knownCompletedJobs = new Set();
+let _seenCompletedSeed = false;
+let _jobsActiveLastTickAt = 0;
+
+function _activeJobsEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function fetchActiveJobs() {
+  try {
+    const [runningResp, queuedResp] = await Promise.all([
+      fetch('/api/jobs?status=running&limit=50', { headers: headers() }).catch(() => null),
+      fetch('/api/jobs?status=queued&limit=50', { headers: headers() }).catch(() => null),
+    ]);
+    let running = [];
+    let queued = [];
+    if (runningResp && runningResp.ok) {
+      const d = await runningResp.json();
+      running = Array.isArray(d.items) ? d.items : [];
+    }
+    if (queuedResp && queuedResp.ok) {
+      const d = await queuedResp.json();
+      queued = Array.isArray(d.items) ? d.items : [];
+    }
+    return [...running, ...queued];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function renderActiveJobs() {
+  const items = await fetchActiveJobs();
+  const container = document.getElementById('active-jobs-container');
+  const counter = document.getElementById('active-jobs-count');
+  if (!container || !counter) return items.length;
+
+  counter.textContent = String(items.length);
+  if (items.length === 0) {
+    counter.classList.add('zero');
+    container.innerHTML = '<div class="active-jobs-empty">No active jobs.</div>';
+    return 0;
+  }
+  counter.classList.remove('zero');
+
+  container.innerHTML = items.map((j) => {
+    const id = _activeJobsEscape(j.id || '');
+    const engine = _activeJobsEscape(j.engine || j.job_type || 'job');
+    const jobType = j.job_type ? _activeJobsEscape(j.job_type) : '';
+    const status = _activeJobsEscape(j.status || 'queued');
+    const progress = Math.max(0, Math.min(1, Number(j.progress) || 0));
+    const pct = (progress * 100).toFixed(0);
+    const msg = j.progress_message ? _activeJobsEscape(j.progress_message) : '';
+    return `
+      <div class="active-job-row" data-job-id="${id}">
+        <div class="active-job-header">
+          <span>
+            <span class="active-job-engine">${engine}</span>${jobType && jobType !== engine ? `<span class="active-job-type">${jobType}</span>` : ''}
+          </span>
+          <span class="active-job-status ${status}">${status}</span>
+        </div>
+        <div class="active-job-progress-bar">
+          <div class="active-job-progress-fill" style="width: ${pct}%;"></div>
+        </div>
+        ${msg ? `<div class="active-job-message" title="${msg}">${msg}</div>` : ''}
+        <div class="active-job-actions">
+          <button class="cancel" onclick="cancelJob('${id}')">Cancel</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  return items.length;
+}
+
+async function cancelJob(jobId) {
+  if (!jobId) return;
+  if (!confirm('Cancel this job?')) return;
+  try {
+    const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+      method: 'DELETE',
+      headers: headers(),
+    });
+    let data = {};
+    try { data = await resp.json(); } catch {}
+    if (!resp.ok) throw new Error(data.error || `cancel failed (${resp.status})`);
+    if (typeof toast === 'function') toast('Job cancelled');
+    renderActiveJobs();
+  } catch (e) {
+    if (typeof toast === 'function') toast('Cancel failed: ' + (e.message || e));
+    else console.error('cancel failed', e);
+  }
+}
+window.cancelJob = cancelJob;
+
+// Resolve an asset_id → source_url via /api/asset-chain (which returns the
+// seed asset including source_url). Returns null on miss.
+async function resolveAssetUrl(assetId) {
+  if (!assetId) return null;
+  try {
+    const resp = await fetch(`/api/asset-chain?id=${encodeURIComponent(assetId)}`, {
+      headers: headers(),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    // /api/asset-chain returns { seed?, root?, ... } — try the most likely shapes.
+    const seed = data.seed || data.root || data.asset || null;
+    if (seed && seed.source_url) return seed.source_url;
+    // Fallback: walk the tree if a flat array of nodes is returned.
+    if (Array.isArray(data.nodes)) {
+      const match = data.nodes.find((n) => n && n.id === assetId);
+      if (match && match.source_url) return match.source_url;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadJobResult(jobId, assetId) {
+  if (!jobId && !assetId) return;
+  let url = null;
+  if (assetId) url = await resolveAssetUrl(assetId);
+  if (!url && jobId) {
+    // Fallback: re-fetch the job and try again (worker may have just written
+    // output_asset_id between the list call and now).
+    try {
+      const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { headers: headers() });
+      if (resp.ok) {
+        const data = await resp.json();
+        const j = data.job || data;
+        if (j && j.output_asset_id) url = await resolveAssetUrl(j.output_asset_id);
+      }
+    } catch {}
+  }
+  if (!url) {
+    if (typeof toast === 'function') toast('Result not ready yet');
+    return;
+  }
+  if (typeof setCurrentUrl === 'function') {
+    setCurrentUrl(url);
+  } else if (typeof pushVersion === 'function') {
+    pushVersion(url, 'job-result');
+    currentUrl = url;
+    const img = document.getElementById('result-img');
+    if (img) img.src = url;
+  } else {
+    currentUrl = url;
+    const img = document.getElementById('result-img');
+    if (img) img.src = url;
+  }
+  if (typeof toast === 'function') toast('Loaded result');
+}
+window.loadJobResult = loadJobResult;
+
+async function checkCompletedJobs() {
+  try {
+    const resp = await fetch('/api/jobs?status=completed&limit=10', { headers: headers() });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    // Seed the known-set on first call so we don't toast for everything
+    // that completed before the user opened the page.
+    if (!_seenCompletedSeed) {
+      for (const job of items) {
+        if (job && job.id) _knownCompletedJobs.add(job.id);
+      }
+      _seenCompletedSeed = true;
+      return;
+    }
+    for (const job of items) {
+      if (!job || !job.id) continue;
+      if (_knownCompletedJobs.has(job.id)) continue;
+      _knownCompletedJobs.add(job.id);
+      const engine = job.engine || job.job_type || 'job';
+      const idShort = String(job.id).slice(0, 8);
+      const assetId = job.output_asset_id || '';
+      // Toast announces completion. The Active Jobs panel re-renders to
+      // include a Load Result row for this job (see appendCompletedJobRow).
+      if (typeof toast === 'function') toast(`Job completed: ${engine} (${idShort})`);
+      appendCompletedJobRow(job);
+    }
+  } catch {}
+}
+
+// When a job finishes, prepend a "Load Result" row at the top of the
+// Active Jobs container so the user can pick the result back up. Rows
+// auto-evict on the next renderActiveJobs() call once the user dismisses
+// or another tick happens — this is intentionally a transient affordance.
+function appendCompletedJobRow(job) {
+  if (!job || !job.id) return;
+  const container = document.getElementById('active-jobs-container');
+  if (!container) return;
+  const id = _activeJobsEscape(job.id);
+  const engine = _activeJobsEscape(job.engine || job.job_type || 'job');
+  const assetId = _activeJobsEscape(job.output_asset_id || '');
+  // Strip the "no active jobs" placeholder if present.
+  const empty = container.querySelector('.active-jobs-empty');
+  if (empty) empty.remove();
+  const row = document.createElement('div');
+  row.className = 'active-job-row';
+  row.setAttribute('data-job-id', id);
+  row.setAttribute('data-completed', 'true');
+  row.innerHTML = `
+    <div class="active-job-header">
+      <span><span class="active-job-engine">${engine}</span></span>
+      <span class="active-job-status completed">completed</span>
+    </div>
+    <div class="active-job-progress-bar">
+      <div class="active-job-progress-fill" style="width: 100%;"></div>
+    </div>
+    <div class="active-job-actions">
+      <button class="load-result" onclick="loadJobResult('${id}', '${assetId}')">Load Result</button>
+      <button class="cancel" onclick="this.closest('.active-job-row').remove()">Dismiss</button>
+    </div>
+  `;
+  container.prepend(row);
+  // Bump the counter visually (purely cosmetic — next poll tick recomputes).
+  const counter = document.getElementById('active-jobs-count');
+  if (counter) {
+    counter.classList.remove('zero');
+  }
+  // Auto-open the panel so the user notices.
+  const panel = document.getElementById('active-jobs-panel');
+  if (panel && !panel.open) panel.open = true;
+}
+
+async function _jobsTick() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  if (!token) return;  // not authenticated yet
+  const activeCount = await renderActiveJobs();
+  await checkCompletedJobs();
+  _jobsActiveLastTickAt = activeCount > 0 ? Date.now() : _jobsActiveLastTickAt;
+}
+
+// Cadence: 3s while jobs are visible (or recently were); 10s when idle for
+// 30s+. Visibility-API check happens inside _jobsTick to skip silently.
+function _jobsAdaptiveCadence() {
+  const since = Date.now() - _jobsActiveLastTickAt;
+  return since < 30_000 ? 3000 : 10_000;
+}
+
+function startJobsPolling() {
+  if (_jobsPollTimer) return;
+  const loop = async () => {
+    try { await _jobsTick(); } catch {}
+    _jobsPollTimer = setTimeout(loop, _jobsAdaptiveCadence());
+  };
+  // Immediate first call so the panel is populated on open.
+  _jobsTick().catch(() => {});
+  _jobsPollTimer = setTimeout(loop, 3000);
+}
+
+function stopJobsPolling() {
+  if (_jobsPollTimer) {
+    clearTimeout(_jobsPollTimer);
+    _jobsPollTimer = null;
+  }
+}
+
+// Re-tick immediately when the panel is opened.
+document.addEventListener('DOMContentLoaded', () => {
+  const panel = document.getElementById('active-jobs-panel');
+  if (panel) {
+    panel.addEventListener('toggle', () => {
+      if (panel.open) _jobsTick().catch(() => {});
+    });
+  }
+});
+
+// Boot polling once the user is authenticated. showApp() runs after
+// authenticate() succeeds; we hook it without redefining the function.
+const _origShowApp_jobs = (typeof showApp === 'function') ? showApp : null;
+if (_origShowApp_jobs) {
+  showApp = async function patchedShowApp() {
+    const r = await _origShowApp_jobs.apply(this, arguments);
+    try { startJobsPolling(); } catch {}
+    return r;
+  };
+} else {
+  // Fallback: kick polling 5s after page load if showApp isn't visible at
+  // the time this script block runs (script-order safety net).
+  setTimeout(() => {
+    if (typeof token !== 'undefined' && token) startJobsPolling();
+  }, 5000);
+}
+// --- /Active Jobs panel -----------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
   const editInput = document.getElementById('edit-input');
