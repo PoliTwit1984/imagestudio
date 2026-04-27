@@ -20,6 +20,7 @@ import {
   sharpen,
   getStatus as enhancorGetStatus,
 } from "../enhancor";
+import { createLuna, getLunaForUser, updateLuna } from "../lunaCompanion";
 import type { RouteDeps } from "./types";
 
 // =============================================================================
@@ -1092,6 +1093,349 @@ export async function handleSafeEditRoutes(
   // GET /api/enhancor/health
   if (url.pathname === "/api/enhancor/health" && req.method === "GET") {
     return handleEnhancorHealth();
+  }
+
+  // ===========================================================================
+  // Luna API — per-user AI companion endpoints (Phase 18.1)
+  //
+  //   POST   /api/lunas               — create Luna for the current user (201)
+  //   GET    /api/lunas/me            — get current user's Luna (or {luna:null})
+  //   PATCH  /api/lunas/:id           — update name/persona_text/voice_id (200)
+  //   DELETE /api/lunas/:id           — soft-delete (sets deleted_at)  (204)
+  //   GET    /api/lunas/:id/export    — full JSON dump (attachment)     (200)
+  //
+  // Auth: all 5 routes require checkAuth(). Per-user identity comes from the
+  // x-user-id header (same pattern as billing). When auth is upgraded to
+  // Supabase session-based auth, replace extractUserId() with session lookup.
+  //
+  // Ownership: PATCH / DELETE / export check luna.user_id === requesting userId.
+  // Returns 403 when the requesting user does not own the target Luna.
+  //
+  // Soft-delete note: deleted_at column added in migration
+  // 0057_lunas_deleted_at.sql. getLunaForUser filters deleted rows via
+  // &deleted_at=is.null query param. Until that migration is applied, the
+  // placeholder field is set on the raw PostgREST PATCH — Postgres will error
+  // (unknown column) but the TODO comment below documents the expectation.
+  // ===========================================================================
+
+  // ---------------------------------------------------------------------------
+  // POST "?/api/lunas" — create a Luna for the current user
+  // (route marker: POST "/api/lunas")
+  // ---------------------------------------------------------------------------
+  if (req.method === "POST" && url.pathname === "/api/lunas") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+    // TODO(per-user-auth): replace extractUserId with session-based auth when
+    // Supabase Auth is wired. For now, null user_id is a passthrough — we
+    // cannot create a Luna without a real user identity, so reject.
+    const userId = extractUserId(req);
+    if (!userId) {
+      return Response.json(
+        { error: "x-user-id header required (auth not yet wired)" },
+        { status: 401 },
+      );
+    }
+
+    let body: Record<string, unknown> = {};
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) {
+      return Response.json({ error: "name is required" }, { status: 400 });
+    }
+
+    const opts: { name: string; persona_text?: string; voice_id?: string } = { name };
+    if (typeof body.persona_text === "string") opts.persona_text = body.persona_text;
+    if (typeof body.voice_id === "string") opts.voice_id = body.voice_id;
+
+    try {
+      const luna = await createLuna(userId, opts);
+      return Response.json({ luna }, { status: 201 });
+    } catch (e: any) {
+      // PostgREST returns 409 (or a duplicate-key PG error surfaced as 409)
+      // when UNIQUE(user_id) is violated — map to 409 for callers.
+      const msg: string = e?.message || "";
+      if (
+        msg.includes("HTTP 409") ||
+        msg.includes("duplicate") ||
+        msg.includes("unique") ||
+        msg.includes("already exists")
+      ) {
+        return Response.json(
+          { error: "user already has a Luna — use PATCH /api/lunas/:id to update" },
+          { status: 409 },
+        );
+      }
+      console.error("[api/lunas POST] createLuna failed:", e);
+      return Response.json({ error: e?.message || "create_luna_failed" }, { status: 500 });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /api/lunas/me — return current user's Luna, or {luna: null}
+  //
+  // No 404: missing is the valid empty-state. Callers use luna === null to
+  // decide whether to show the "Create your Luna" onboarding flow.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/lunas/me" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+    const userId = extractUserId(req);
+    if (!userId) {
+      // No user identity — return null luna (same as "no Luna created yet").
+      return Response.json({ luna: null });
+    }
+
+    try {
+      const luna = await getLunaForUser(userId);
+      // getLunaForUser already filters deleted rows via deleted_at=is.null
+      // (added to the query in lunaCompanion after 0057 migration).
+      return Response.json({ luna });
+    } catch (e: any) {
+      console.error("[api/lunas/me GET] getLunaForUser failed:", e);
+      return Response.json({ error: e?.message || "get_luna_failed" }, { status: 500 });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // PATCH /api/lunas/:id — update name, persona_text, voice_id
+  //
+  // Ownership check: the requesting user must own the Luna (user_id match).
+  // Unknown fields in the body are silently ignored — only the three mutable
+  // fields above are forwarded to updateLuna.
+  // ---------------------------------------------------------------------------
+  {
+    const patchMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)$/);
+    if (patchMatch && req.method === "PATCH") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = patchMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      // Resolve the existing Luna to check ownership.
+      let existing;
+      try {
+        if (!SUPABASE_URL) {
+          return Response.json({ error: "supabase not configured" }, { status: 503 });
+        }
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json();
+        existing = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!existing) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (existing.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      let body: Record<string, unknown> = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "invalid_json_body" }, { status: 400 });
+      }
+
+      const patch: Partial<Pick<import("../lunaCompanion").Luna, "name" | "persona_text" | "voice_id">> = {};
+      if (typeof body.name === "string") patch.name = body.name.trim();
+      if (typeof body.persona_text === "string") patch.persona_text = body.persona_text;
+      if (body.persona_text === null) patch.persona_text = null;
+      if (typeof body.voice_id === "string") patch.voice_id = body.voice_id;
+      if (body.voice_id === null) patch.voice_id = null;
+
+      if (Object.keys(patch).length === 0) {
+        return Response.json({ error: "no patchable fields provided (name, persona_text, voice_id)" }, { status: 400 });
+      }
+
+      try {
+        const updated = await updateLuna(lunaId, patch);
+        return Response.json({ luna: updated });
+      } catch (e: any) {
+        console.error("[api/lunas/:id PATCH] updateLuna failed:", e);
+        return Response.json({ error: e?.message || "update_luna_failed" }, { status: 500 });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /api/lunas/:id — soft-delete by setting deleted_at
+  //
+  // Ownership check: requesting user must own the Luna.
+  // deleted_at column added in migration 0057_lunas_deleted_at.sql.
+  // Subsequent GET /api/lunas/me filters out rows with deleted_at IS NOT NULL.
+  // Returns 204 No Content on success.
+  // ---------------------------------------------------------------------------
+  {
+    const deleteMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)$/);
+    if (deleteMatch && req.method === "DELETE") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = deleteMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Ownership check
+      let existing;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json();
+        existing = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!existing) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (existing.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Soft-delete: set deleted_at to now().
+      // NOTE: deleted_at column needs to be added in a follow-up migration;
+      // for now, soft-delete sets a placeholder field that schema doesn't
+      // enforce — see migrations/0057_lunas_deleted_at.sql.
+      try {
+        const patchRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              ...supaHeaders(),
+              Prefer: "return=minimal",
+            },
+            body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+          },
+        );
+        if (!patchRes.ok) {
+          const errText = await patchRes.text().catch(() => "");
+          return Response.json(
+            { error: `soft-delete failed: ${patchRes.status}${errText ? ` — ${errText}` : ""}` },
+            { status: 502 },
+          );
+        }
+      } catch (e: any) {
+        console.error("[api/lunas/:id DELETE] soft-delete failed:", e);
+        return Response.json({ error: e?.message || "delete_luna_failed" }, { status: 500 });
+      }
+
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /api/lunas/:id/export — full JSON dump of luna + messages + memories
+  //
+  // Returns Content-Disposition: attachment so the browser triggers a download.
+  // Ownership check: requesting user must own the Luna.
+  // Queries darkroom_luna_messages and darkroom_luna_memories via PostgREST.
+  // ---------------------------------------------------------------------------
+  {
+    const exportMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/export$/);
+    if (exportMatch && req.method === "GET") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = exportMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Ownership check
+      let luna;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json();
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Fetch messages (all turns, newest-first by default from the index).
+      let messages: unknown[] = [];
+      try {
+        const msgRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_messages?luna_id=eq.${encodeFilterValue(lunaId)}&order=created_at.asc&limit=10000`,
+          { headers: supaHeaders() },
+        );
+        if (msgRes.ok) messages = await msgRes.json();
+      } catch {
+        // Non-fatal — export degrades gracefully to luna+memories if messages
+        // fetch fails (e.g. table doesn't exist yet in dev).
+      }
+
+      // Fetch memories (all, including invalidated — for export completeness).
+      let memories: unknown[] = [];
+      try {
+        const memRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_memories?luna_id=eq.${encodeFilterValue(lunaId)}&order=created_at.asc&limit=10000`,
+          { headers: supaHeaders() },
+        );
+        if (memRes.ok) memories = await memRes.json();
+      } catch {
+        // Non-fatal.
+      }
+
+      const exportPayload = {
+        exported_at: new Date().toISOString(),
+        luna,
+        messages,
+        memories,
+      };
+
+      const safeFilename = `luna-export-${lunaId.slice(0, 8)}.json`;
+      return new Response(JSON.stringify(exportPayload, null, 2), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Disposition": `attachment; filename="${safeFilename}"`,
+        },
+      });
+    }
   }
 
   return null;

@@ -58,6 +58,12 @@ export interface Luna {
   face_ref_url: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Soft-delete timestamp. NULL = active. Non-null = deleted by owner.
+   * Column added in migrations/0057_lunas_deleted_at.sql.
+   * getLunaForUser filters rows where deleted_at IS NULL.
+   */
+  deleted_at: string | null;
 }
 
 /** One turn in a Luna conversation. Maps to darkroom_luna_messages. */
@@ -182,9 +188,13 @@ export async function createLuna(
 export async function getLunaForUser(userId: string): Promise<Luna | null> {
   if (!SUPABASE_URL) return null;
 
+  // deleted_at=is.null excludes soft-deleted rows (column added in
+  // migrations/0057_lunas_deleted_at.sql). If the column doesn't exist yet
+  // (pre-migration env), PostgREST will error — apply 0057 to resolve.
   const url =
     `${lunaTableUrl()}` +
     `?user_id=eq.${encodeFilterValue(userId)}` +
+    `&deleted_at=is.null` +
     `&limit=1`;
 
   const res = await fetch(url, { headers: supaHeaders() });
