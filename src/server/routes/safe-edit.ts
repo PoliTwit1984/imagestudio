@@ -2482,6 +2482,140 @@ export async function handleSafeEditRoutes(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // POST /api/lunas/:id/generate-self — generate an image of this Luna
+  //
+  // Accepts: JSON body { prompt: string }
+  // Returns: { asset_id: string, image_url: string }
+  //
+  // Flow:
+  //   1. Auth + ownership check (same pattern as face/train).
+  //   2. Parse + validate body — prompt (required, non-empty string).
+  //   3. Load the luna row.
+  //   4. Route to the generation helper:
+  //      a. luna.face_lora_url set → fal.ai flux-lora inference (face-locked).
+  //      b. luna.face_lora_url null → Kora Reality txt2img with persona prefix.
+  //   5. Persist the result to the assets table with asset_type='generation'
+  //      and metadata.luna_id = lunaId.
+  //   6. Return { asset_id, image_url }.
+  //
+  // Generation is synchronous: the handler polls the vendor until the image
+  // is ready (or times out) before responding. Typical latency 10–40 s.
+  // ---------------------------------------------------------------------------
+  {
+    const generateSelfMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/generate-self$/);
+    if (generateSelfMatch && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = generateSelfMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Parse body — prompt is required
+      let body: Record<string, unknown> = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "invalid_json_body" }, { status: 400 });
+      }
+      const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+      if (!prompt) {
+        return Response.json({ error: "prompt is required" }, { status: 400 });
+      }
+
+      // Load and verify ownership of the Luna row
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Generate the image — LoRA path or standard path
+      let imageUrl: string;
+      try {
+        imageUrl = await generateLunaImage(luna, prompt);
+      } catch (e: any) {
+        console.error(`[api/lunas/:id/generate-self] generation failed luna=${lunaId}:`, e?.message || e);
+        return Response.json(
+          { error: e?.message || "generation_failed" },
+          { status: 502 },
+        );
+      }
+
+      // Persist the result to the assets table
+      let assetId: string;
+      try {
+        const nowIso = new Date().toISOString();
+        const assetInsertRes = await fetch(`${SUPABASE_URL}/rest/v1/assets`, {
+          method: "POST",
+          headers: {
+            ...supaHeaders(),
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify({
+            asset_type: "generation",
+            source_url: imageUrl,
+            engine: luna.face_lora_url ? "fal-flux-lora" : "kora-reality",
+            prompt,
+            user_id: userId,
+            metadata: {
+              luna_id: lunaId,
+              luna_name: luna.name,
+              lora_path: luna.face_lora_url ?? null,
+            },
+            created_at: nowIso,
+            updated_at: nowIso,
+          }),
+        });
+
+        if (!assetInsertRes.ok) {
+          const errText = await assetInsertRes.text().catch(() => "");
+          console.error(`[api/lunas/:id/generate-self] asset insert failed ${assetInsertRes.status}: ${errText}`);
+          return Response.json(
+            { error: `asset_insert_failed: ${assetInsertRes.status}`, detail: errText.slice(0, 200) },
+            { status: 502 },
+          );
+        }
+
+        const assetRows = await assetInsertRes.json() as Array<{ id: string }>;
+        assetId = assetRows[0]?.id ?? "";
+        if (!assetId) {
+          throw new Error("asset insert returned no id");
+        }
+      } catch (e: any) {
+        console.error("[api/lunas/:id/generate-self] asset insert error:", e);
+        return Response.json({ error: e?.message || "asset_insert_failed" }, { status: 500 });
+      }
+
+      console.log(
+        `[api/lunas/:id/generate-self] luna=${lunaId} asset=${assetId} lora=${luna.face_lora_url ? "yes" : "no"}`,
+      );
+
+      return Response.json({ asset_id: assetId, image_url: imageUrl });
+    }
+  }
+
   return null;
 }
 
@@ -10871,6 +11005,145 @@ async function handleEnhancorSharpen(req: Request): Promise<Response> {
       { status: 500 },
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// generateLunaImage — single dispatch point for Luna self-generation
+//
+// Purpose:   Generate an image of THIS Luna in the requested scene.
+//            Chooses between two paths based on whether a LoRA is trained:
+//
+//   Path A — face_lora_url is set (face-locked LoRA inference via fal.ai):
+//     POST https://queue.fal.run/fal-ai/flux-lora with { loras, prompt, num_images: 1 }.
+//     Polls the fal.ai result endpoint until done (max 5 min, 6 s interval).
+//     Returns the first image URL from the result.
+//
+//   Path B — no face_lora_url (standard txt2img via Kora Reality):
+//     Prefixes the prompt with the Luna's name + persona description so the
+//     generation reflects the companion's identity without a face-locked LoRA.
+//     Calls lensReality() + pollUntilDone() — same pattern as /api/enhancor/lens-reality.
+//
+// Inputs:
+//   luna   — full Luna row (needs name, persona_text, face_lora_url)
+//   prompt — user-supplied scene description
+//
+// Outputs:  public image URL string (throws on any failure)
+//
+// Side effects: one vendor API call; no DB writes (caller persists to assets).
+// Failure behavior: throws Error with a descriptive message on vendor error,
+//   missing API key, bad response shape, or polling timeout.
+// ---------------------------------------------------------------------------
+async function generateLunaImage(
+  luna: import("../lunaCompanion").Luna,
+  prompt: string,
+): Promise<string> {
+  // Path A — face-locked fal.ai flux-lora inference
+  if (luna.face_lora_url) {
+    const falApiKey = env("FAL_API_KEY");
+    if (!falApiKey) {
+      throw new Error("FAL_API_KEY not configured");
+    }
+
+    // Submit to the fal.ai flux-lora queue endpoint
+    const submitRes = await fetch("https://queue.fal.run/fal-ai/flux-lora", {
+      method: "POST",
+      headers: {
+        Authorization: `Key ${falApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        loras: [{ path: luna.face_lora_url, scale: 1.0 }],
+        prompt,
+        num_images: 1,
+      }),
+    });
+
+    if (!submitRes.ok) {
+      const errText = await submitRes.text().catch(() => "");
+      throw new Error(
+        `fal.ai flux-lora submit error ${submitRes.status}: ${errText.slice(0, 200)}`,
+      );
+    }
+
+    const submitData = await submitRes.json() as {
+      request_id?: string;
+      response_url?: string;
+      status_url?: string;
+      [key: string]: unknown;
+    };
+
+    const falRequestId = typeof submitData.request_id === "string" ? submitData.request_id : "";
+    if (!falRequestId) {
+      throw new Error(
+        `fal.ai flux-lora returned no request_id: ${JSON.stringify(submitData).slice(0, 300)}`,
+      );
+    }
+
+    // Poll the result endpoint until done (max 5 min, 6 s interval)
+    const resultUrl = `https://queue.fal.run/fal-ai/flux-lora/requests/${falRequestId}`;
+    const statusUrl = `https://queue.fal.run/fal-ai/flux-lora/requests/${falRequestId}/status`;
+    const deadline = Date.now() + 5 * 60 * 1000; // 5 min
+    const pollIntervalMs = 6_000;
+
+    while (Date.now() < deadline) {
+      const statusRes = await fetch(statusUrl, {
+        headers: { Authorization: `Key ${falApiKey}` },
+      });
+      if (!statusRes.ok) {
+        throw new Error(`fal.ai status check error ${statusRes.status}`);
+      }
+      const statusData = await statusRes.json() as { status?: string; [key: string]: unknown };
+
+      if (statusData.status === "COMPLETED") {
+        // Fetch the final result
+        const resRes = await fetch(resultUrl, {
+          headers: { Authorization: `Key ${falApiKey}` },
+        });
+        if (!resRes.ok) {
+          throw new Error(`fal.ai result fetch error ${resRes.status}`);
+        }
+        const resData = await resRes.json() as {
+          images?: Array<{ url: string }>;
+          image?: { url: string };
+          [key: string]: unknown;
+        };
+        const imageUrl =
+          resData.images?.[0]?.url ??
+          (resData.image as { url?: string } | undefined)?.url;
+        if (!imageUrl) {
+          throw new Error(
+            `fal.ai flux-lora completed but returned no image URL: ${JSON.stringify(resData).slice(0, 300)}`,
+          );
+        }
+        return imageUrl;
+      }
+
+      if (statusData.status === "FAILED") {
+        throw new Error(`fal.ai flux-lora job FAILED (request_id=${falRequestId})`);
+      }
+
+      // IN_QUEUE / IN_PROGRESS — keep waiting
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, remaining)));
+    }
+
+    throw new Error(`fal.ai flux-lora timed out (request_id=${falRequestId})`);
+  }
+
+  // Path B — standard Kora Reality txt2img (no LoRA)
+  //
+  // Prefix the prompt with the Luna's name and a brief persona hint so
+  // Kora has context for the "character" without a face-locked LoRA.
+  const personaHint = luna.persona_text
+    ? `${luna.name}. ${luna.persona_text.slice(0, 120)}`
+    : luna.name;
+  const fullPrompt = `${personaHint}. ${prompt}`;
+
+  const { requestId } = await lensReality({ prompt: fullPrompt });
+  const { pollUntilDone } = await import("../enhancor");
+  const { result } = await pollUntilDone("kora-reality", requestId);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
