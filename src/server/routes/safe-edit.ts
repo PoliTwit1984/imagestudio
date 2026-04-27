@@ -29,6 +29,13 @@ const GPT_SIZE = "2048x2048";
 
 const NSFW_DETECTOR_MODEL = "aaronaftab/mirage";
 
+// Identity anchor: prepended server-side to single-image Glance (Nano Banana)
+// and Lens (Grok) edit prompts so the engine preserves the subject's identity.
+// NOT applied to sandwich-edit, surgical-edit, brush/inpaint, or any flow that
+// uses a mask or a second reference image — those carry their own identity
+// logic (mask-bound preservation, face-swap targeting, etc.).
+const IDENTITY_ANCHOR = "keep her face, hair, body shape, pose unchanged";
+
 type NsfwRegion = {
   label: string;
   confidence: number;
@@ -1929,15 +1936,23 @@ async function handleSmartEdit(
     let modelUsed = "";
     let fallbackReason: string | null = null;
 
+    // Single-image edits (no mask) get the identity anchor prepended.
+    // If a mask is supplied, this is a brush/protect-region flow and the
+    // mask carries identity preservation — skip the anchor.
+    const isSingleImageEdit = !body.mask_url;
+    const anchoredPrompt = isSingleImageEdit
+      ? `${IDENTITY_ANCHOR}. ${body.prompt}`
+      : body.prompt;
+
     // Explicit model paths
     if (preferModel === "pedit") {
-      resultUrl = await callPEdit({ imageUrl: body.image_url, prompt: body.prompt });
+      resultUrl = await callPEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
       modelUsed = "p-image-edit";
     } else if (preferModel === "nano") {
-      resultUrl = await callNanoBanana({ imageUrl: body.image_url, prompt: body.prompt });
+      resultUrl = await callNanoBanana({ imageUrl: body.image_url, prompt: anchoredPrompt });
       modelUsed = "nano-banana";
     } else if (preferModel === "grok") {
-      resultUrl = await callGrokEdit({ imageUrl: body.image_url, prompt: body.prompt });
+      resultUrl = await callGrokEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
       modelUsed = "grok-imagine-image";
     } else if (preferModel === "gpt" || preferModel === "auto") {
       // gpt-image-2 first
@@ -1945,7 +1960,7 @@ async function handleSmartEdit(
         resultUrl = await callGptImage2Edit({
           imageUrl: body.image_url,
           maskUrl: body.mask_url,
-          prompt: body.prompt,
+          prompt: anchoredPrompt,
           size: body.size ?? GPT_SIZE,
           quality: body.quality ?? GPT_QUALITY,
         });
@@ -1967,7 +1982,7 @@ async function handleSmartEdit(
 
       // Auto fallback to P-Edit (handles NSFW + general edits) if gpt-image-2 didn't deliver.
       if (!resultUrl) {
-        resultUrl = await callPEdit({ imageUrl: body.image_url, prompt: body.prompt });
+        resultUrl = await callPEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
         modelUsed = "p-image-edit";
       }
     }

@@ -3,6 +3,12 @@ import { env } from "../config";
 import { buildUploadPath, uploadToStorage } from "../supabase";
 import type { RouteDeps } from "./types";
 
+// Identity anchor: prepended server-side to single-image edit prompts so the
+// engine preserves the subject's identity. NOT shown to the user; NOT applied
+// to multi-image (Lock+List), face-swap, brush/inpaint, or sandwich flows —
+// those have their own identity-preservation logic.
+const IDENTITY_ANCHOR = "keep her face, hair, body shape, pose unchanged";
+
 export async function handleGenerationRoutes(
   req: Request,
   url: URL,
@@ -141,6 +147,11 @@ export async function handleGenerationRoutes(
       let resultUrl: string;
       let revisedPrompt = "";
 
+      // Single-image edit: prepend identity anchor server-side. /api/edit
+      // always operates on exactly one source image regardless of engine, so
+      // every engine path below receives the anchored prompt.
+      const anchoredEditPrompt = `${IDENTITY_ANCHOR}. ${editPrompt}`;
+
       if (engine === "fal") {
         const falRes = await fetch("https://fal.run/bria/fibo-edit/edit", {
           method: "POST",
@@ -150,7 +161,7 @@ export async function handleGenerationRoutes(
           },
           body: JSON.stringify({
             image_url: sourceUrl,
-            instruction: editPrompt,
+            instruction: anchoredEditPrompt,
             steps_num: 30,
           }),
         });
@@ -173,7 +184,7 @@ export async function handleGenerationRoutes(
           body: JSON.stringify({
             input: {
               images: [sourceUrl],
-              prompt: editPrompt,
+              prompt: anchoredEditPrompt,
               disable_safety_checker: true,
               turbo: false,
               aspect_ratio: "match_input_image",
@@ -202,7 +213,12 @@ export async function handleGenerationRoutes(
           },
           body: JSON.stringify({
             model: model === "basic" ? "grok-imagine-image" : "grok-imagine-image-pro",
-            prompt: [`same person same scene but ${editPrompt}`, deps.REALISM_TAGS, "no smiling, lips parted"]
+            prompt: [
+              IDENTITY_ANCHOR,
+              `same person same scene but ${editPrompt}`,
+              deps.REALISM_TAGS,
+              "no smiling, lips parted",
+            ]
               .filter((s) => s && s.trim())
               .join(", "),
             image: { url: sourceUrl, type: "image_url" },
