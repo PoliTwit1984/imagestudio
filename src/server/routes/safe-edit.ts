@@ -1,6 +1,13 @@
 import { checkAuth } from "../auth";
 import { env, SUPABASE_URL } from "../config";
-import { encodeFilterValue, supaHeaders } from "../supabase";
+import { encodeFilterValue, supaHeaders, toStorageSlug } from "../supabase";
+import {
+  CUBE_FLOATS,
+  CUBE_LEN,
+  SIZE as LUT_SIZE,
+  encodeHaldClut,
+  decodeHaldClut,
+} from "../lut";
 import type { RouteDeps } from "./types";
 
 // =============================================================================
@@ -199,6 +206,19 @@ export async function handleSafeEditRoutes(
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     const slug = url.pathname.slice("/api/preset/".length);
     return handleApplyPreset(req, slug, deps);
+  }
+
+  // ---------------------------------------------------------------------------
+  // LUT extraction — reverse-engineer a 33×33×33 Hald-CLUT from a before/after
+  // image pair (e.g., before = original, after = original with a Darkroom
+  // preset applied). Builds the cube by sampling pixel pairs, fills empty
+  // cells via nearest-non-empty, encodes via lut.ts encodeHaldClut(), uploads
+  // to Supabase, and returns lut_url + sample preview_url.
+  // ---------------------------------------------------------------------------
+
+  if (url.pathname === "/api/lut/extract" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleLutExtract(req);
   }
 
   // ---------------------------------------------------------------------------
@@ -3664,6 +3684,353 @@ async function handlePresetsPatch(req: Request, id: string): Promise<Response> {
       { status: 500 }
     );
   }
+}
+
+// =============================================================================
+// /api/lut/extract — reverse-engineer Hald-CLUT from a before/after image pair
+//
+// Body: { before_url, after_url, name?, intensity?, sample_step? }
+//   - before_url, after_url: image URLs (same scene, after has color grade applied)
+//   - name: human-readable LUT name (default "Custom LUT") — used for slug
+//   - intensity: reserved/forward-compat ('low'|'medium'|'high'), currently unused
+//   - sample_step: pixel sampling stride (default 4 → ~1-in-16 pixels)
+//
+// Algorithm (V1 — nearest-cell + nearest-empty fill):
+//   1. Fetch both images, decode to raw RGB via Sharp. Downscale to ≤1024 if
+//      bigger and resize the larger to match the smaller (fit:cover).
+//   2. Walk pixels with stride=sample_step. For each (before_rgb, after_rgb)
+//      pair, snap before to its nearest cube cell (33-step quantize) and
+//      accumulate the after color into that cell's running mean.
+//   3. After the scan, divide accumulators by counts to compute mean per cell.
+//   4. Empty cells (count == 0) are filled by BFS over the cube graph: each
+//      empty cell adopts the mean color of its nearest filled cell (city-block
+//      distance). Falls back to the identity color (cell coords) if no filled
+//      cell is reachable — defensive only; with ≥1000 samples the cube fills
+//      most regions and BFS always converges.
+//   5. Encode the cube with encodeHaldClut() → 512×512 Hald-CLUT PNG.
+//   6. Upload PNG to Supabase storage under `luts/`. Return public URL.
+//   7. Generate a preview by applying the LUT (nearest-cell sample, no trilinear
+//      yet — V1) back to the before image and uploading that too.
+//
+// Response: { ok, lut_url, preview_url, slug, sample_count, empty_cells }
+// Errors: 400 (missing url), 422 (image decode/size mismatch failed), 500 (else).
+// =============================================================================
+
+async function handleLutExtract(req: Request): Promise<Response> {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const beforeUrl = String(body.before_url || "");
+    const afterUrl = String(body.after_url || "");
+    const name = String(body.name || "Custom LUT").trim() || "Custom LUT";
+    const sampleStepRaw = Number(body.sample_step ?? 4);
+    const sampleStep = Number.isFinite(sampleStepRaw)
+      ? Math.max(1, Math.min(32, Math.floor(sampleStepRaw)))
+      : 4;
+    // intensity reserved — accepted for forward compat, currently unused.
+    const _intensity = String(body.intensity || "medium");
+
+    if (!beforeUrl) {
+      return Response.json({ error: "before_url required" }, { status: 400 });
+    }
+    if (!afterUrl) {
+      return Response.json({ error: "after_url required" }, { status: 400 });
+    }
+
+    const sharp = (await import("sharp")).default;
+    const { uploadToStorage, buildUploadPath } = await import("../supabase");
+
+    // -------- Fetch both images --------
+    let beforeBuf: Buffer;
+    let afterBuf: Buffer;
+    try {
+      const [bRes, aRes] = await Promise.all([fetch(beforeUrl), fetch(afterUrl)]);
+      if (!bRes.ok) throw new Error(`before fetch ${bRes.status}`);
+      if (!aRes.ok) throw new Error(`after fetch ${aRes.status}`);
+      beforeBuf = Buffer.from(await bRes.arrayBuffer());
+      afterBuf = Buffer.from(await aRes.arrayBuffer());
+    } catch (err: any) {
+      return Response.json(
+        { error: `image fetch failed: ${err?.message || err}` },
+        { status: 422 }
+      );
+    }
+
+    // -------- Decode to common-size raw RGB --------
+    const MAX_DIM = 1024;
+    let beforeRaw: { data: Buffer; w: number; h: number };
+    let afterRaw: { data: Buffer; w: number; h: number };
+    try {
+      const bMeta = await sharp(beforeBuf).metadata();
+      const aMeta = await sharp(afterBuf).metadata();
+      const targetW = Math.min(
+        MAX_DIM,
+        Math.min(bMeta.width || MAX_DIM, aMeta.width || MAX_DIM)
+      );
+      const targetH = Math.min(
+        MAX_DIM,
+        Math.min(bMeta.height || MAX_DIM, aMeta.height || MAX_DIM)
+      );
+
+      const bOut = await sharp(beforeBuf)
+        .resize(targetW, targetH, { fit: "cover", position: "center" })
+        .removeAlpha()
+        .toColorspace("srgb")
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      const aOut = await sharp(afterBuf)
+        .resize(targetW, targetH, { fit: "cover", position: "center" })
+        .removeAlpha()
+        .toColorspace("srgb")
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      beforeRaw = { data: bOut.data, w: bOut.info.width, h: bOut.info.height };
+      afterRaw = { data: aOut.data, w: aOut.info.width, h: aOut.info.height };
+
+      if (beforeRaw.w !== afterRaw.w || beforeRaw.h !== afterRaw.h) {
+        return Response.json(
+          { error: "before/after dimensions differ after normalize" },
+          { status: 422 }
+        );
+      }
+      if (
+        bOut.info.channels !== 3 ||
+        aOut.info.channels !== 3
+      ) {
+        return Response.json(
+          { error: `expected 3-channel RGB, got ${bOut.info.channels}/${aOut.info.channels}` },
+          { status: 422 }
+        );
+      }
+    } catch (err: any) {
+      return Response.json(
+        { error: `image decode failed: ${err?.message || err}` },
+        { status: 422 }
+      );
+    }
+
+    // -------- Build accumulator grid --------
+    // 35937 cells × (sumR, sumG, sumB) as Float64; counts as Int32.
+    const sumR = new Float64Array(CUBE_LEN);
+    const sumG = new Float64Array(CUBE_LEN);
+    const sumB = new Float64Array(CUBE_LEN);
+    const counts = new Int32Array(CUBE_LEN);
+    const W = beforeRaw.w;
+    const H = beforeRaw.h;
+    const totalPixels = W * H;
+    const stride = sampleStep;
+
+    let sampleCount = 0;
+    for (let y = 0; y < H; y += stride) {
+      for (let x = 0; x < W; x += stride) {
+        const idx = (y * W + x) * 3;
+        const br = beforeRaw.data[idx + 0];
+        const bg = beforeRaw.data[idx + 1];
+        const bb = beforeRaw.data[idx + 2];
+        const ar = afterRaw.data[idx + 0];
+        const ag = afterRaw.data[idx + 1];
+        const ab = afterRaw.data[idx + 2];
+
+        // Snap before-pixel to its nearest cube cell.
+        const cr = Math.round((br / 255) * (LUT_SIZE - 1));
+        const cg = Math.round((bg / 255) * (LUT_SIZE - 1));
+        const cb = Math.round((bb / 255) * (LUT_SIZE - 1));
+        // Cell index uses B-outer/G-mid/R-inner to match encodeHaldClut.
+        const cellIdx = (cb * LUT_SIZE + cg) * LUT_SIZE + cr;
+
+        sumR[cellIdx] += ar;
+        sumG[cellIdx] += ag;
+        sumB[cellIdx] += ab;
+        counts[cellIdx]++;
+        sampleCount++;
+      }
+    }
+
+    if (sampleCount < 1000) {
+      return Response.json(
+        {
+          error: `insufficient samples: ${sampleCount} < 1000 (image too small or sample_step too large)`,
+          total_pixels: totalPixels,
+          sample_step: stride,
+        },
+        { status: 422 }
+      );
+    }
+
+    // -------- Resolve mean color per cell, mark empties --------
+    const meanR = new Float32Array(CUBE_LEN);
+    const meanG = new Float32Array(CUBE_LEN);
+    const meanB = new Float32Array(CUBE_LEN);
+    const filled = new Uint8Array(CUBE_LEN);
+    let emptyCells = 0;
+    for (let i = 0; i < CUBE_LEN; i++) {
+      const c = counts[i];
+      if (c > 0) {
+        meanR[i] = sumR[i] / c / 255;
+        meanG[i] = sumG[i] / c / 255;
+        meanB[i] = sumB[i] / c / 255;
+        filled[i] = 1;
+      } else {
+        emptyCells++;
+      }
+    }
+
+    // -------- Fill empty cells via BFS over cube graph (nearest filled) --------
+    // Multi-source BFS: enqueue every filled cell, propagate its color to
+    // unfilled neighbors. Each unfilled cell adopts the color of the first
+    // filled cell that reaches it (city-block distance tiebreaker).
+    if (emptyCells > 0) {
+      const queue: number[] = new Array(CUBE_LEN);
+      let qHead = 0;
+      let qTail = 0;
+      for (let i = 0; i < CUBE_LEN; i++) {
+        if (filled[i]) queue[qTail++] = i;
+      }
+      while (qHead < qTail) {
+        const idx = queue[qHead++];
+        // Decode (r,g,b) coordinates from idx (B-outer/G-mid/R-inner).
+        const r = idx % LUT_SIZE;
+        const g = Math.floor(idx / LUT_SIZE) % LUT_SIZE;
+        const b = Math.floor(idx / (LUT_SIZE * LUT_SIZE));
+        const colorR = meanR[idx];
+        const colorG = meanG[idx];
+        const colorB = meanB[idx];
+
+        // 6-neighborhood: ±1 in each of r, g, b axes.
+        const neighbors: Array<[number, number, number]> = [
+          [r - 1, g, b],
+          [r + 1, g, b],
+          [r, g - 1, b],
+          [r, g + 1, b],
+          [r, g, b - 1],
+          [r, g, b + 1],
+        ];
+        for (const [nr, ng, nb] of neighbors) {
+          if (
+            nr < 0 || nr >= LUT_SIZE ||
+            ng < 0 || ng >= LUT_SIZE ||
+            nb < 0 || nb >= LUT_SIZE
+          ) continue;
+          const nIdx = (nb * LUT_SIZE + ng) * LUT_SIZE + nr;
+          if (filled[nIdx]) continue;
+          meanR[nIdx] = colorR;
+          meanG[nIdx] = colorG;
+          meanB[nIdx] = colorB;
+          filled[nIdx] = 1;
+          queue[qTail++] = nIdx;
+        }
+      }
+    }
+
+    // -------- Build cube as Float32Array (length CUBE_FLOATS) --------
+    const cube = new Float32Array(CUBE_FLOATS);
+    for (let i = 0; i < CUBE_LEN; i++) {
+      const off = i * 3;
+      // Defensive: any cell still unfilled (shouldn't happen — BFS reaches
+      // every cell so long as ≥1 cell is filled, and we already required ≥1000
+      // samples) gets the identity color from its (r,g,b) coordinates.
+      if (filled[i]) {
+        cube[off + 0] = clampUnit(meanR[i]);
+        cube[off + 1] = clampUnit(meanG[i]);
+        cube[off + 2] = clampUnit(meanB[i]);
+      } else {
+        const r = i % LUT_SIZE;
+        const g = Math.floor(i / LUT_SIZE) % LUT_SIZE;
+        const b = Math.floor(i / (LUT_SIZE * LUT_SIZE));
+        cube[off + 0] = r / (LUT_SIZE - 1);
+        cube[off + 1] = g / (LUT_SIZE - 1);
+        cube[off + 2] = b / (LUT_SIZE - 1);
+      }
+    }
+
+    // -------- Encode + upload --------
+    const lutPng = await encodeHaldClut(cube);
+    const slug = `${toStorageSlug(name)}-${Date.now().toString(36)}-${Math.random()
+      .toString(16)
+      .slice(2, 8)}`;
+    const lutPath = buildUploadPath("luts", `${slug}.png`, "image/png");
+    const lutUrl = await uploadToStorage(
+      lutPath,
+      lutPng.buffer.slice(lutPng.byteOffset, lutPng.byteOffset + lutPng.byteLength),
+      "image/png"
+    );
+
+    // -------- Build sample preview: apply LUT to before image --------
+    let previewUrl = lutUrl;
+    try {
+      // Sanity-check round-trip via decodeHaldClut, then apply nearest-cell
+      // lookup to the before image (V1: no trilinear interp — fast and good
+      // enough for a sanity preview).
+      const decoded = await decodeHaldClut(lutPng);
+      const previewPng = await applyLutNearest(beforeRaw, decoded, sharp);
+      const previewPath = buildUploadPath(
+        "luts",
+        `${slug}-preview.png`,
+        "image/png"
+      );
+      previewUrl = await uploadToStorage(
+        previewPath,
+        previewPng.buffer.slice(
+          previewPng.byteOffset,
+          previewPng.byteOffset + previewPng.byteLength
+        ),
+        "image/png"
+      );
+    } catch (err: any) {
+      // Preview is best-effort. If it fails, return lut_url for both.
+      console.error("[lut/extract] preview generation failed:", err?.message || err);
+    }
+
+    return Response.json({
+      ok: true,
+      lut_url: lutUrl,
+      preview_url: previewUrl,
+      slug,
+      sample_count: sampleCount,
+      empty_cells: emptyCells,
+    });
+  } catch (err: any) {
+    return Response.json(
+      { error: err?.message || "lut extract failed" },
+      { status: 500 }
+    );
+  }
+}
+
+function clampUnit(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  if (v <= 0) return 0;
+  if (v >= 1) return 1;
+  return v;
+}
+
+// Apply a decoded Hald-CLUT cube to a raw RGB image using nearest-cell sampling.
+// Output is encoded as a PNG via Sharp.
+async function applyLutNearest(
+  src: { data: Buffer; w: number; h: number },
+  cube: Float32Array,
+  sharp: any,
+): Promise<Buffer> {
+  const { data, w, h } = src;
+  const out = Buffer.alloc(w * h * 3);
+  const STEP = LUT_SIZE - 1;
+  for (let i = 0; i < w * h; i++) {
+    const off = i * 3;
+    const r = data[off + 0];
+    const g = data[off + 1];
+    const b = data[off + 2];
+    const cr = Math.round((r / 255) * STEP);
+    const cg = Math.round((g / 255) * STEP);
+    const cb = Math.round((b / 255) * STEP);
+    const cellIdx = (cb * LUT_SIZE + cg) * LUT_SIZE + cr;
+    const co = cellIdx * 3;
+    out[off + 0] = Math.round(cube[co + 0] * 255);
+    out[off + 1] = Math.round(cube[co + 1] * 255);
+    out[off + 2] = Math.round(cube[co + 2] * 255);
+  }
+  return await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+    .png()
+    .toBuffer();
 }
 
 async function handlePresetsSoftDelete(id: string): Promise<Response> {
