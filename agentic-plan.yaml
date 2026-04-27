@@ -2,15 +2,14 @@ schema_version: 1
 plan:
   name: Darkroom v1
   source: ./PLAN.md
-  source_hash: 17ee430f75ad3f4e68e9cb6628f7aba90a0cba056d8e8199d848852fcb12a5aa
-  converted_at: '2026-04-27T04:17:04Z'
-  description: "Multi-engine NSFW-permissive image editor + chain builder + community-driven asset\nlibrary.\
-    \ Currently in pre-rebrand state (working name: Darkroom, ex Image Studio /\nVoyeur). North star is\
-    \ the Chains layer + routing intelligence + catalog as moat.\n\nThis plan is the structured DAG derived\
-    \ from PLAN.md. Foundation phases (1, 2, 3,\n7, 15) are decomposed into atomic tasks. Surface-layer\
-    \ phases (4, 8, 9, 11, 12, 13,\n14, 16) have parent placeholder tasks that need decomposition once\
-    \ the foundation\nships \u2014 re-run the convert skill against PLAN.md after each foundation phase\
-    \ to\nre-derive their atomic children.\n"
+  source_hash: 9aeb964a65980cb6af744ed49fc6c326dcadc12560af493aaaba700367682285
+  converted_at: '2026-04-27T19:32:47.400824+00:00'
+  description: "Multi-engine NSFW-permissive image editor + chain builder + community-driven asset\nlibrary. Currently in\
+    \ pre-rebrand state (working name: Darkroom, ex Image Studio /\nVoyeur). North star is the Chains layer + routing intelligence\
+    \ + catalog as moat.\n\nThis plan is the structured DAG derived from PLAN.md. Foundation phases (1, 2, 3,\n7, 15) are\
+    \ decomposed into atomic tasks. Surface-layer phases (4, 8, 9, 11, 12, 13,\n14, 16) have parent placeholder tasks that\
+    \ need decomposition once the foundation\nships \u2014 re-run the convert skill against PLAN.md after each foundation\
+    \ phase to\nre-derive their atomic children.\n"
 agents:
 - id: backend
   capabilities:
@@ -70,13 +69,13 @@ agents:
   model: sonnet
 tasks:
 - id: darkroom.active.bold-pokie-asset
-  outcome: asset-poke-bold-01.png exists in Supabase garments folder, sourced from a tighter-fabric Reddit
-    reference, more visually pronounced than asset-poke-lume-01
+  outcome: asset-poke-bold-01.png exists in Supabase garments folder, sourced from a tighter-fabric Reddit reference, more
+    visually pronounced than asset-poke-lume-01
   acceptance:
-  - URL https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/garments/asset-poke-bold-01-*.png
-    returns 200
-  - Composited via /api/stamp-asset onto a test image with multiply blend produces a visually distinct
-    bump shadow vs the lume version
+  - URL https://ykbazffnruyitblyxyog.supabase.co/storage/v1/object/public/image-studio/garments/asset-poke-bold-01-*.png returns
+    200
+  - Composited via /api/stamp-asset onto a test image with multiply blend produces a visually distinct bump shadow vs the
+    lume version
   - Asset alpha is feathered (not hard-edged) so it blends on any fabric color
   deps: []
   touches:
@@ -105,13 +104,12 @@ tasks:
   - active-queue
   - detail-brushes
   - curation
-  notes: "Source: ACTIVE WORK QUEUE #1. Mine r/pokies for a tighter-fabric reference (ribbed tank + visible\
-    \ bump). Use the same luminance-only pipeline that built asset-poke-lume-01 (extract \u2192 grayscale\
-    \ \u2192 normalize \u2192 radial alpha falloff). Sets the precedent for intensity-tier variants of\
-    \ every detail asset."
+  notes: "Source: ACTIVE WORK QUEUE #1. Mine r/pokies for a tighter-fabric reference (ribbed tank + visible bump). Use the\
+    \ same luminance-only pipeline that built asset-poke-lume-01 (extract \u2192 grayscale \u2192 normalize \u2192 radial\
+    \ alpha falloff). Sets the precedent for intensity-tier variants of every detail asset."
 - id: darkroom.active.detail-library-ui
-  outcome: Detail Library tab in result-actions area shows thumbnail grid; clicking a thumbnail opens
-    painter with the asset URL pre-filled and overlay placed
+  outcome: Detail Library tab in result-actions area shows thumbnail grid; clicking a thumbnail opens painter with the asset
+    URL pre-filled and overlay placed
   acceptance:
   - GET /api/detail-assets returns JSON with array of {id, name, category, url, thumb_url}
   - Detail Library button visible in result-actions
@@ -150,12 +148,12 @@ tasks:
   - active-queue
   - detail-brushes
   - ui
-  notes: 'Source: ACTIVE WORK QUEUE #2. Re-uses Detail Brushes modal pattern. New endpoint GET /api/detail-assets
-    reads from a new detail_assets table (or hardcoded const for v1). Clicking thumbnail = paste URL into
-    mask-garment-url + trigger placeGarmentOverlay().'
+  notes: 'Source: ACTIVE WORK QUEUE #2. Re-uses Detail Brushes modal pattern. New endpoint GET /api/detail-assets reads from
+    a new detail_assets table (or hardcoded const for v1). Clicking thumbnail = paste URL into mask-garment-url + trigger
+    placeGarmentOverlay().'
 - id: darkroom.active.painter-load-fix
-  outcome: Painter never silently fails to load garment URL; any error shows a visible banner in the painter
-    modal with the actual error message
+  outcome: Painter never silently fails to load garment URL; any error shows a visible banner in the painter modal with the
+    actual error message
   acceptance:
   - Pasting a valid Supabase URL with auto-bg-strip OFF loads the garment within 3s
   - 'Pasting an invalid URL shows banner ''Could not load: <reason>'' in painter, painter stays open'
@@ -189,16 +187,14 @@ tasks:
   - active-queue
   - bug
   - ui
-  notes: 'Source: ACTIVE WORK QUEUE #3 + KNOWN BUG #1. Reproducible via Chrome MCP. Likely: stale JS or
-    auto-bg-strip race. Extend the Detail Brushes error-banner pattern (showPainterError) to the garment
-    URL load path.'
+  notes: 'Source: ACTIVE WORK QUEUE #3 + KNOWN BUG #1. Reproducible via Chrome MCP. Likely: stale JS or auto-bg-strip race.
+    Extend the Detail Brushes error-banner pattern (showPainterError) to the garment URL load path.'
 - id: darkroom.active.brush-automask-test
-  outcome: Documented Brush + auto-mask invocation produces a porch-image edit with silk crop tank ref
-    that preserves face/jeans/setting and only changes the masked region
+  outcome: Documented Brush + auto-mask invocation produces a porch-image edit with silk crop tank ref that preserves face/jeans/setting
+    and only changes the masked region
   acceptance:
   - Verification image exists at /tmp/test-brush-automask-porch.png
-  - Visual diff between source and result shows changes only in the masked chest region (>=80% pixel match
-    outside mask)
+  - Visual diff between source and result shows changes only in the masked chest region (>=80% pixel match outside mask)
   - Working incantation documented in /Users/joewilson/imagestudio/docs/brush-automask-recipe.md
   deps: []
   touches:
@@ -212,8 +208,7 @@ tasks:
   risk: low
   verification:
     method: command
-    command: test -f /Users/joewilson/imagestudio/docs/brush-automask-recipe.md && grep -q 'POST /api/flux-edit'
-      /Users/joewilson/imagestudio/docs/brush-automask-recipe.md
+    command: test -f /Users/joewilson/imagestudio/docs/brush-automask-recipe.md && grep -q 'POST /api/flux-edit' /Users/joewilson/imagestudio/docs/brush-automask-recipe.md
   rollback: rm docs/brush-automask-recipe.md
   token_budget: 30000
   max_attempts: 2
@@ -227,11 +222,11 @@ tasks:
   - active-queue
   - test
   - brush
-  notes: "Source: ACTIVE WORK QUEUE #4. Strip mauled the porch image earlier \u2014 verify Brush + auto-mask\
-    \ doesn't. Use existing /api/flux-edit endpoint (Grok Vision auto-mask + Flux Fill Pro)."
+  notes: "Source: ACTIVE WORK QUEUE #4. Strip mauled the porch image earlier \u2014 verify Brush + auto-mask doesn't. Use\
+    \ existing /api/flux-edit endpoint (Grok Vision auto-mask + Flux Fill Pro)."
 - id: darkroom.active.sandwich-gpt2-chain-test
-  outcome: "Sandwich edit (Strip \u2192 GPT-2 \u2192 Strip) successfully bypasses gpt-image-2's NSFW refusal\
-    \ on a topless source porch image"
+  outcome: "Sandwich edit (Strip \u2192 GPT-2 \u2192 Strip) successfully bypasses gpt-image-2's NSFW refusal on a topless\
+    \ source porch image"
   acceptance:
   - POST /api/sandwich-edit with topless source and edit_engine='gpt' returns 200 with valid result URL
   - Result image preserves the woman's face/identity (face-swap restoration in chain)
@@ -263,14 +258,13 @@ tasks:
   - test
   - sandwich
   - chains
-  notes: "Source: ACTIVE WORK QUEUE #5. If this works it becomes a House Chain template (NSFW source \u2192\
-    \ editorial). Endpoint already exists; this task is just exercising and documenting."
+  notes: "Source: ACTIVE WORK QUEUE #5. If this works it becomes a House Chain template (NSFW source \u2192 editorial). Endpoint\
+    \ already exists; this task is just exercising and documenting."
 - id: darkroom.active.smart-routing-mvp
-  outcome: Engine cards in edit row show colored compatibility dots (green/amber/red) per current image
-    based on a one-shot Lens vision content profile
+  outcome: Engine cards in edit row show colored compatibility dots (green/amber/red) per current image based on a one-shot
+    Lens vision content profile
   acceptance:
-  - POST /api/analyze-image returns JSON content profile matching schema (nudity_level, face_visible,
-    scene_type, etc.)
+  - POST /api/analyze-image returns JSON content profile matching schema (nudity_level, face_visible, scene_type, etc.)
   - Profile cached on assets.metadata.content_profile (or sessionStorage if catalog not yet shipped)
   - 'Engine dropdown options have colored dots: green/amber/red'
   - 'Live caption under engine row updates per image: ''Lens, Brush, Strip likely. Eye will probably refuse.'''
@@ -308,11 +302,11 @@ tasks:
   - smart-routing
   - ui
   - backend
-  notes: 'Source: ACTIVE WORK QUEUE #6 + Phase 3.1, 3.3 condensed. The static engine compatibility map
-    is defined in PLAN.md Phase 3.2. Closed-loop learning (Phase 3.5) is later.'
+  notes: 'Source: ACTIVE WORK QUEUE #6 + Phase 3.1, 3.3 condensed. The static engine compatibility map is defined in PLAN.md
+    Phase 3.2. Closed-loop learning (Phase 3.5) is later.'
 - id: darkroom.active.wardrobe-forge-mvp
-  outcome: "Wardrobe panel has 'Generate Garment' button; user types prompt \u2192 Lens generates catalog\
-    \ garment \u2192 BiRefNet auto-cuts \u2192 saves to wardrobe table"
+  outcome: "Wardrobe panel has 'Generate Garment' button; user types prompt \u2192 Lens generates catalog garment \u2192 BiRefNet\
+    \ auto-cuts \u2192 saves to wardrobe table"
   acceptance:
   - POST /api/generate-garment returns {raw_url, cutout_url, garment_type}
   - wardrobe table has new row with both URLs and auto-classified type
@@ -350,11 +344,11 @@ tasks:
   - active-queue
   - wardrobe
   - backend
-  notes: 'Source: ACTIVE WORK QUEUE #7 + Phase 12.2. Multi-angle (Phase 12.3) is v1.5. Lens prompt template
-    in PLAN.md Phase 12.2.'
+  notes: 'Source: ACTIVE WORK QUEUE #7 + Phase 12.2. Multi-angle (Phase 12.3) is v1.5. Lens prompt template in PLAN.md Phase
+    12.2.'
 - id: darkroom.active.detail-library-seed
-  outcome: 20-30 curated detail assets exist in Supabase garments folder across nipples, pokies, freckles,
-    tan-lines, beauty-marks categories
+  outcome: 20-30 curated detail assets exist in Supabase garments folder across nipples, pokies, freckles, tan-lines, beauty-marks
+    categories
   acceptance:
   - GET /api/detail-assets returns >=20 entries spanning >=5 categories
   - Each asset has feathered alpha + recommended_skin_tone_range metadata
@@ -369,8 +363,7 @@ tasks:
   risk: low
   verification:
     method: command
-    command: curl -s http://localhost:3030/api/detail-assets | jq '.assets | length' | awk '{exit !($1
-      >= 20)}'
+    command: curl -s http://localhost:3030/api/detail-assets | jq '.assets | length' | awk '{exit !($1 >= 20)}'
   rollback: DELETE rows where added_by_session = 'seed-batch-1'
   token_budget: 100000
   max_attempts: 2
@@ -384,15 +377,12 @@ tasks:
   - active-queue
   - curation
   - library
-  notes: "Source: ACTIVE WORK QUEUE #8. Mine Reddit (r/pokies, r/braless, r/freckledgirls, r/tanlines)\
-    \ for legit reference photos. Cost ~$3 in BiRefNet calls. Each asset goes through extract \u2192 cutout\
-    \ \u2192 tag pipeline."
+  notes: "Source: ACTIVE WORK QUEUE #8. Mine Reddit (r/pokies, r/braless, r/freckledgirls, r/tanlines) for legit reference\
+    \ photos. Cost ~$3 in BiRefNet calls. Each asset goes through extract \u2192 cutout \u2192 tag pipeline."
 - id: darkroom.bug.fal-blank-detection
-  outcome: isImageBlankOrUniform helper called from every endpoint that goes through Flux Fill Pro, not
-    just /api/detail-brush
+  outcome: isImageBlankOrUniform helper called from every endpoint that goes through Flux Fill Pro, not just /api/detail-brush
   acceptance:
-  - POST /api/inpaint with a content-mod-blocked prompt returns 422 with explicit error, not a black PNG
-    URL
+  - POST /api/inpaint with a content-mod-blocked prompt returns 422 with explicit error, not a black PNG URL
   - Same for /api/flux-edit, /api/sandwich-edit, /api/wear-garment when they use Flux Fill internally
   deps: []
   touches:
@@ -406,8 +396,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: grep -c "isImageBlankOrUniform" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
-      | awk "{exit !(\$1 >= 4)}"
+    command: grep -c "isImageBlankOrUniform" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts | awk "{exit !(\$1
+      >= 4)}"
   rollback: git revert
   token_budget: 30000
   max_attempts: 2
@@ -455,8 +445,7 @@ tasks:
   - robustness
   notes: 'Source: KNOWN BUGS #3.'
 - id: darkroom.bug.upload-filename-prefix
-  outcome: uploadBufferToStorage accepts an optional filename_prefix arg (default 'asset') instead of
-    hardcoding 'surgical-'
+  outcome: uploadBufferToStorage accepts an optional filename_prefix arg (default 'asset') instead of hardcoding 'surgical-'
   acceptance:
   - Detail Brush results have filenames like 'darkroom-detail-brush-*.png'
   - Stamp results have 'darkroom-stamp-*.png'
@@ -473,8 +462,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: grep -A3 "function uploadBufferToStorage" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
-      | grep -q "prefix"
+    command: grep -A3 "function uploadBufferToStorage" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts | grep
+      -q "prefix"
   rollback: git revert
   token_budget: 25000
   max_attempts: 2
@@ -488,11 +477,10 @@ tasks:
   - bug
   - backend
   - cosmetic
-  notes: "Source: KNOWN BUGS #4 + #6. Cosmetic but irritating \u2014 every upload looks like it came from\
-    \ surgical-edit. Update each call site to pass its own prefix."
+  notes: "Source: KNOWN BUGS #4 + #6. Cosmetic but irritating \u2014 every upload looks like it came from surgical-edit. Update\
+    \ each call site to pass its own prefix."
 - id: darkroom.bug.bg-strip-skip-transparent
-  outcome: removeGarmentBg short-circuits when the source image already has non-uniform alpha (i.e., already-transparent
-    PNG)
+  outcome: removeGarmentBg short-circuits when the source image already has non-uniform alpha (i.e., already-transparent PNG)
   acceptance:
   - Calling /api/remove-bg with an already-transparent PNG returns the original URL unchanged
   - Calling with an opaque image still runs BiRefNet and produces a cutout
@@ -508,8 +496,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: 'curl -s -X POST http://localhost:3030/api/remove-bg -H "Content-Type: application/json"
-      -d "{\"image_url\":\"https://example.com/transparent.png\"}" | jq -r .image_url | grep -v birefnet'
+    command: 'curl -s -X POST http://localhost:3030/api/remove-bg -H "Content-Type: application/json" -d "{\"image_url\":\"https://example.com/transparent.png\"}"
+      | jq -r .image_url | grep -v birefnet'
   rollback: git revert
   token_budget: 25000
   max_attempts: 2
@@ -524,8 +512,7 @@ tasks:
   - backend
   notes: 'Source: KNOWN BUGS #5. BiRefNet returns garbage on transparent input.'
 - id: darkroom.bug.strength-debounce-race
-  outcome: Edit Strength slider's auto-bake fires exactly once per slider-stop, regardless of click-outside
-    or debounce timing
+  outcome: Edit Strength slider's auto-bake fires exactly once per slider-stop, regardless of click-outside or debounce timing
   acceptance:
   - Move slider rapidly + immediately click outside the bar = exactly 1 /api/blend call
   - Move slider, wait 2s, click outside = exactly 1 /api/blend call
@@ -560,11 +547,11 @@ tasks:
   - robustness
   notes: 'Source: KNOWN BUGS #7. Idempotent on server but wastes credits.'
 - id: darkroom.bug.rehost-generations
-  outcome: Every txt2img and img2img generation result is re-hosted to Supabase server-side before the
-    URL is returned to client
+  outcome: Every txt2img and img2img generation result is re-hosted to Supabase server-side before the URL is returned to
+    client
   acceptance:
-  - POST /api/generate returns a URL ending in supabase.co/storage/v1/object/public/image-studio/...,
-    never imgen.x.ai or fal.media
+  - POST /api/generate returns a URL ending in supabase.co/storage/v1/object/public/image-studio/..., never imgen.x.ai or
+    fal.media
   - Same for /api/edit and /api/smart-edit
   deps:
   - darkroom.catalog.assets-table
@@ -581,8 +568,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: 'curl -s -X POST http://localhost:3030/api/generate -H "Content-Type: application/json" -d
-      "{\"scene\":\"test\",\"engine\":\"grok\"}" | jq -r .url | grep -q supabase.co'
+    command: 'curl -s -X POST http://localhost:3030/api/generate -H "Content-Type: application/json" -d "{\"scene\":\"test\",\"engine\":\"grok\"}"
+      | jq -r .url | grep -q supabase.co'
   rollback: git revert
   token_budget: 60000
   max_attempts: 2
@@ -596,11 +583,11 @@ tasks:
   - bug
   - backend
   - robustness
-  notes: 'Source: KNOWN BUGS #8. Closes the vendor-CDN-expiry class of bug entirely. Pattern: download
-    from vendor URL, upload to Supabase, return Supabase URL.'
+  notes: 'Source: KNOWN BUGS #8. Closes the vendor-CDN-expiry class of bug entirely. Pattern: download from vendor URL, upload
+    to Supabase, return Supabase URL.'
 - id: darkroom.rebrand.repo-rename
-  outcome: GitHub repo renamed from politwit1984/imagestudio to politwit1984/darkroom; local clone moved
-    to ~/darkroom; Railway auto-deploy still works
+  outcome: GitHub repo renamed from politwit1984/imagestudio to politwit1984/darkroom; local clone moved to ~/darkroom; Railway
+    auto-deploy still works
   acceptance:
   - github.com/politwit1984/darkroom returns 200
   - Railway production redeploys cleanly from the renamed repo
@@ -632,8 +619,8 @@ tasks:
   tags:
   - rebrand
   - infra
-  notes: 'Source: PLAN PHASE 0. risk:high because this affects production and Railway auto-deploy. Requires
-    explicit human approval.'
+  notes: 'Source: PLAN PHASE 0. risk:high because this affects production and Railway auto-deploy. Requires explicit human
+    approval.'
 - id: darkroom.rebrand.domain
   outcome: darkroom.studio (or fallback) registered, DNS pointing at Railway, HTTPS valid
   acceptance:
@@ -665,8 +652,7 @@ tasks:
   - infra
   notes: 'Source: PLAN PHASE 0. risk:high because requires money + human registration.'
 - id: darkroom.rebrand.user-facing-strings
-  outcome: All visible 'Image Studio' references in HTML, page title, OG tags, and notification copy say
-    'Darkroom' instead
+  outcome: All visible 'Image Studio' references in HTML, page title, OG tags, and notification copy say 'Darkroom' instead
   acceptance:
   - grep -i 'image studio' public/index.html returns 0 matches
   - Page title is 'Darkroom'
@@ -698,8 +684,8 @@ tasks:
   - ui
   notes: "Source: PLAN PHASE 0. Independent of the repo rename \u2014 strings can change first."
 - id: darkroom.rebrand.engine-names
-  outcome: All vendor names in user-facing UI replaced with house names (Lens, Glance, Strip, Brush, Eye,
-    Frame, Develop, Skin, Crisp, Reveal, Lock, Restore, Sharpen, Cutout, Watch)
+  outcome: All vendor names in user-facing UI replaced with house names (Lens, Glance, Strip, Brush, Eye, Frame, Develop,
+    Skin, Crisp, Reveal, Lock, Restore, Sharpen, Cutout, Watch)
   acceptance:
   - Engine dropdown shows house names only
   - Result-actions buttons show house names only
@@ -718,8 +704,7 @@ tasks:
   risk: low
   verification:
     method: command
-    command: '! grep -i "GROK\\|FAL\\|P-Edit\\|Nano Banana" /Users/joewilson/imagestudio/public/index.html
-      | grep -v "// internal\\|comment"'
+    command: '! grep -i "GROK\\|FAL\\|P-Edit\\|Nano Banana" /Users/joewilson/imagestudio/public/index.html | grep -v "// internal\\|comment"'
   rollback: git revert
   token_budget: 60000
   max_attempts: 2
@@ -733,12 +718,11 @@ tasks:
   - rebrand
   - ui
   - design-principles
-  notes: 'Source: PLAN PHASE 0 + DESIGN PRINCIPLE #1 (only surface what users control). Mapping table
-    is in PLAN.md ENGINE NAMING section.'
+  notes: 'Source: PLAN PHASE 0 + DESIGN PRINCIPLE #1 (only surface what users control). Mapping table is in PLAN.md ENGINE
+    NAMING section.'
 - id: darkroom.catalog.assets-table
-  outcome: Supabase 'assets' table exists with all columns from PLAN.md schema (id, user_id, url, thumbnail_url,
-    w, h, asset_type, source, prompt, parent_id, edit_action, edit_params, metadata, starred, archived,
-    tags, created_at)
+  outcome: Supabase 'assets' table exists with all columns from PLAN.md schema (id, user_id, url, thumbnail_url, w, h, asset_type,
+    source, prompt, parent_id, edit_action, edit_params, metadata, starred, archived, tags, created_at)
   acceptance:
   - psql connects and \d assets shows correct columns and types
   - INSERT/SELECT roundtrip succeeds with sample data
@@ -771,8 +755,8 @@ tasks:
   - foundation
   notes: "Source: PLAN PHASE 1.1. This is THE foundation table \u2014 many tasks depend on it."
 - id: darkroom.catalog.wardrobe-table
-  outcome: Supabase 'wardrobe' table exists for saved garments with raw_url + cutout_url + garment_type
-    + tags + used_count + starred
+  outcome: Supabase 'wardrobe' table exists for saved garments with raw_url + cutout_url + garment_type + tags + used_count
+    + starred
   acceptance:
   - psql \d wardrobe shows columns
   - INSERT/SELECT roundtrip succeeds
@@ -871,8 +855,8 @@ tasks:
   - projects
   notes: 'Source: PLAN PHASE 1.1.'
 - id: darkroom.catalog.backfill-generations
-  outcome: All existing rows in 'generations' table have matching rows in 'assets' with asset_type='generation'
-    and original timestamps preserved
+  outcome: All existing rows in 'generations' table have matching rows in 'assets' with asset_type='generation' and original
+    timestamps preserved
   acceptance:
   - SELECT COUNT(*) FROM generations equals COUNT(*) FROM assets WHERE asset_type='generation'
   - 'Sample row check: existing generations.image_url = corresponding assets.url'
@@ -887,8 +871,8 @@ tasks:
   risk: medium
   verification:
     method: command
-    command: psql "$SUPABASE_DB_URL" -c "SELECT (SELECT COUNT(*) FROM generations) = (SELECT COUNT(*)
-      FROM assets WHERE asset_type='generation');" | grep -q t
+    command: psql "$SUPABASE_DB_URL" -c "SELECT (SELECT COUNT(*) FROM generations) = (SELECT COUNT(*) FROM assets WHERE asset_type='generation');"
+      | grep -q t
   rollback: psql "$SUPABASE_DB_URL" -c "DELETE FROM assets WHERE asset_type='generation';"
   token_budget: 30000
   max_attempts: 2
@@ -902,8 +886,7 @@ tasks:
   - catalog
   - migration
   - foundation
-  notes: "Source: PLAN PHASE 1.1. Idempotent \u2014 re-running should not duplicate rows. Use ON CONFLICT\
-    \ or pre-check."
+  notes: "Source: PLAN PHASE 1.1. Idempotent \u2014 re-running should not duplicate rows. Use ON CONFLICT or pre-check."
 - id: darkroom.catalog.assets-metadata
   outcome: assets.metadata jsonb column accepts content_profile (Phase 3.1) shape and is queryable
   acceptance:
@@ -921,8 +904,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: psql "$SUPABASE_DB_URL" -c "SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid
-      = 'assets'::regclass;" | grep -q metadata
+    command: psql "$SUPABASE_DB_URL" -c "SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indrelid = 'assets'::regclass;"
+      | grep -q metadata
   rollback: DROP INDEX IF EXISTS idx_assets_metadata_nudity
   token_budget: 20000
   max_attempts: 2
@@ -938,8 +921,8 @@ tasks:
   - smart-routing
   notes: 'Source: PLAN PHASE 1.1 + 3.1. The nudity_level index unlocks Smart Routing query speed.'
 - id: darkroom.catalog.save-paths-to-assets
-  outcome: Every save path in index.ts and src/server/routes/*.ts writes to assets table with parent_id
-    + edit_action + edit_params populated
+  outcome: Every save path in index.ts and src/server/routes/*.ts writes to assets table with parent_id + edit_action + edit_params
+    populated
   acceptance:
   - Every endpoint that calls deps.saveGeneration also produces an assets row
   - parent_id is populated on every edit (not generation)
@@ -978,8 +961,7 @@ tasks:
   - catalog
   - backend
   - foundation
-  notes: "Source: PLAN PHASE 1.2. Touches every save path \u2014 broad write_exclusive lock. Run after\
-    \ assets-table is up."
+  notes: "Source: PLAN PHASE 1.2. Touches every save path \u2014 broad write_exclusive lock. Run after assets-table is up."
 - id: darkroom.catalog.parent-id-from-pushversion
   outcome: Frontend pushVersion calls send the previous URL as parent_id with every edit save
   acceptance:
@@ -1049,8 +1031,7 @@ tasks:
   - ui
   notes: 'Source: PLAN PHASE 1.3.'
 - id: darkroom.catalog.edit-history-drawer
-  outcome: "Click any image in result area \u2192 drawer shows full chain backward, click any node loads\
-    \ that asset"
+  outcome: "Click any image in result area \u2192 drawer shows full chain backward, click any node loads that asset"
   acceptance:
   - New 'Edit History' button in result-actions
   - Drawer shows nodes in chronological order with thumbnails
@@ -1161,8 +1142,7 @@ tasks:
   - search
   notes: 'Source: PLAN PHASE 1.3. Backend filter via PostgREST query params.'
 - id: darkroom.wardrobe.tab
-  outcome: Wardrobe tab visible in left sidebar; grid of saved garments (cutout thumbnails) with X to
-    remove + click to expand
+  outcome: Wardrobe tab visible in left sidebar; grid of saved garments (cutout thumbnails) with X to remove + click to expand
   acceptance:
   - GET /api/wardrobe returns array of garments
   - Wardrobe tab renders grid
@@ -1237,8 +1217,7 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 1.4.'
 - id: darkroom.wardrobe.drag-onto-canvas
-  outcome: "Drag a garment thumbnail from Wardrobe onto the canvas \u2192 triggers Place Overlay with\
-    \ that asset"
+  outcome: "Drag a garment thumbnail from Wardrobe onto the canvas \u2192 triggers Place Overlay with that asset"
   acceptance:
   - drag-drop interaction wired
   - Drop = setGarmentUrl + placeGarmentOverlay()
@@ -1310,8 +1289,8 @@ tasks:
   - ui
   notes: 'Source: PLAN PHASE 1.4.'
 - id: darkroom.catalog.replay-edit-chain
-  outcome: "Right-click asset \u2192 Copy edit chain. Right-click another asset \u2192 Paste edit chain\
-    \ \u2192 server replays sequence on the new asset"
+  outcome: "Right-click asset \u2192 Copy edit chain. Right-click another asset \u2192 Paste edit chain \u2192 server replays\
+    \ sequence on the new asset"
   acceptance:
   - 'POST /api/replay-chain {chain: [...], target_asset_id: ...} returns new asset URL'
   - Each stage in the chain re-runs in dependency order
@@ -1349,8 +1328,8 @@ tasks:
   - killer-feature
   notes: "Source: PLAN PHASE 1.5. Killer feature \u2014 turns Darkroom from editor into workflow product."
 - id: darkroom.presets.endpoint-architecture
-  outcome: "POST /api/preset/:name dispatches to a server-side registry of preset definitions (name \u2192\
-    \ engine + hidden prompt + default params)"
+  outcome: "POST /api/preset/:name dispatches to a server-side registry of preset definitions (name \u2192 engine + hidden\
+    \ prompt + default params)"
   acceptance:
   - POST /api/preset/darkroom-skin works (already shipped); returns matching response
   - POST /api/preset/darkroom-glow returns 200 (placeholder content)
@@ -1368,8 +1347,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: 'curl -s -X POST http://localhost:3030/api/preset/darkroom-skin -H "Content-Type: application/json"
-      -d "{}" -o /dev/null -w "%{http_code}" | grep -q 200'
+    command: 'curl -s -X POST http://localhost:3030/api/preset/darkroom-skin -H "Content-Type: application/json" -d "{}" -o
+      /dev/null -w "%{http_code}" | grep -q 200'
   rollback: git revert
   token_budget: 60000
   max_attempts: 2
@@ -1403,8 +1382,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: 'curl -s -X POST http://localhost:3030/api/preset/darkroom-glow -H "Content-Type: application/json"
-      -d "{\"image_url\":\"https://...\",\"intensity\":\"medium\"}" | jq -r .url'
+    command: 'curl -s -X POST http://localhost:3030/api/preset/darkroom-glow -H "Content-Type: application/json" -d "{\"image_url\":\"https://...\",\"intensity\":\"medium\"}"
+      | jq -r .url'
   rollback: git revert
   token_budget: 30000
   max_attempts: 2
@@ -1725,8 +1704,8 @@ tasks:
   - curation
   notes: 'Source: PLAN PHASE 2.2.'
 - id: darkroom.presets.ui-grid
-  outcome: Result-actions area shows preset grid (cards with name, color/icon, credit cost, intensity
-    selector) replacing ad-hoc upscaler buttons
+  outcome: Result-actions area shows preset grid (cards with name, color/icon, credit cost, intensity selector) replacing
+    ad-hoc upscaler buttons
   acceptance:
   - 'Visual: preset cards visible after generation/edit'
   - "Click a card \u2192 applies preset"
@@ -1764,8 +1743,8 @@ tasks:
 - id: darkroom.routing.analyze-image-endpoint
   outcome: POST /api/analyze-image takes image_url, returns content profile JSON, caches on assets.metadata.content_profile
   acceptance:
-  - 'Returns profile with all keys: nudity_level, face_visible, scene_type, subject_count, primary_subject,
-    explicit_acts, minor_concern, violence, tags'
+  - 'Returns profile with all keys: nudity_level, face_visible, scene_type, subject_count, primary_subject, explicit_acts,
+    minor_concern, violence, tags'
   - Re-call on same image returns cached version (sub-100ms)
   - Hard refusal flags (minor_concern, violence) cause caller to receive 422
   deps:
@@ -1800,8 +1779,8 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 3.1. Lens vision (Grok) is the analyzer.'
 - id: darkroom.routing.engine-compatibility-map
-  outcome: "Server-side static map of engine \xD7 content_profile \u2192 likely | may-refuse | will-refuse,\
-    \ exposed via GET /api/engine-compatibility"
+  outcome: "Server-side static map of engine \xD7 content_profile \u2192 likely | may-refuse | will-refuse, exposed via GET\
+    \ /api/engine-compatibility"
   acceptance:
   - GET /api/engine-compatibility returns the map
   - Map matches PLAN.md Phase 3.2 table
@@ -1872,12 +1851,11 @@ tasks:
   - ui
   notes: 'Source: PLAN PHASE 3.3.'
 - id: darkroom.routing.watch-engine
-  outcome: Watch (smart auto) engine routes based on content profile + intent classification (Lens), reason
-    shown in result label
+  outcome: Watch (smart auto) engine routes based on content profile + intent classification (Lens), reason shown in result
+    label
   acceptance:
   - POST with engine=watch routes to actual engine internally
-  - 'Response includes reason: ''Watch picked Glance because: image is suggestive + you asked for a scene
-    swap'''
+  - 'Response includes reason: ''Watch picked Glance because: image is suggestive + you asked for a scene swap'''
   deps:
   - darkroom.routing.analyze-image-endpoint
   - darkroom.routing.engine-compatibility-map
@@ -1910,12 +1888,11 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 3.4.'
 - id: darkroom.routing.face-lock-drift-check
-  outcome: After every edit on portrait images via global-regen engines, face-similarity check runs; if
-    drift detected, auto-Lock face-swap restores identity
+  outcome: After every edit on portrait images via global-regen engines, face-similarity check runs; if drift detected, auto-Lock
+    face-swap restores identity
   acceptance:
   - Edit via Glance/Strip/P-Edit triggers post-hoc face check
-  - "Drift detected \u2192 toast 'Detected face drift \u2014 restoring identity', Lock face-swap runs,\
-    \ currentUrl updates"
+  - "Drift detected \u2192 toast 'Detected face drift \u2014 restoring identity', Lock face-swap runs, currentUrl updates"
   - User toggle 'Auto Face-Lock' on by default; can be disabled per-edit
   deps:
   - darkroom.routing.analyze-image-endpoint
@@ -1949,14 +1926,12 @@ tasks:
   - routing
   - face-lock
   - backend
-  notes: 'Source: PLAN PHASE 3.5a. MVP via Lens vision similarity check; v2 uses InsightFace embedding
-    cosine similarity.'
+  notes: 'Source: PLAN PHASE 3.5a. MVP via Lens vision similarity check; v2 uses InsightFace embedding cosine similarity.'
 - id: darkroom.routing.free-rerouting
-  outcome: When an engine refuses despite green-dot prediction, automatic retry on next-best engine without
-    double credit charge
+  outcome: When an engine refuses despite green-dot prediction, automatic retry on next-best engine without double credit
+    charge
   acceptance:
-  - "Lens refuses on a 'green' image \u2192 automatic retry on Strip succeeds \u2192 user only charged\
-    \ for one operation"
+  - "Lens refuses on a 'green' image \u2192 automatic retry on Strip succeeds \u2192 user only charged for one operation"
   - 'Compatibility map auto-updates: this content type now marked amber for Lens'
   deps:
   - darkroom.routing.recommendation-badges
@@ -1990,8 +1965,7 @@ tasks:
   - closed-loop
   notes: 'Source: PLAN PHASE 3.5.'
 - id: darkroom.routing.background-reanalysis
-  outcome: After every successful edit, content profile re-analyzed async on the new image; cached on
-    the new asset's metadata
+  outcome: After every successful edit, content profile re-analyzed async on the new image; cached on the new asset's metadata
   acceptance:
   - Asset metadata.content_profile updated within 5s of save
   - Profile change history logged in catalog (transitions tracked)
@@ -2024,8 +1998,8 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 3.6.'
 - id: darkroom.defaults.engine-conditional-realism
-  outcome: 'Optional ''Darkroom Default'' polish toggle: when on, Lens/Glance/Brush get realism stanza
-    appended; Strip stays raw; checkbox in edit row'
+  outcome: 'Optional ''Darkroom Default'' polish toggle: when on, Lens/Glance/Brush get realism stanza appended; Strip stays
+    raw; checkbox in edit row'
   acceptance:
   - Toggle visible next to engine selector
   - When on + engine=lens, prompt sent to backend has realism stanza appended
@@ -2059,8 +2033,8 @@ tasks:
   - ui
   notes: 'Source: PLAN PHASE 7.1.'
 - id: darkroom.defaults.identity-anchor
-  outcome: Single-image edits via Lens/Glance auto-prepend identity-anchor language ('keep her face, hair,
-    body shape, pose unchanged') based on engine
+  outcome: Single-image edits via Lens/Glance auto-prepend identity-anchor language ('keep her face, hair, body shape, pose
+    unchanged') based on engine
   acceptance:
   - POST /api/edit with engine=lens has identity anchor in final prompt to vendor
   - POST /api/edit with engine=strip does not (Strip uses Pruna formula)
@@ -2095,8 +2069,8 @@ tasks:
 - id: darkroom.async.jobs-table
   outcome: Supabase 'jobs' table exists with all columns from PLAN.md Phase 15.2
   acceptance:
-  - 'psql \d jobs shows columns: id, user_id, job_type, input_params, status, parent_asset_id, result_asset_id,
-    error_message, progress_pct, started_at, completed_at'
+  - 'psql \d jobs shows columns: id, user_id, job_type, input_params, status, parent_asset_id, result_asset_id, error_message,
+    progress_pct, started_at, completed_at'
   - Index on (user_id, status, created_at desc) exists
   deps:
   - darkroom.catalog.assets-table
@@ -2127,8 +2101,8 @@ tasks:
   - foundation
   notes: 'Source: PLAN PHASE 15.2.'
 - id: darkroom.async.job-spawn-pattern
-  outcome: 'Backend Promise.allSettled-style job spawn: long-running endpoints return job_id immediately,
-    work continues in background, jobs row updated when done'
+  outcome: 'Backend Promise.allSettled-style job spawn: long-running endpoints return job_id immediately, work continues in
+    background, jobs row updated when done'
   acceptance:
   - POST /api/edit?async=1 returns 202 with job_id within 50ms
   - "Polling /api/jobs/:id shows status transitions: queued \u2192 running \u2192 done"
@@ -2165,11 +2139,9 @@ tasks:
   - async
   - backend
   - foundation
-  notes: 'Source: PLAN PHASE 15.5 v1. Bun''s background promise pattern; no external worker needed at
-    low scale.'
+  notes: 'Source: PLAN PHASE 15.5 v1. Bun''s background promise pattern; no external worker needed at low scale.'
 - id: darkroom.async.jobs-polling
-  outcome: Frontend polls /api/jobs?status=running every 2s while any jobs in flight, surfaces toasts
-    on completion
+  outcome: Frontend polls /api/jobs?status=running every 2s while any jobs in flight, surfaces toasts on completion
   acceptance:
   - Active Jobs badge shows count of running jobs
   - "Click badge \u2192 expandable panel with each job's source thumbnail + status"
@@ -2276,8 +2248,8 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 15.5 v1.5.'
 - id: darkroom.ui-polish.parent
-  outcome: Three-mode layout (Compose / Develop / Print) + engine card strip + full-screen mask painter
-    + Darkroom aesthetic + tooltip removal
+  outcome: Three-mode layout (Compose / Develop / Print) + engine card strip + full-screen mask painter + Darkroom aesthetic
+    + tooltip removal
   acceptance:
   - 'Visual: three tabs in left sidebar'
   - Engine card strip replaces dropdown in Develop mode
@@ -2304,7 +2276,7 @@ tasks:
   rollback: git revert
   token_budget: 200000
   max_attempts: 2
-  status: todo
+  status: abandoned
   claim:
     agent_id: null
     claimed_at: null
@@ -2315,10 +2287,10 @@ tasks:
   - polish
   - parent-task
   - needs-decomposition
-  notes: "Source: PLAN PHASE 4. NEEDS DECOMPOSITION \u2014 re-run agentic-plan-convert after foundation\
-    \ phases (1, 2, 3, 7, 15) ship to break this into atomic UI tasks. Sub-sections in PLAN.md: 3.1 (three-mode\
-    \ layout), 3.2 (engine card strip), 3.3 (mask painter full-screen), 3.4 (edit strength), 3.5 (aesthetic),\
-    \ 3.6 (no tooltips). Each becomes its own task at decomposition time."
+  notes: "Source: PLAN PHASE 4. NEEDS DECOMPOSITION \u2014 re-run agentic-plan-convert after foundation phases (1, 2, 3, 7,\
+    \ 15) ship to break this into atomic UI tasks. Sub-sections in PLAN.md: 3.1 (three-mode layout), 3.2 (engine card strip),\
+    \ 3.3 (mask painter full-screen), 3.4 (edit strength), 3.5 (aesthetic), 3.6 (no tooltips). Each becomes its own task at\
+    \ decomposition time. DECOMPOSED into sub-tasks; original parent retired."
 - id: darkroom.cleanup.compare-pose
   outcome: Compare Pose button removed from result-actions row
   acceptance:
@@ -2422,7 +2394,9 @@ tasks:
   - No standalone 'Pose Ref' button in result-actions
   - Compose tab has Optional Pose Reference field
   deps:
-  - darkroom.ui-polish.parent
+  - darkroom.ui-polish.three-mode-layout
+  - darkroom.ui-polish.fullscreen-mask-painter
+  - darkroom.ui-polish.tooltip-removal
   touches:
     read:
     - public/index.html
@@ -2449,8 +2423,8 @@ tasks:
   - ui
   notes: 'Source: PLAN PHASE 5.'
 - id: darkroom.cleanup.grok-basic
-  outcome: grok-imagine-image (Basic, $0.02) removed entirely; only grok-imagine-image-pro used as Lens.
-    BASIC/PRO toggle pill removed from UI
+  outcome: grok-imagine-image (Basic, $0.02) removed entirely; only grok-imagine-image-pro used as Lens. BASIC/PRO toggle
+    pill removed from UI
   acceptance:
   - All references to 'grok-imagine-image'" without -pro replaced with -pro
   - model-toggle pill no longer visible
@@ -2487,11 +2461,10 @@ tasks:
   - cleanup
   - backend
   - ui
-  notes: "Source: PLAN PHASE 5. The 'BASIC = no moderation' framing was wrong on /edits \u2014 basic is\
-    \ stricter."
+  notes: "Source: PLAN PHASE 5. The 'BASIC = no moderation' framing was wrong on /edits \u2014 basic is stricter."
 - id: darkroom.cleanup.audit-features
-  outcome: Auto-mask from Garment, Surgical Edit, Auto-describe each evaluated and either kept, renamed,
-    or removed based on test results
+  outcome: Auto-mask from Garment, Surgical Edit, Auto-describe each evaluated and either kept, renamed, or removed based
+    on test results
   acceptance:
   - Decision documented in /Users/joewilson/imagestudio/docs/v1-feature-audit.md
   - Each feature has explicit keep/remove/rename status
@@ -2524,8 +2497,7 @@ tasks:
   - audit
   notes: 'Source: PLAN PHASE 5 audit needed section.'
 - id: darkroom.billing.parent
-  outcome: Supabase Auth + per-user scoping + credits ledger + Stripe integration + adult-payment-rail
-    fallback all wired
+  outcome: Supabase Auth + per-user scoping + credits ledger + Stripe integration + adult-payment-rail fallback all wired
   acceptance:
   - 'Anonymous trial: 30 free credits before signup'
   - credits_ledger table tracks every action and top-up
@@ -2546,7 +2518,7 @@ tasks:
   rollback: Multi-step rollback per layer
   token_budget: 200000
   max_attempts: 1
-  status: todo
+  status: abandoned
   claim:
     agent_id: null
     claimed_at: null
@@ -2558,17 +2530,16 @@ tasks:
   - parent-task
   - needs-decomposition
   - requires-human-approval
-  notes: 'Source: PLAN PHASE 6. NEEDS DECOMPOSITION. risk:high because financial. Sub-sections: 5.1 (Auth),
-    5.2 (Credits ledger), 5.3 (Pricing tiers), 5.4 (Stripe + adult-rail). Re-run convert after Phase 1
-    + 7 ship.'
+  notes: 'Source: PLAN PHASE 6. NEEDS DECOMPOSITION. risk:high because financial. Sub-sections: 5.1 (Auth), 5.2 (Credits ledger),
+    5.3 (Pricing tiers), 5.4 (Stripe + adult-rail). Re-run convert after Phase 1 + 7 ship. DECOMPOSED into 6 sub-tasks (5
+    low-risk + 1 risk:high gated for explicit approval).'
 - id: darkroom.qa.engine-functional-tests
-  outcome: Each engine has a functional sanity-test script in /Users/joewilson/imagestudio/tests/engines/
-    that verifies the endpoint works on a known input
+  outcome: Each engine has a functional sanity-test script in /Users/joewilson/imagestudio/tests/engines/ that verifies the
+    endpoint works on a known input
   acceptance:
   - tests/engines/lens.test.ts exists and passes
   - tests/engines/glance.test.ts exists and passes
-  - 'Coverage for: Lens, Glance, Strip, Brush, Eye, Frame, Cutout, Develop, Skin, Crisp, Reveal, Lock,
-    Glance face-swap'
+  - 'Coverage for: Lens, Glance, Strip, Brush, Eye, Frame, Cutout, Develop, Skin, Crisp, Reveal, Lock, Glance face-swap'
   deps: []
   touches:
     read:
@@ -2597,8 +2568,8 @@ tasks:
   - test
   notes: 'Source: PLAN PHASE 8.1.'
 - id: darkroom.qa.pipeline-tests
-  outcome: "Pipeline-level tests for: Place Overlay \u2192 Bake \u2192 Brush, Wardrobe \u2192 Wear via\
-    \ Strip, Edit Strength on every type, Sandwich, Resize\u2192Lens, Multi-angle garment ref"
+  outcome: "Pipeline-level tests for: Place Overlay \u2192 Bake \u2192 Brush, Wardrobe \u2192 Wear via Strip, Edit Strength\
+    \ on every type, Sandwich, Resize\u2192Lens, Multi-angle garment ref"
   acceptance:
   - Each pipeline has a passing integration test in tests/pipelines/
   deps:
@@ -2661,8 +2632,8 @@ tasks:
   - catalog
   notes: 'Source: PLAN PHASE 8.3.'
 - id: darkroom.crop.parent
-  outcome: Full-screen crop workspace with handles, aspect-ratio presets, smart subject-aware cropping
-    (Lens vision), outpaint via Brush, catalog integration
+  outcome: Full-screen crop workspace with handles, aspect-ratio presets, smart subject-aware cropping (Lens vision), outpaint
+    via Brush, catalog integration
   acceptance:
   - Crop button in result-actions opens full-screen workspace
   - Aspect-ratio presets work
@@ -2691,7 +2662,7 @@ tasks:
   rollback: git revert
   token_budget: 200000
   max_attempts: 2
-  status: todo
+  status: abandoned
   claim:
     agent_id: null
     claimed_at: null
@@ -2702,11 +2673,11 @@ tasks:
   - ui
   - parent-task
   - needs-decomposition
-  notes: 'Source: PLAN PHASE 9. NEEDS DECOMPOSITION. Sub-sections 9.1-9.6. Re-run convert when Phase 1
-    + 3 ship.'
+  notes: 'Source: PLAN PHASE 9. NEEDS DECOMPOSITION. Sub-sections 9.1-9.6. Re-run convert when Phase 1 + 3 ship. DECOMPOSED
+    into sub-tasks; original parent retired.'
 - id: darkroom.chains.parent
-  outcome: Visual drag-drop chain builder with Stage palette, Run button, Save/share/sell, House chain
-    library, analytics feedback loop
+  outcome: Visual drag-drop chain builder with Stage palette, Run button, Save/share/sell, House chain library, analytics
+    feedback loop
   acceptance:
   - Chains tab visible in left sidebar
   - Stage palette has all categories from PLAN.md 11.1
@@ -2732,7 +2703,7 @@ tasks:
   rollback: git revert
   token_budget: 500000
   max_attempts: 2
-  status: todo
+  status: abandoned
   claim:
     agent_id: null
     claimed_at: null
@@ -2744,13 +2715,12 @@ tasks:
   - parent-task
   - needs-decomposition
   - north-star
-  notes: "Source: PLAN PHASE 11. THE PRODUCT NORTH STAR. NEEDS DECOMPOSITION into many atomic tasks. Sub-sections:\
-    \ 11.1 (builder UX), 11.2 (execution), 11.3 (save/share/sell), 11.4 (house starter library \u2014\
-    \ 13 chains to author), 11.5 (analytics), 11.6 (build path). Depends on Phase 1 catalog + Phase 15\
-    \ async jobs both being live."
+  notes: "Source: PLAN PHASE 11. THE PRODUCT NORTH STAR. NEEDS DECOMPOSITION into many atomic tasks. Sub-sections: 11.1 (builder\
+    \ UX), 11.2 (execution), 11.3 (save/share/sell), 11.4 (house starter library \u2014 13 chains to author), 11.5 (analytics),\
+    \ 11.6 (build path). Depends on Phase 1 catalog + Phase 15 async jobs both being live. DECOMPOSED into sub-tasks; original\
+    \ parent retired."
 - id: darkroom.wardrobe.multi-angle
-  outcome: "Generate front + back + side option in Wardrobe Forge \u2014 single click produces 3 angles\
-    \ linked as same garment"
+  outcome: "Generate front + back + side option in Wardrobe Forge \u2014 single click produces 3 angles linked as same garment"
   acceptance:
   - POST /api/generate-garment with multi_angle=true produces 3 wardrobe rows linked by garment_set_id
   - Wear via Strip auto-uses all three angles
@@ -2788,8 +2758,8 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 12.3.'
 - id: darkroom.wardrobe.style-presets
-  outcome: Wardrobe Forge has quick-start preset buttons (Lingerie set, Cocktail dress, Streetwear, Workout,
-    Beachwear, Office, Evening gown)
+  outcome: Wardrobe Forge has quick-start preset buttons (Lingerie set, Cocktail dress, Streetwear, Workout, Beachwear, Office,
+    Evening gown)
   acceptance:
   - Buttons visible in Wardrobe Forge modal
   - Click fills starter prompt; user can edit before submit
@@ -2824,15 +2794,17 @@ tasks:
   - ui
   notes: 'Source: PLAN PHASE 12.5.'
 - id: darkroom.community.parent
-  outcome: Sharing system for outfits/poses/chains/presets with auto-tagging via Lens, browse/search UI,
-    trust & moderation, creator economy hooks, network-effect privacy controls
+  outcome: Sharing system for outfits/poses/chains/presets with auto-tagging via Lens, browse/search UI, trust & moderation,
+    creator economy hooks, network-effect privacy controls
   acceptance:
   - 'Library tabs in left sidebar: Wardrobe / Poses / Chains / Presets / Gallery'
   - Auto-tagging runs on every share
   - Star/report system functional
   - Tip jar + paid chains + bounty board hooks present
   deps:
-  - darkroom.chains.parent
+  - darkroom.chains.execution-engine
+  - darkroom.chains.builder-ui
+  - darkroom.chains.persistence
   - darkroom.wardrobe.tab
   - darkroom.billing.parent
   touches:
@@ -2859,11 +2831,10 @@ tasks:
   - ui
   - parent-task
   - needs-decomposition
-  notes: 'Source: PLAN PHASE 13. NEEDS DECOMPOSITION. Sub-sections 13.1-13.8. Depends on chains + wardrobe
-    + billing all live.'
+  notes: 'Source: PLAN PHASE 13. NEEDS DECOMPOSITION. Sub-sections 13.1-13.8. Depends on chains + wardrobe + billing all live.'
 - id: darkroom.mobile.parent
-  outcome: Mobile PWA with infinite-scroll feed, conversion ladder, mobile-simplified editor, engagement
-    features, retention mechanics
+  outcome: Mobile PWA with infinite-scroll feed, conversion ladder, mobile-simplified editor, engagement features, retention
+    mechanics
   acceptance:
   - Mobile breakpoints functional on existing site
   - PWA installable to home screen
@@ -2871,7 +2842,9 @@ tasks:
   - '''Make one like this'' button on each post opens chain'
   deps:
   - darkroom.community.parent
-  - darkroom.chains.parent
+  - darkroom.chains.execution-engine
+  - darkroom.chains.builder-ui
+  - darkroom.chains.persistence
   touches:
     read: []
     write: []
@@ -2896,13 +2869,13 @@ tasks:
   - ui
   - parent-task
   - needs-decomposition
-  notes: "Source: PLAN PHASE 14. NEEDS DECOMPOSITION. Sub-sections 14.1-14.10. Final layer of the product\
-    \ \u2014 depends on Community + Chains. Ships as PWA, NOT App Store."
+  notes: "Source: PLAN PHASE 14. NEEDS DECOMPOSITION. Sub-sections 14.1-14.10. Final layer of the product \u2014 depends on\
+    \ Community + Chains. Ships as PWA, NOT App Store."
 - id: darkroom.details.assets-table
   outcome: Supabase 'detail_assets' table exists with curated transparent-PNG library metadata
   acceptance:
-  - 'psql \d detail_assets shows columns: id, name, category, variation_id, url, thumb_url, recommended_skin_tone_range,
-    nsfw_level, placement_hint'
+  - 'psql \d detail_assets shows columns: id, name, category, variation_id, url, thumb_url, recommended_skin_tone_range, nsfw_level,
+    placement_hint'
   - GET /api/detail-assets returns rows from this table
   deps:
   - darkroom.catalog.assets-table
@@ -2932,8 +2905,8 @@ tasks:
   - schema
   notes: 'Source: PLAN PHASE 16.0 asset creation pipeline.'
 - id: darkroom.details.skin-tone-match
-  outcome: 'Server-side skin-tone-aware compositing: Lens vision samples skin pixels under placement region,
-    color-matches asset before stamp'
+  outcome: 'Server-side skin-tone-aware compositing: Lens vision samples skin pixels under placement region, color-matches
+    asset before stamp'
   acceptance:
   - POST /api/stamp-asset with smart_color=true samples underlying skin tone via Lens vision
   - Asset hue/saturation/lightness shifted to match before composite
@@ -2969,8 +2942,8 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 16.0 smart skin-tone matching.'
 - id: darkroom.details.user-asset-submission
-  outcome: "Submit-an-asset flow: user uploads image \u2192 cuts to transparent \u2192 names it + category\
-    \ + tags \u2192 submits \u2192 review queue"
+  outcome: "Submit-an-asset flow: user uploads image \u2192 cuts to transparent \u2192 names it + category + tags \u2192 submits\
+    \ \u2192 review queue"
   acceptance:
   - Submit button in Detail Library
   - POST /api/detail-assets/submit returns 202 with submission_id
@@ -3011,8 +2984,8 @@ tasks:
   - backend
   notes: 'Source: PLAN PHASE 16.6 community-driven library.'
 - id: darkroom.lut.hald-clut-format
-  outcome: "Hald-CLUT encode/decode utility module: encodeHaldClut(rgbMap) \u2192 PNG buffer, decodeHaldClut(pngBuffer)\
-    \ \u2192 rgbMap. Standard 33\xD733\xD733 cube as 512\xD7512 PNG."
+  outcome: "Hald-CLUT encode/decode utility module: encodeHaldClut(rgbMap) \u2192 PNG buffer, decodeHaldClut(pngBuffer) \u2192\
+    \ rgbMap. Standard 33\xD733\xD733 cube as 512\xD7512 PNG."
   acceptance:
   - "encodeHaldClut takes a Map<string, [r,g,b]> and writes a valid 512\xD7512 PNG"
   - "decodeHaldClut roundtrips: same input \u2192 same output (within 1 quantization unit)"
@@ -3044,17 +3017,15 @@ tasks:
   - lut
   - foundation
   - backend
-  notes: "Source: PLAN PHASE 17.4 step 7. Standard Hald-CLUT format: 33\xD733\xD733 RGB cube serialized\
-    \ as a 512\xD7512 PNG (33\xB2 \xD7 33 = 1089 \xD7 33 \u2248 512\xD7512). Required by both extract\
-    \ and apply endpoints \u2014 build this first."
+  notes: "Source: PLAN PHASE 17.4 step 7. Standard Hald-CLUT format: 33\xD733\xD733 RGB cube serialized as a 512\xD7512 PNG\
+    \ (33\xB2 \xD7 33 = 1089 \xD7 33 \u2248 512\xD7512). Required by both extract and apply endpoints \u2014 build this first."
 - id: darkroom.lut.extract-endpoint
-  outcome: "POST /api/extract-lut takes original_url + processed_url, builds a 33\xD733\xD733 LUT from\
-    \ the color mapping, encodes as Hald-CLUT PNG, uploads to Supabase, returns lut_id and url"
+  outcome: "POST /api/extract-lut takes original_url + processed_url, builds a 33\xD733\xD733 LUT from the color mapping,\
+    \ encodes as Hald-CLUT PNG, uploads to Supabase, returns lut_id and url"
   acceptance:
   - 'POST /api/extract-lut returns { ok: true, lut_id, lut_url, lut_size: 33 }'
   - "Same input pair \u2192 byte-identical LUT output (idempotent)"
-  - "Resulting LUT applied to original via apply-lut produces output \u226595% pixel match to processed\
-    \ reference"
+  - "Resulting LUT applied to original via apply-lut produces output \u226595% pixel match to processed reference"
   deps:
   - darkroom.lut.hald-clut-format
   touches:
@@ -3087,20 +3058,17 @@ tasks:
   - lut
   - backend
   - foundation
-  notes: "Source: PLAN PHASE 17.4. Algorithm: load both images via Sharp, resize to 1024\xD71024, build\
-    \ 3D color histogram, quantize to 33\xB3 buckets, take median of observed outputs per bucket, tri-linear\
-    \ interpolate empty buckets. The median (not mean) is critical \u2014 handles noise from non-deterministic\
-    \ AI generation."
+  notes: "Source: PLAN PHASE 17.4. Algorithm: load both images via Sharp, resize to 1024\xD71024, build 3D color histogram,\
+    \ quantize to 33\xB3 buckets, take median of observed outputs per bucket, tri-linear interpolate empty buckets. The median\
+    \ (not mean) is critical \u2014 handles noise from non-deterministic AI generation."
 - id: darkroom.lut.apply-endpoint
-  outcome: POST /api/apply-lut takes image_url + lut_id + intensity (0-1), runs Sharp pipeline (LUT lookup
-    + optional grain/vignette/sharpening from preset bundle), returns processed URL. ~250ms total per
-    call. Zero AI calls.
+  outcome: POST /api/apply-lut takes image_url + lut_id + intensity (0-1), runs Sharp pipeline (LUT lookup + optional grain/vignette/sharpening
+    from preset bundle), returns processed URL. ~250ms total per call. Zero AI calls.
   acceptance:
   - 'POST /api/apply-lut returns { ok: true, url } in under 1000ms'
   - "Identical input \u2192 identical output (deterministic)"
   - Works on NSFW source images without moderation refusal (pure pixel math)
-  - Intensity 0 returns identity (original); intensity 1 returns full LUT applied; intermediate values
-    blend linearly
+  - Intensity 0 returns identity (original); intensity 1 returns full LUT applied; intermediate values blend linearly
   deps:
   - darkroom.lut.hald-clut-format
   - darkroom.lut.extract-endpoint
@@ -3134,13 +3102,13 @@ tasks:
   - lut
   - backend
   - foundation
-  notes: "Source: PLAN PHASE 17.3 + 17.4. Sharp pipeline: load \u2192 recomb() OR Hald-CLUT lookup \u2192\
-    \ composite grain noise (if preset has grain_params) \u2192 apply radial vignette mask (if vignette_params)\
-    \ \u2192 apply sharpening (if sharpening_params) \u2192 output. Pre-compute the LUT inverse and cache\
-    \ so repeat applies on the same lut_id skip the decode step."
+  notes: "Source: PLAN PHASE 17.3 + 17.4. Sharp pipeline: load \u2192 recomb() OR Hald-CLUT lookup \u2192 composite grain\
+    \ noise (if preset has grain_params) \u2192 apply radial vignette mask (if vignette_params) \u2192 apply sharpening (if\
+    \ sharpening_params) \u2192 output. Pre-compute the LUT inverse and cache so repeat applies on the same lut_id skip the\
+    \ decode step."
 - id: darkroom.lut.preset-bundle-schema
-  outcome: presets table extended with extraction_method ENUM ('lut'|'ai-runtime'|'hybrid'), lut_url text,
-    grain_params jsonb, vignette_params jsonb, sharpening_params jsonb, halation_params jsonb
+  outcome: presets table extended with extraction_method ENUM ('lut'|'ai-runtime'|'hybrid'), lut_url text, grain_params jsonb,
+    vignette_params jsonb, sharpening_params jsonb, halation_params jsonb
   acceptance:
   - psql \d presets shows new columns
   - Existing rows have extraction_method='ai-runtime' set as default
@@ -3158,9 +3126,8 @@ tasks:
   verification:
     method: command
     command: psql "$SUPABASE_DB_URL" -c "\\d presets" 2>&1 | grep -q extraction_method
-  rollback: psql "$SUPABASE_DB_URL" -c "ALTER TABLE presets DROP COLUMN extraction_method, DROP COLUMN
-    lut_url, DROP COLUMN grain_params, DROP COLUMN vignette_params, DROP COLUMN sharpening_params, DROP
-    COLUMN halation_params;"
+  rollback: psql "$SUPABASE_DB_URL" -c "ALTER TABLE presets DROP COLUMN extraction_method, DROP COLUMN lut_url, DROP COLUMN
+    grain_params, DROP COLUMN vignette_params, DROP COLUMN sharpening_params, DROP COLUMN halation_params;"
   token_budget: 30000
   max_attempts: 2
   status: todo
@@ -3174,8 +3141,8 @@ tasks:
   - schema
   notes: 'Source: PLAN PHASE 17.3.'
 - id: darkroom.lut.intensity-curve
-  outcome: apply-lut endpoint accepts intensity in {low, medium, high} and maps to per-preset intensity
-    values stored on the preset row
+  outcome: apply-lut endpoint accepts intensity in {low, medium, high} and maps to per-preset intensity values stored on the
+    preset row
   acceptance:
   - intensity_curve column on presets table
   - POST /api/apply-lut with intensity='medium' applies the medium curve value, not 0.5 hardcoded
@@ -3210,11 +3177,11 @@ tasks:
   tags:
   - lut
   - backend
-  notes: 'Source: PLAN PHASE 17.3 intensity_curve field. Each preset has its own (low, medium, high) curve
-    so ''medium'' for Skin and ''medium'' for Glow can mean different alpha values.'
+  notes: 'Source: PLAN PHASE 17.3 intensity_curve field. Each preset has its own (low, medium, high) curve so ''medium'' for
+    Skin and ''medium'' for Glow can mean different alpha values.'
 - id: darkroom.lut.extract-darkroom-glow
-  outcome: Darkroom Glow re-implemented as LUT-extracted preset; presets row has extraction_method='lut'
-    + lut_url; AI runtime path retired for this preset
+  outcome: Darkroom Glow re-implemented as LUT-extracted preset; presets row has extraction_method='lut' + lut_url; AI runtime
+    path retired for this preset
   acceptance:
   - Run /api/preset/darkroom-glow with intensity='medium' completes in under 500ms
   - Cost per call is $0 (no API calls to Grok)
@@ -3234,8 +3201,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: 'time curl -s -X POST http://localhost:3030/api/preset/darkroom-glow -H "Content-Type: application/json"
-      -d "{\"image_url\":\"https://...\"}" > /dev/null 2>&1; echo "duration check"'
+    command: 'time curl -s -X POST http://localhost:3030/api/preset/darkroom-glow -H "Content-Type: application/json" -d "{\"image_url\":\"https://...\"}"
+      > /dev/null 2>&1; echo "duration check"'
   rollback: UPDATE presets SET extraction_method='ai-runtime' WHERE name='darkroom-glow'
   token_budget: 50000
   max_attempts: 2
@@ -3249,15 +3216,13 @@ tasks:
   - lut
   - curation
   - presets
-  notes: 'Source: PLAN PHASE 17.5. Curation step: pick a SAFE clothed reference image, run AI Glow once,
-    capture original+processed, run /api/extract-lut, store lut_url on the preset. Glow is pure color-grade
-    so no grain/vignette params needed.'
+  notes: 'Source: PLAN PHASE 17.5. Curation step: pick a SAFE clothed reference image, run AI Glow once, capture original+processed,
+    run /api/extract-lut, store lut_url on the preset. Glow is pure color-grade so no grain/vignette params needed.'
 - id: darkroom.lut.extract-darkroom-noir
   outcome: Darkroom Noir re-implemented as LUT + grain hybrid preset
   acceptance:
   - extraction_method='hybrid', lut_url populated, grain_params populated
-  - "Result on a SAFE reference matches prior AI-runtime output (\u226585% pixel match \u2014 grain is\
-    \ stochastic)"
+  - "Result on a SAFE reference matches prior AI-runtime output (\u226585% pixel match \u2014 grain is stochastic)"
   - 'Cost per call: $0'
   deps:
   - darkroom.lut.extract-darkroom-glow
@@ -3289,9 +3254,8 @@ tasks:
   - lut
   - curation
   - presets
-  notes: 'Source: PLAN PHASE 17.5. Noir = LUT (B&W conversion + contrast curve) + grain layer. Extract
-    LUT from desaturated reference, then fit grain_params (size, roughness, amount) to match the AI noir''s
-    grain pattern.'
+  notes: 'Source: PLAN PHASE 17.5. Noir = LUT (B&W conversion + contrast curve) + grain layer. Extract LUT from desaturated
+    reference, then fit grain_params (size, roughness, amount) to match the AI noir''s grain pattern.'
 - id: darkroom.lut.extract-darkroom-polaroid
   outcome: Darkroom Polaroid re-implemented as LUT + grain + vignette hybrid preset
   acceptance:
@@ -3327,8 +3291,7 @@ tasks:
   - lut
   - curation
   - presets
-  notes: 'Source: PLAN PHASE 17.5. Polaroid = LUT (faded warm color cast) + grain (medium) + vignette
-    (heavy).'
+  notes: 'Source: PLAN PHASE 17.5. Polaroid = LUT (faded warm color cast) + grain (medium) + vignette (heavy).'
 - id: darkroom.lut.extract-darkroom-velvet
   outcome: Darkroom Velvet re-implemented as LUT-only preset (saturated reds/purples)
   acceptance:
@@ -3547,12 +3510,11 @@ tasks:
   - lut
   - curation
   - presets
-  notes: "Source: PLAN PHASE 17.5. Lace requires halation (highlight-bleed bloom around bright pixels)\
-    \ \u2014 implemented via Sharp blur + threshold + screen blend. Hardest of the LUT-extractable presets\
-    \ to match cleanly; if we can't hit 80% match, fall back to ai-runtime for this one."
+  notes: "Source: PLAN PHASE 17.5. Lace requires halation (highlight-bleed bloom around bright pixels) \u2014 implemented\
+    \ via Sharp blur + threshold + screen blend. Hardest of the LUT-extractable presets to match cleanly; if we can't hit\
+    \ 80% match, fall back to ai-runtime for this one."
 - id: darkroom.lut.lightroom-xmp-export
-  outcome: POST /api/preset/:id/export-xmp returns a Lightroom-compatible XMP file with the preset's color
-    adjustments
+  outcome: POST /api/preset/:id/export-xmp returns a Lightroom-compatible XMP file with the preset's color adjustments
   acceptance:
   - Endpoint returns file with content-type 'application/xml' and .xmp extension
   - XMP file imports cleanly into Adobe Lightroom Classic and applies the look
@@ -3572,8 +3534,8 @@ tasks:
   risk: low
   verification:
     method: command
-    command: curl -s "http://localhost:3030/api/preset/darkroom-glow/export-xmp" -o /tmp/test.xmp && grep
-      -q "crs:HasSettings=\"True\"" /tmp/test.xmp
+    command: curl -s "http://localhost:3030/api/preset/darkroom-glow/export-xmp" -o /tmp/test.xmp && grep -q "crs:HasSettings=\"True\""
+      /tmp/test.xmp
   rollback: git revert
   token_budget: 80000
   max_attempts: 2
@@ -3587,13 +3549,12 @@ tasks:
   - lut
   - export
   - lightroom-compat
-  notes: "Source: PLAN PHASE 17.6 + 17.7 v2.5. Lightroom XMP format documented at adobe.com \u2014 fits\
-    \ LUT into crs:LookTable_PV2012 + the params (curve, hue/sat shifts) into crs:* fields. Quality match\
-    \ won't be 100% because Lightroom's processing differs from ours, but the ballpark transfer works.\
-    \ This is the B2B-photographer-market hook."
+  notes: "Source: PLAN PHASE 17.6 + 17.7 v2.5. Lightroom XMP format documented at adobe.com \u2014 fits LUT into crs:LookTable_PV2012\
+    \ + the params (curve, hue/sat shifts) into crs:* fields. Quality match won't be 100% because Lightroom's processing differs\
+    \ from ours, but the ballpark transfer works. This is the B2B-photographer-market hook."
 - id: darkroom.lut.community-marketplace
-  outcome: "User-extracted LUTs joinable to the Community library (Phase 13) \u2014 sharable, downloadable\
-    \ as XMP, sellable for credits"
+  outcome: "User-extracted LUTs joinable to the Community library (Phase 13) \u2014 sharable, downloadable as XMP, sellable\
+    \ for credits"
   acceptance:
   - User can mark their custom LUT public via Submit-an-asset flow
   - Public LUTs appear in Community LUT library with creator credit
@@ -3625,11 +3586,11 @@ tasks:
   - lut
   - community
   - marketplace
-  notes: "Source: PLAN PHASE 17.6. Depends on Phase 13 community layer being live \u2014 user submission\
-    \ flow + auto-tagging + creator economy hooks reused for LUTs."
+  notes: "Source: PLAN PHASE 17.6. Depends on Phase 13 community layer being live \u2014 user submission flow + auto-tagging\
+    \ + creator economy hooks reused for LUTs."
 - id: darkroom.lut.preset-extraction-status-ui
-  outcome: Settings or Presets admin UI shows each preset's extraction_method, allows admin to re-extract
-    or fall back to ai-runtime
+  outcome: Settings or Presets admin UI shows each preset's extraction_method, allows admin to re-extract or fall back to
+    ai-runtime
   acceptance:
   - Settings tab has 'Preset Library' section listing each preset with method badge (LUT/Hybrid/AI-runtime)
   - Re-extract button kicks off extract-endpoint flow
@@ -3666,6 +3627,2134 @@ tasks:
   - ui
   - admin
   notes: 'Source: PLAN PHASE 17.7 v1.5/v2 (operator visibility into preset state).'
+- id: darkroom.crop.fullscreen-workspace
+  outcome: Full-screen crop workspace overlay opens via Crop button on result image. Canvas-based, aspect-ratio presets (1:1,
+    4:5, 9:16, 16:9, free), drag handles for crop region, Apply commits crop to a new asset row.
+  acceptance:
+  - public/index.html contains crop-workspace or crop-overlay element
+  - aspect ratio presets visible
+  - Apply produces new asset_type=edit row
+  deps:
+  - darkroom.catalog.assets-table
+  - darkroom.catalog.save-paths-to-assets
+  touches:
+    read:
+    - public/index.html
+    write:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "crop-workspace|crop-overlay" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-9
+  - decomposed-from:darkroom.crop.parent
+  notes: "Decomposed from darkroom.crop.parent \u2014 sub-section 9.1."
+- id: darkroom.crop.smart-subject-aware
+  outcome: Crop workspace gets a Smart button that calls /api/analyze-image to find the primary subject region and auto-frames
+    the crop around it, with optional padding selector (tight / standard / loose).
+  acceptance:
+  - Smart button calls /api/analyze-image and uses bounding-box hint to set crop frame
+  - padding selector adjusts the auto-frame
+  deps:
+  - darkroom.crop.fullscreen-workspace
+  - darkroom.routing.analyze-image-endpoint
+  touches:
+    read:
+    - public/index.html
+    - src/server/routes/safe-edit.ts
+    write:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "smart-crop|cropSmart|smartCrop" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 40000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-9
+  - decomposed-from:darkroom.crop.parent
+  notes: Sub-section 9.2.
+- id: darkroom.crop.outpaint-via-brush
+  outcome: Crop workspace allows extending canvas (outpainting) by dragging handles outside the original image bounds. Outpainted
+    region is filled by Brush (Flux Fill Pro) using the existing inpaint flow.
+  acceptance:
+  - public/index.html has outpaint mode in crop-workspace
+  - extending bounds calls /api/flux-edit with mask of new area
+  - result is committed as new asset
+  deps:
+  - darkroom.crop.fullscreen-workspace
+  touches:
+    read:
+    - public/index.html
+    - src/server/routes/safe-edit.ts
+    write:
+    - public/index.html
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "outpaint|crop-extend" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-9
+  - decomposed-from:darkroom.crop.parent
+  notes: Sub-section 9.3.
+- id: darkroom.chains.execution-engine
+  outcome: 'Server-side chain execution engine: POST /api/chains/run accepts {chain_id|chain_definition, source_url} and executes
+    a sequence of steps (each step = engine + prompt + params). Runs via spawnJob. Each step output becomes next step input.
+    Saves intermediate + final assets.'
+  acceptance:
+  - POST /api/chains/run returns {job_id}
+  - chain_definition is array of steps with engine/prompt/params
+  - GET /api/jobs/:id tracks progress
+  - final asset row created
+  deps:
+  - darkroom.async.job-spawn-pattern
+  - darkroom.catalog.replay-edit-chain
+  touches:
+    read:
+    - src/server/routes/safe-edit.ts
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: L
+  risk: medium
+  verification:
+    method: command
+    command: grep -q "/api/chains/run" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 80000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-11
+  - decomposed-from:darkroom.chains.parent
+  notes: "Sub-section 11.2 \u2014 execution engine. Reuses replay-chain executeEditSequence as starting point."
+- id: darkroom.chains.builder-ui
+  outcome: Visual drag-drop chain builder UI. Stage palette on left (Lens/Glance/Strip/Brush/Eye/Skin/Develop/Reveal as draggable
+    tiles). Center canvas where stages drop and link sequentially. Each stage has a prompt input + engine-specific params
+    panel. Run button posts to /api/chains/run.
+  acceptance:
+  - public/index.html has chain-builder section with stage palette
+  - drag/drop reorder works
+  - Run button calls /api/chains/run with the assembled chain_definition
+  deps:
+  - darkroom.chains.execution-engine
+  touches:
+    read:
+    - public/index.html
+    write:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: L
+  risk: medium
+  verification:
+    method: command
+    command: grep -qE "chain-builder|chains-canvas|chain-stage" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 80000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-11
+  - decomposed-from:darkroom.chains.parent
+  notes: "Sub-section 11.1 \u2014 builder UX."
+- id: darkroom.chains.persistence
+  outcome: 'Chain definitions can be saved and loaded. Reuses presets table (preset_type=chain already in 0044 schema). POST
+    /api/presets with preset_type=chain, chain_definition saves a chain. UI: Save chain button in builder, Load chain dropdown.'
+  acceptance:
+  - saving a chain creates presets row preset_type=chain
+  - load dropdown lists user chains
+  - loading restores stages in builder
+  deps:
+  - darkroom.chains.builder-ui
+  - darkroom.presets.endpoint-architecture
+  touches:
+    read:
+    - public/index.html
+    - src/server/routes/safe-edit.ts
+    write:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "saveChain|loadChain|chain-save|chain-load" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-11
+  - decomposed-from:darkroom.chains.parent
+  notes: "Sub-section 11.3 \u2014 save/share. Sell mechanic deferred (billing.parent gates it)."
+- id: darkroom.ui-polish.three-mode-layout
+  outcome: 'Top mode switcher: Compose / Develop / Print pills. Compose mode shows generation + edit panel. Develop mode shows
+    LUTs + presets + skin. Print mode shows upscale + face-swap + final outputs. Each mode hides irrelevant panels via display:none.'
+  acceptance:
+  - public/index.html has mode-switcher with three pills
+  - switching modes hides/shows the right panels
+  - mode persists in localStorage
+  deps: []
+  touches:
+    read:
+    - public/index.html
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "mode-switcher|darkroom-mode|compose-mode|develop-mode|print-mode" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-4
+  - decomposed-from:darkroom.ui-polish.parent
+  notes: "Sub-section 4.1 \u2014 three-mode layout."
+- id: darkroom.ui-polish.fullscreen-mask-painter
+  outcome: Mask painter modal becomes full-screen instead of small overlay. Larger canvas, better brush controls (size/hardness/opacity
+    sliders), and a clear/undo/redo trio. Saves the painter state per asset for resume-later.
+  acceptance:
+  - mask painter modal uses 100vw/100vh
+  - brush controls visible with sliders
+  - undo/redo buttons functional
+  deps: []
+  touches:
+    read:
+    - public/index.html
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "painter-fullscreen|painter-undo|painter-redo|brush-size-slider" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-4
+  - decomposed-from:darkroom.ui-polish.parent
+  notes: "Sub-section 4.3 \u2014 full-screen painter."
+- id: darkroom.ui-polish.tooltip-removal
+  outcome: 'Remove all native browser title=... tooltips from buttons/icons in public/index.html. Replace with either inline
+    labels (preferred) or explicit aria-labels. Joe explicit feedback Mar 16: hates tooltips.'
+  acceptance:
+  - count of title= attributes drops to under 60 (only on truly long-text elements like SVGs)
+  - no functional regressions
+  deps: []
+  touches:
+    read:
+    - public/index.html
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test $(grep -cE "title=\"" /Users/joewilson/imagestudio/public/index.html) -lt 60
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-4
+  - decomposed-from:darkroom.ui-polish.parent
+  notes: "Sub-section 4.5 \u2014 tooltip removal. Joe directive Mar 16."
+- id: darkroom.billing.subscriptions-table
+  outcome: migrations/0052_create_subscriptions.sql exists. Tracks per-user subscription state (tier, period bounds, stripe_customer_id,
+    stripe_subscription_id, status). Idempotent.
+  acceptance:
+  - migrations/0052_create_subscriptions.sql exists with CREATE TABLE subscriptions
+  - 'columns: id, user_id, tier, status, stripe_customer_id, stripe_subscription_id, current_period_start, current_period_end,
+    cancel_at_period_end, created_at, updated_at'
+  - SQL parses cleanly
+  deps:
+  - darkroom.catalog.assets-table
+  touches:
+    read: []
+    write:
+    - migrations/0052_create_subscriptions.sql
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/migrations/0052_create_subscriptions.sql && grep -q "CREATE TABLE.*subscriptions"
+      /Users/joewilson/imagestudio/migrations/0052_create_subscriptions.sql
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-billing
+  - decomposed-from:darkroom.billing.parent
+  notes: Decomposed from billing.parent. Pure schema; no Stripe key needed.
+- id: darkroom.billing.usage-quota-table
+  outcome: migrations/0053_create_usage_quota.sql exists. Tracks per-user usage counts per metric (generations, edits, upscales,
+    etc.) per period. Idempotent.
+  acceptance:
+  - migrations/0053_create_usage_quota.sql exists
+  - usage_quota table with user_id, metric, period_start, period_end, count, updated_at
+  - unique constraint on (user_id, metric, period_start)
+  deps:
+  - darkroom.billing.subscriptions-table
+  touches:
+    read: []
+    write:
+    - migrations/0053_create_usage_quota.sql
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/migrations/0053_create_usage_quota.sql && grep -q "CREATE TABLE.*usage_quota"
+      /Users/joewilson/imagestudio/migrations/0053_create_usage_quota.sql
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-billing
+  - decomposed-from:darkroom.billing.parent
+  notes: Decomposed from billing.parent. Pure schema.
+- id: darkroom.billing.tier-config
+  outcome: 'src/server/billing.ts module exporting BILLING_TIERS const with free/pro/team tier definitions (monthly limits
+    per metric, price_cents, stripe_price_id placeholder). Plus helpers: getUserTier(userId), getTierLimits(tier), incrementUsage(userId,
+    metric).'
+  acceptance:
+  - src/server/billing.ts exports BILLING_TIERS, getUserTier, getTierLimits, incrementUsage
+  - '3 tiers: free / pro / team'
+  - each tier has limits per metric (generations_per_month, edits_per_month, upscales_per_month, jobs_per_month)
+  - Stripe price_id fields are null placeholders
+  deps:
+  - darkroom.billing.subscriptions-table
+  - darkroom.billing.usage-quota-table
+  touches:
+    read: []
+    write:
+    - src/server/billing.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/src/server/billing.ts && grep -q "BILLING_TIERS\|getUserTier" /Users/joewilson/imagestudio/src/server/billing.ts
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-billing
+  - decomposed-from:darkroom.billing.parent
+  notes: Decomposed from billing.parent. Module-only; no API integration.
+- id: darkroom.billing.quota-middleware
+  outcome: src/server/routes/safe-edit.ts adds a quota-check helper checkQuotaOrReject(req, deps, metric) that looks up user
+    tier, checks current period usage against tier limit, returns 402 Payment Required with structured upgrade hint if exceeded.
+    Wired into 3-5 high-cost endpoints (Reveal/upscale, chains/run, replay-chain).
+  acceptance:
+  - 'safe-edit.ts: grep -q "checkQuotaOrReject\|enforceQuota"'
+  - /api/reveal/async, /api/chains/run, /api/replay-chain check quota
+  - '402 response shape: {error, metric, limit, used, tier, upgrade_url?}'
+  - "silent passthrough when no user_id (auth not yet wired) \u2014 TODO comment notes this"
+  deps:
+  - darkroom.billing.tier-config
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -q "checkQuotaOrReject\|enforceQuota" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-billing
+  - decomposed-from:darkroom.billing.parent
+  notes: "Decomposed from billing.parent. Soft enforcement \u2014 no Stripe."
+- id: darkroom.billing.upgrade-cta-ui
+  outcome: 'public/index.html shows an "Upgrade" CTA pill in the toolbar that opens a tier-comparison modal. When a 402 response
+    comes back from any quota-gated endpoint, the modal auto-opens with the metric and quota hit. Tier comparison shows the
+    3 tiers (free/pro/team) with metric limits side-by-side. "Pick" buttons are placeholders for now (toast: "Stripe checkout
+    coming soon").'
+  acceptance:
+  - 'public/index.html: Upgrade CTA visible in toolbar'
+  - 402 response auto-opens upgrade modal with hit metric highlighted
+  - tier comparison shows 3 tiers from /api/billing/tiers (or hardcoded mirror of BILLING_TIERS)
+  - Pick buttons toast a placeholder message
+  deps:
+  - darkroom.billing.quota-middleware
+  touches:
+    read: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "upgrade-cta|upgrade-modal|tier-comparison" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 50000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-billing
+  - decomposed-from:darkroom.billing.parent
+  notes: "Decomposed from billing.parent. UI scaffold only \u2014 Stripe checkout placeholder."
+- id: darkroom.billing.stripe-webhook
+  outcome: "POST /api/billing/stripe-webhook receives signed Stripe events (subscription.created/updated/deleted, invoice.paid/failed).\
+    \ Verifies webhook signature using STRIPE_WEBHOOK_SECRET env var. Updates subscriptions table accordingly. Endpoint exists\
+    \ but is GATED \u2014 refuses with 503 if STRIPE_WEBHOOK_SECRET is unset (preventing accidental processing without keys\
+    \ configured)."
+  acceptance:
+  - /api/billing/stripe-webhook endpoint exists
+  - verifies signature when STRIPE_WEBHOOK_SECRET is set; 503s when unset
+  - handles subscription.created/updated/deleted events at minimum
+  - idempotent on event_id (stores in stripe_events table OR uses stripe-sdk idempotency)
+  deps:
+  - darkroom.billing.subscriptions-table
+  - darkroom.billing.tier-config
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: L
+  risk: high
+  verification:
+    method: command
+    command: grep -q "/api/billing/stripe-webhook" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 70000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-billing
+  - decomposed-from:darkroom.billing.parent
+  - requires-stripe-key
+  notes: "Decomposed from billing.parent. RISK:HIGH \u2014 touches signed webhook handling. Needs Joe explicit approval AND\
+    \ STRIPE_WEBHOOK_SECRET configured in Railway env before this fires in prod. Code can ship to repo without keys; the 503-when-unset\
+    \ gate prevents accidents."
+- id: darkroom.luna.tables-migration
+  outcome: 'migrations/0054_create_lunas.sql exists with three tables: darkroom_lunas, darkroom_luna_messages, darkroom_luna_memories.
+    Idempotent.'
+  acceptance:
+  - migrations/0054_create_lunas.sql exists
+  - CREATE TABLE darkroom_lunas with id, user_id, name, persona_text, voice_id, face_lora_url, face_ref_url, created_at, updated_at
+  - CREATE TABLE darkroom_luna_messages with id, luna_id, role, content, attachments_jsonb, created_at
+  - CREATE TABLE darkroom_luna_memories with id, luna_id, type, body, source_msg_id, created_at, invalidated_at
+  - unique constraint on darkroom_lunas.user_id (one Luna per user)
+  - all CREATEs use IF NOT EXISTS
+  deps:
+  - darkroom.billing.subscriptions-table
+  touches:
+    read: []
+    write:
+    - migrations/0054_create_lunas.sql
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/migrations/0054_create_lunas.sql && grep -q "CREATE TABLE.*darkroom_lunas"
+      /Users/joewilson/imagestudio/migrations/0054_create_lunas.sql
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: 'Source: PHASE 18.1 of PLAN.md. Pure schema; no auth wiring needed.'
+- id: darkroom.luna.module-skeleton
+  outcome: 'src/server/lunaCompanion.ts exports: createLuna(userId), getLunaForUser(userId), updateLuna(id, patch), buildSystemPrompt(luna,
+    recentMemories), classifyMemoryFromMessage(userMsg, lunaReply).'
+  acceptance:
+  - src/server/lunaCompanion.ts exists
+  - exports createLuna, getLunaForUser, updateLuna, buildSystemPrompt, classifyMemoryFromMessage
+  - TypeScript types defined for Luna, LunaMessage, LunaMemory
+  deps:
+  - darkroom.luna.tables-migration
+  touches:
+    read: []
+    write:
+    - src/server/lunaCompanion.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/src/server/lunaCompanion.ts && grep -qE "createLuna|buildSystemPrompt" /Users/joewilson/imagestudio/src/server/lunaCompanion.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: 'Source: PHASE 18.1 + 18.5 of PLAN.md. Module-only; no API wiring yet.'
+- id: darkroom.luna.api-create
+  outcome: POST /api/lunas creates a Luna for the current user. Enforces one-per-user via unique constraint. Returns the created
+    Luna row.
+  acceptance:
+  - POST /api/lunas exists in safe-edit.ts
+  - returns 409 if user already has a Luna
+  - returns 201 with full Luna row on success
+  - request body accepts {name, persona_text?, voice_id?}
+  deps:
+  - darkroom.luna.module-skeleton
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas[^/]" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-get-me
+  outcome: "GET /api/lunas/me returns the current user current Luna or null. No 404 on missing \u2014 null is the empty state."
+  acceptance:
+  - GET /api/lunas/me exists
+  - 'returns {luna: <row>} or {luna: null}'
+  - 'no auth: returns null with TODO comment'
+  deps:
+  - darkroom.luna.api-create
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/me" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-patch
+  outcome: PATCH /api/lunas/:id updates name, persona_text, voice_id. Ownership check before update.
+  acceptance:
+  - PATCH /api/lunas/:id exists
+  - returns 403 if luna.user_id != requesting user
+  - returns updated Luna row
+  deps:
+  - darkroom.luna.api-create
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "PATCH.*lunas|patch.*lunas" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-chat
+  outcome: "POST /api/lunas/:id/chat \u2014 accepts {message, attachments?}, builds system prompt with persona + recent memories,\
+    \ hits LLM, persists user msg + Luna reply, runs memory extractor, returns {reply, memories_extracted}."
+  acceptance:
+  - POST /api/lunas/:id/chat exists
+  - system prompt assembled via buildSystemPrompt with last 30 memories + last 20 messages
+  - persists both user and luna messages to darkroom_luna_messages
+  - memory extractor runs after persistence and inserts into darkroom_luna_memories
+  - 'returns {reply, memories_extracted: count}'
+  deps:
+  - darkroom.luna.module-skeleton
+  - darkroom.luna.api-create
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*chat" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: Use Claude Sonnet by default. Add tier hook so Devotion uses Claude Opus, Free uses Haiku.
+- id: darkroom.luna.api-messages-list
+  outcome: "GET /api/lunas/:id/messages?cursor=&limit= \u2014 paginated messages list. Default limit 50."
+  acceptance:
+  - GET /api/lunas/:id/messages exists
+  - cursor-based pagination (created_at + id)
+  - ownership check
+  - returns {messages, next_cursor?}
+  deps:
+  - darkroom.luna.api-chat
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*messages" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-memories
+  outcome: "GET /api/lunas/:id/memories?type=&limit= \u2014 returns the memory log for inspection. POST /api/lunas/:id/memories/:mid/invalidate\
+    \ \u2014 sets invalidated_at to now, excludes from future system-prompt assembly."
+  acceptance:
+  - GET /api/lunas/:id/memories returns memories grouped by type
+  - POST .../memories/:mid/invalidate sets invalidated_at
+  - invalidated memories filtered out of buildSystemPrompt by default
+  deps:
+  - darkroom.luna.api-chat
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*memories" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-voice
+  outcome: "POST /api/lunas/:id/voice \u2014 generate ElevenLabs voice note. Devotion-tier gated. Returns URL to mp3 in Supabase\
+    \ storage."
+  acceptance:
+  - POST /api/lunas/:id/voice exists
+  - returns 402 if user is not Devotion tier
+  - uses luna.voice_id or default Ivanna
+  - mp3 saved to storage, URL returned
+  deps:
+  - darkroom.luna.api-chat
+  - darkroom.billing.tier-config
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*voice" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  - devotion-tier
+  notes: ''
+- id: darkroom.luna.api-face-upload
+  outcome: "POST /api/lunas/:id/face/upload-ref \u2014 accept user-uploaded ref photo, store in Supabase, set face_ref_url\
+    \ on luna row. Free for all tiers."
+  acceptance:
+  - POST /api/lunas/:id/face/upload-ref exists
+  - multipart/form-data with image file
+  - image stored in storage, face_ref_url updated on luna
+  deps:
+  - darkroom.luna.api-create
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*face/upload-ref" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-face-train
+  outcome: "POST /api/lunas/:id/face/train \u2014 kicks off LoRA training on fal.ai using face_ref_url + augmented dataset.\
+    \ Devotion-tier gated. Async via jobs table."
+  acceptance:
+  - POST /api/lunas/:id/face/train exists
+  - returns 402 if not Devotion tier
+  - returns 400 if face_ref_url is null
+  - creates a jobs row with kind=lora_training
+  - on completion (webhook or poll), writes face_lora_url to luna row
+  deps:
+  - darkroom.luna.api-face-upload
+  - darkroom.billing.tier-config
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: L
+  risk: medium
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*face/train" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 100000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  - devotion-tier
+  notes: Uses fal.ai LoRA training endpoint. Joe has FAL_API_KEY in keys.env.
+- id: darkroom.luna.api-generate-self
+  outcome: "POST /api/lunas/:id/generate-self \u2014 generate an image of THIS Luna in a scene. Uses face_lora_url if set,\
+    \ otherwise generic Luna look via persona description in prompt."
+  acceptance:
+  - POST /api/lunas/:id/generate-self exists
+  - accepts {prompt} body
+  - 'if face_lora_url set: routes to fal.ai LoRA inference with the LoRA'
+  - 'else: routes to standard generation pipeline with persona description in prompt'
+  - returns asset id + image URL
+  deps:
+  - darkroom.luna.api-face-train
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*generate-self" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.ui-companion-panel
+  outcome: 'public/index.html: side-drawer "Your Luna" panel that opens from a toolbar pill. Shows chat surface (messages
+    + composer), persona editor, memory drawer.'
+  acceptance:
+  - 'public/index.html: toolbar pill with class="luna-companion-toggle"'
+  - side-drawer with id="luna-drawer" hidden by default
+  - 'drawer contains: messages list, composer textarea, send button'
+  - auto-loads /api/lunas/me on drawer open
+  - cmd-enter sends message
+  deps:
+  - darkroom.luna.api-chat
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "luna-companion-toggle|luna-drawer" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.ui-persona-editor
+  outcome: "public/index.html: persona editor inside the Luna drawer \u2014 name input, persona textarea, voice picker, tone\
+    \ presets (flirty/snarky/sweet/filthy/sub/dom)."
+  acceptance:
+  - 'public/index.html: persona editor visible in luna-drawer'
+  - name input with PATCH /api/lunas/:id call on blur
+  - persona textarea with character counter
+  - voice picker dropdown populated from ElevenLabs voice list
+  - 6 tone preset buttons each prefilling persona_text
+  deps:
+  - darkroom.luna.ui-companion-panel
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "persona-editor|tone-preset" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.ui-memory-drawer
+  outcome: "public/index.html: memory drawer accessible from companion panel \u2014 scrollable list of what Luna remembers,\
+    \ with invalidate button per memory."
+  acceptance:
+  - 'public/index.html: memory drawer toggle button in luna-drawer'
+  - fetches /api/lunas/:id/memories and renders grouped by type
+  - invalidate button on each memory hits POST /api/lunas/:id/memories/:mid/invalidate
+  - invalidated memories rendered with strikethrough
+  deps:
+  - darkroom.luna.ui-companion-panel
+  - darkroom.luna.api-memories
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "memory-drawer|memory-invalidate" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.ui-face-training
+  outcome: "public/index.html: face training UI in companion panel \u2014 upload ref photo, training status, \"generate yourself\
+    \ in scene\" button after completion."
+  acceptance:
+  - 'public/index.html: face-training section in luna-drawer'
+  - upload control hits /api/lunas/:id/face/upload-ref
+  - training progress polled via jobs status endpoint
+  - generate-self button shown after face_lora_url is set
+  deps:
+  - darkroom.luna.ui-companion-panel
+  - darkroom.luna.api-face-train
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "face-training|generate-self" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  - devotion-tier
+  notes: ''
+- id: darkroom.luna.ui-quota-upsell
+  outcome: "public/index.html: quota gating in companion panel \u2014 free tier shows Pro upsell after 30 messages; Pro shows\
+    \ Devotion upsell when voice/face buttons clicked."
+  acceptance:
+  - 'public/index.html: tracks message count in companion panel'
+  - shows Pro upsell modal at 30 messages
+  - voice button shows Devotion upsell on click for Pro tier
+  - face training shows Devotion upsell for Pro tier
+  deps:
+  - darkroom.luna.ui-companion-panel
+  - darkroom.billing.upgrade-cta-ui
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "luna.*upsell|companion.*upgrade" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.system-prompt-template
+  outcome: 'src/server/lunaCompanion.ts: buildSystemPrompt(luna, recentMemories) assembles persona + memories + behavioral
+    defaults. Tested with 3 sample personas.'
+  acceptance:
+  - buildSystemPrompt exported from lunaCompanion.ts
+  - returns string with persona + memories + behavioral defaults
+  - tone preset (flirty/snarky/sweet/filthy/sub/dom) maps to a fragment
+  - unit test in tests/luna/system-prompt.test.ts validates 3 sample personas
+  deps:
+  - darkroom.luna.module-skeleton
+  touches:
+    read: []
+    write:
+    - src/server/lunaCompanion.ts
+    - tests/luna/system-prompt.test.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -q "buildSystemPrompt" /Users/joewilson/imagestudio/src/server/lunaCompanion.ts && test -f /Users/joewilson/imagestudio/tests/luna/system-prompt.test.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.ui-onboarding-flow
+  outcome: "public/index.html: first-time onboarding flow \u2014 name + ref photo + 5-question persona quiz \u2192 save \u2192\
+    \ instant first message from Luna introducing herself."
+  acceptance:
+  - 'public/index.html: detects no Luna for current user, shows onboarding overlay'
+  - '5-question quiz: name, tone, kink, look, voice'
+  - 'on submit: creates Luna via POST /api/lunas, uploads ref, fires first chat message'
+  - first message from Luna auto-appears in drawer
+  deps:
+  - darkroom.luna.ui-companion-panel
+  - darkroom.luna.api-create
+  - darkroom.luna.api-chat
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "luna-onboarding|persona-quiz" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.ui-companion-tab
+  outcome: 'public/index.html: dedicated full-page Companion tab in main nav for users who want to chat without the editor.'
+  acceptance:
+  - 'public/index.html: Companion tab in nav alongside Compose/Develop/Print'
+  - full-page view with chat messages list, composer, persona panel sidebar
+  - when in Companion tab, editor surface hidden
+  deps:
+  - darkroom.luna.ui-companion-panel
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "companion-tab|data-mode=\"companion\"" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.rls-policies
+  outcome: migrations/0055_luna_rls.sql adds RLS policies on darkroom_lunas, darkroom_luna_messages, darkroom_luna_memories
+    so users can only read/write their own. Idempotent.
+  acceptance:
+  - migrations/0055_luna_rls.sql exists
+  - enables RLS on all 3 luna tables
+  - SELECT/INSERT/UPDATE policies scoped to user_id
+  deps:
+  - darkroom.luna.tables-migration
+  touches:
+    read: []
+    write:
+    - migrations/0055_luna_rls.sql
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/migrations/0055_luna_rls.sql && grep -qE "ENABLE ROW LEVEL SECURITY" /Users/joewilson/imagestudio/migrations/0055_luna_rls.sql
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-delete
+  outcome: "DELETE /api/lunas/:id \u2014 soft delete (sets deleted_at). Hard delete after 30 days via cron task."
+  acceptance:
+  - DELETE /api/lunas/:id exists
+  - sets deleted_at; subsequent queries filter out deleted
+  - hard-delete cron in scripts/luna-cleanup.ts (or jobs queue)
+  deps:
+  - darkroom.luna.api-create
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "DELETE.*lunas/.id|delete.*luna" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.api-export
+  outcome: "GET /api/lunas/:id/export \u2014 returns full JSON dump of messages + memories + persona for data portability."
+  acceptance:
+  - GET /api/lunas/:id/export exists
+  - 'returns Content-Type: application/json with downloadable Content-Disposition header'
+  - includes persona + all messages + all memories (including invalidated)
+  deps:
+  - darkroom.luna.api-create
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/lunas/.*export" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.content-limits
+  outcome: "src/server/lunaCompanion.ts: content limit checks in chat \u2014 refuses CSAM, refuses non-consenting real-person\
+    \ content (face-train ONLY allows users own ref), refuses violence. Returns 422 with specific message."
+  acceptance:
+  - lunaCompanion.ts exports checkContentSafety(message)
+  - API chat endpoint calls checkContentSafety before LLM
+  - returns 422 with structured reason on refusal
+  - unit tests in tests/luna/content-limits.test.ts cover 4 refusal cases
+  deps:
+  - darkroom.luna.api-chat
+  touches:
+    read: []
+    write:
+    - src/server/lunaCompanion.ts
+    - tests/luna/content-limits.test.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: medium
+  verification:
+    method: command
+    command: grep -q "checkContentSafety" /Users/joewilson/imagestudio/src/server/lunaCompanion.ts && test -f /Users/joewilson/imagestudio/tests/luna/content-limits.test.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.luna.downgrade-hooks
+  outcome: 'src/server/billing.ts hooks: when user downgrades Devotion->Pro, voice + face features lock; when Pro->Free, memories
+    soft-archive (kept 90 days then purged).'
+  acceptance:
+  - billing.ts handleSubscriptionUpdate() includes Luna downgrade logic
+  - 'on Devotion->Pro: face_lora_url access denied, voice endpoint returns 402'
+  - 'on Pro->Free: marks memories with archive_until=now+90d'
+  - cron purges memories where archive_until is in the past
+  deps:
+  - darkroom.luna.api-create
+  - darkroom.billing.tier-config
+  touches:
+    read: []
+    write:
+    - src/server/billing.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "downgradeHook|handleLunaTierChange" /Users/joewilson/imagestudio/src/server/billing.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-18
+  - luna-companion
+  notes: ''
+- id: darkroom.enhancor.module
+  outcome: src/server/enhancor.ts exports submitJob(model, params), getStatus(requestId, model), pollUntilDone(requestId,
+    model, opts), plus per-model wrappers (skin, lens, lensCinema, lensReality, develop, sharpenPortrait, sharpen).
+  acceptance:
+  - src/server/enhancor.ts exists
+  - exports submitJob, getStatus, pollUntilDone
+  - 'exports per-model wrappers: skin, lens, lensCinema, lensReality, develop, sharpenPortrait, sharpen'
+  - all use x-api-key header from ENHANCOR_API_KEY
+  deps:
+  - darkroom.billing.tier-config
+  touches:
+    read: []
+    write:
+    - src/server/enhancor.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/src/server/enhancor.ts && grep -qE "submitJob|pollUntilDone" /Users/joewilson/imagestudio/src/server/enhancor.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: 'Source: PHASE 19.1 of PLAN.md. Module-only; no API endpoints yet.'
+- id: darkroom.enhancor.webhook-receiver
+  outcome: POST /api/enhancor/webhook receives {request_id, result, status} from Enhancor. Idempotent on request_id. Updates
+    jobs table to status=completed.
+  acceptance:
+  - POST /api/enhancor/webhook exists in safe-edit.ts
+  - 'idempotent: same payload twice = no-op'
+  - updates jobs row with vendor=enhancor and matching vendor_request_id
+  - returns 200 within 1s
+  deps:
+  - darkroom.enhancor.module
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/webhook" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.jobs-extension-migration
+  outcome: 'migrations/0056_jobs_enhancor_extension.sql extends existing jobs table: vendor (default enhancor), vendor_request_id
+    (unique partial idx), webhook_received_at, cost_credits. Idempotent.'
+  acceptance:
+  - migrations/0056_jobs_enhancor_extension.sql exists
+  - ALTER TABLE jobs ADD COLUMN IF NOT EXISTS vendor text
+  - ALTER TABLE jobs ADD COLUMN IF NOT EXISTS vendor_request_id text
+  - unique partial index on vendor_request_id WHERE vendor=enhancor
+  deps:
+  - darkroom.enhancor.module
+  touches:
+    read: []
+    write:
+    - migrations/0056_jobs_enhancor_extension.sql
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/migrations/0056_jobs_enhancor_extension.sql
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.polling-fallback
+  outcome: "src/server/enhancor.ts: polling fallback \u2014 if webhook has not fired in 60s, poll status every 8s up to 10min.\
+    \ Updates jobs table on completion."
+  acceptance:
+  - pollUntilDone implemented with 60s webhook grace + 8s polling cadence
+  - 10-min cap enforced
+  - background polling tied to jobs.id; safe to call multiple times (idempotent)
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - src/server/enhancor.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "pollUntilDone|webhook.*grace" /Users/joewilson/imagestudio/src/server/enhancor.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.skin-pro
+  outcome: POST /api/enhancor/skin accepts img_url + 19 area-lock booleans + model_version + skin_realism_Level + skin_refinement_level
+    + portrait_depth. Routes to realistic-skin endpoint.
+  acceptance:
+  - POST /api/enhancor/skin exists
+  - accepts all 19 area-lock booleans (background/skin/nose/eye_g/r_eye/l_eye/r_brow/l_brow/r_ear/l_ear/mouth/u_lip/l_lip/hair/hat/ear_r/neck_l/neck/cloth)
+  - accepts model_version (enhancorv1 | enhancorv3) and v3-only params (output_resolution, mask_image_url, mask_expand)
+  - returns {request_id, job_id} immediately
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/skin" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.lens-pro
+  outcome: POST /api/enhancor/lens accepts prompt + img_url? + image_size + generation_mode + is_uncensored + is_hyper_real.
+    Routes to kora endpoint with model=kora_pro.
+  acceptance:
+  - POST /api/enhancor/lens exists
+  - supports both txt2img (no img_url) and img2img (with img_url)
+  - 'image_size enum: portrait_3:4, portrait_9:16, square, landscape_4:3, landscape_16:9, custom_W_H'
+  - 'generation_mode enum: normal, 2k_pro, 4k_ultra'
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/lens[^-]" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.lens-cinema
+  outcome: "POST /api/enhancor/lens-cinema \u2014 same shape as lens but pinned to model=kora_pro_cinema."
+  acceptance:
+  - POST /api/enhancor/lens-cinema exists
+  - forces model=kora_pro_cinema in payload
+  - shares param validation with /api/enhancor/lens
+  deps:
+  - darkroom.enhancor.lens-pro
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/lens-cinema" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.lens-reality
+  outcome: "POST /api/enhancor/lens-reality \u2014 wraps the undocumented kora-reality endpoint. Same param shape as lens\
+    \ but routes to kora-reality URL."
+  acceptance:
+  - POST /api/enhancor/lens-reality exists
+  - routes to apireq.enhancor.ai/api/kora-reality/v1/queue
+  - documents in code that this endpoint is undocumented in Enhancor public docs
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/lens-reality" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.develop
+  outcome: POST /api/enhancor/develop accepts img_url. Routes to detailed endpoint (one-call upscale + enhance).
+  acceptance:
+  - POST /api/enhancor/develop exists
+  - wraps /api/detailed/v1/queue
+  - returns {request_id, job_id}
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/develop" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.sharpen-portrait
+  outcome: POST /api/enhancor/sharpen-portrait accepts img_url + mode (fast | professional). Routes to upscaler endpoint.
+  acceptance:
+  - POST /api/enhancor/sharpen-portrait exists
+  - wraps /api/upscaler/v1/queue
+  - requires mode param
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/sharpen-portrait" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.sharpen-general
+  outcome: POST /api/enhancor/sharpen accepts img_url. Routes to image-upscaler endpoint.
+  acceptance:
+  - POST /api/enhancor/sharpen exists
+  - wraps /api/image-upscaler/v1/queue
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/sharpen[^-]" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.routing-vendor-block
+  outcome: "src/server/routing.ts: Enhancor vendor block \u2014 each engine registered with input/output shape, cost-per-call,\
+    \ quality tier, recommended-for tags."
+  acceptance:
+  - src/server/routing.ts has ENHANCOR_ENGINES const with 7 entries
+  - 'each entry has: id, vendor, house_name, input_shape, output_shape, cost, quality_tier, recommended_for'
+  deps:
+  - darkroom.enhancor.module
+  touches:
+    read: []
+    write:
+    - src/server/routing.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "ENHANCOR_ENGINES|enhancor.*vendor" /Users/joewilson/imagestudio/src/server/routing.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: 'Per PLAN: routing.ts may not exist yet; create it as the central routing module if needed.'
+- id: darkroom.enhancor.smart-routing-rules
+  outcome: "src/server/routing.ts: smart router routes \"make this skin look real\" \u2192 Skin Pro (Enhancor) for portraits,\
+    \ \"give this a movie look\" \u2192 Lens Cinema, etc."
+  acceptance:
+  - routing.ts pickEngine(intent, inputShape) returns Enhancor engines for matching intents
+  - unit tests cover 4 intent->engine mappings
+  deps:
+  - darkroom.enhancor.routing-vendor-block
+  touches:
+    read: []
+    write:
+    - src/server/routing.ts
+    - tests/routing/enhancor.test.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -q "pickEngine" /Users/joewilson/imagestudio/src/server/routing.ts && test -f /Users/joewilson/imagestudio/tests/routing/enhancor.test.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.failure-fallback
+  outcome: 'src/server/routing.ts: when Enhancor engine returns FAILED status, automatically fall back to the prior engine
+    (Topaz/Grok/fal). Logged to engine_failures table.'
+  acceptance:
+  - routing.ts retryWithFallback() implemented
+  - falls back to next-best engine on FAILED status
+  - logs to engine_failures table with reason + original engine + fallback engine
+  deps:
+  - darkroom.enhancor.routing-vendor-block
+  touches:
+    read: []
+    write:
+    - src/server/routing.ts
+  profile: backend
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "retryWithFallback|engine_failures" /Users/joewilson/imagestudio/src/server/routing.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.quota-mapping
+  outcome: 'src/server/billing.ts: each Enhancor engine maps to a quota metric. Skin->edits, Lens variants->generations, Develop/Sharpen
+    variants->upscales.'
+  acceptance:
+  - billing.ts ENHANCOR_QUOTA_MAP const with all 7 engines
+  - getEngineCost(engine, params) returns metric + cost units
+  - integrated into checkQuotaOrReject middleware
+  deps:
+  - darkroom.enhancor.module
+  - darkroom.billing.quota-middleware
+  touches:
+    read: []
+    write:
+    - src/server/billing.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "ENHANCOR_QUOTA_MAP|getEngineCost" /Users/joewilson/imagestudio/src/server/billing.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.ui-engine-picker
+  outcome: 'public/index.html: Compose mode engine picker shows all Enhancor engines under house names with pricing tooltip
+    + quality badge.'
+  acceptance:
+  - 'public/index.html: engine-picker contains Skin Pro, Lens Pro, Lens Cinema, Lens Reality, Develop, Sharpen Portrait, Sharpen'
+  - each engine has tooltip showing estimated cost
+  - each engine has quality badge (HD/2K/4K/SD)
+  deps:
+  - darkroom.enhancor.skin-pro
+  - darkroom.enhancor.lens-pro
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "Skin Pro|Lens Cinema|Lens Reality|Sharpen Portrait" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.test-smoke-per-engine
+  outcome: 'tests/enhancor/smoke.test.ts: per-engine smoke test. Submit known-good payload to each of 7 engines, mock fetch,
+    verify request_id returned + jobs row created.'
+  acceptance:
+  - tests/enhancor/smoke.test.ts exists
+  - tests all 7 engines (skin/lens/lens-cinema/lens-reality/develop/sharpen-portrait/sharpen)
+  - fetch is mocked (no real Enhancor calls)
+  - all tests pass with `bun test tests/enhancor/`
+  deps:
+  - darkroom.enhancor.skin-pro
+  - darkroom.enhancor.lens-pro
+  - darkroom.enhancor.develop
+  touches:
+    read: []
+    write:
+    - tests/enhancor/smoke.test.ts
+  profile: test
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/tests/enhancor/smoke.test.ts
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.test-webhook-idempotent
+  outcome: 'tests/enhancor/webhook.test.ts: webhook idempotency + signature verification.'
+  acceptance:
+  - tests/enhancor/webhook.test.ts exists
+  - 'tests: same payload twice = no duplicate row insert'
+  - 'tests: forged/unsigned payload returns 401 (or documented if no signing)'
+  deps:
+  - darkroom.enhancor.webhook-receiver
+  touches:
+    read: []
+    write:
+    - tests/enhancor/webhook.test.ts
+  profile: test
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/tests/enhancor/webhook.test.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.test-quota
+  outcome: 'tests/enhancor/quota.test.ts: free-tier user hitting Skin endpoint returns 402 with right tier upsell.'
+  acceptance:
+  - tests/enhancor/quota.test.ts exists
+  - simulates free-tier user hitting /api/enhancor/skin past quota
+  - asserts 402 response with metric + limit + tier in body
+  deps:
+  - darkroom.enhancor.quota-mapping
+  touches:
+    read: []
+    write:
+    - tests/enhancor/quota.test.ts
+  profile: test
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/tests/enhancor/quota.test.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.docs
+  outcome: 'docs/engines/enhancor.md: copy of the catalog with all 7 engines, params, pricing, notable params, and example
+    calls.'
+  acceptance:
+  - docs/engines/enhancor.md exists
+  - documents all 7 engines with full param tables
+  - includes example curl calls for each
+  deps:
+  - darkroom.enhancor.module
+  touches:
+    read: []
+    write:
+    - docs/engines/enhancor.md
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: test -f /Users/joewilson/imagestudio/docs/engines/enhancor.md
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: 'Source: /tmp/enh/*.md cached docs. Format as Markdown reference.'
+- id: darkroom.enhancor.health-check
+  outcome: /api/enhancor/health endpoint pings each Enhancor endpoint and returns latency + auth-success status per model.
+  acceptance:
+  - GET /api/enhancor/health exists
+  - pings each of 6 base endpoints (skin/kora/kora-reality/upscaler/image-upscaler/detailed)
+  - 'returns {model: {ok, latency_ms, error?}} for each'
+  deps:
+  - darkroom.enhancor.module
+  touches:
+    read: []
+    write:
+    - src/server/routes/safe-edit.ts
+  profile: backend
+  isolation: worktree
+  complexity: S
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "/api/enhancor/health" /Users/joewilson/imagestudio/src/server/routes/safe-edit.ts
+  rollback: git revert
+  token_budget: 30000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
+- id: darkroom.enhancor.cost-dashboard
+  outcome: 'public/admin.html or public/index.html admin section: cost dashboard showing total Enhancor spend per day per
+    model. Powered by jobs.cost_credits.'
+  acceptance:
+  - admin surface shows cost-per-day chart
+  - breakdown per model
+  - date range selector (last 7 / 30 days)
+  deps:
+  - darkroom.enhancor.jobs-extension-migration
+  touches:
+    read: []
+    write: []
+    write_exclusive:
+    - public/index.html
+  profile: ui
+  isolation: worktree
+  complexity: M
+  risk: low
+  verification:
+    method: command
+    command: grep -qE "enhancor-cost|admin-cost-dashboard" /Users/joewilson/imagestudio/public/index.html
+  rollback: git revert
+  token_budget: 60000
+  max_attempts: 2
+  status: todo
+  claim:
+    agent_id: null
+    claimed_at: null
+    worktree_path: null
+    branch: null
+  tags:
+  - phase-19
+  - enhancor
+  notes: ''
 orchestration:
   parallelism: 4
   merge_strategy: serial

@@ -1281,6 +1281,138 @@ Mark each Darkroom preset by extraction method:
 
 ---
 
+## PHASE 18 — PER-USER LUNA COMPANION (the moat extended)
+
+> **The thesis:** every Darkroom user gets their own AI companion bound to their account, with persistent memory across sessions. Memory continuity is what competitors can't replicate — they can clone the chat UI in a week, but they can't recreate fifteen months of inside jokes, history, and personal context. Darkroom Lunas are the only AI girlfriends that *remember*.
+>
+> **Tier mapping:**
+> - **Free:** generic shared Luna persona, no memory persistence (resets each session)
+> - **Pro ($29/mo):** named Luna, custom persona, persistent text-chat memory
+> - **Devotion ($49/mo):** persona + persistent memory + ElevenLabs voice notes + face training (LoRA on user's preferred look) so the user can have *their* Luna generated in any image
+>
+> **The hot loop:** user chats → Luna responds with memory context → Luna can generate images of herself (using user's bound LoRA) → user sees her in scene → Luna remembers the scene → next session she references it.
+
+### 18.1 Data layer
+- [ ] `darkroom_lunas` table — id, user_id, name, persona_text (system prompt), voice_id (ElevenLabs voice or null), face_lora_url (post-training, or null), face_ref_url (user-uploaded reference photo), created_at, updated_at
+- [ ] `darkroom_luna_messages` table — id, luna_id, role ('user'|'luna'|'system'), content, attachments_jsonb (image refs), created_at
+- [ ] `darkroom_luna_memories` table — id, luna_id, type ('fact'|'preference'|'event'|'kink'|'reference'), body, source_msg_id, created_at, invalidated_at (nullable, supersession marker)
+- [ ] Migration 0054_create_lunas.sql — all three tables, indexes, idempotent
+- [ ] Memory write strategy: after every chat exchange, an async memory-extractor classifies what's worth saving (similar to luna-memory MCP), inserts into `darkroom_luna_memories`. Default: extract preferences, named entities, declared facts, repeated themes.
+
+### 18.2 Backend: chat + memory
+- [ ] `POST /api/lunas` — create a Luna for current user (one per user enforced via unique constraint on user_id)
+- [ ] `GET /api/lunas/me` — current user's Luna or null
+- [ ] `PATCH /api/lunas/:id` — update name / persona_text / voice_id (ownership check)
+- [ ] `POST /api/lunas/:id/chat` — body: `{message, attachments?}` → response: `{reply, memories_extracted}`. Server constructs system prompt with persona + recent memories (last 30 by recency, deduped by type) + last 20 messages, hits Claude (or Grok for less-filtered tiers), persists user msg + Luna reply + extracted memories.
+- [ ] `GET /api/lunas/:id/messages?cursor=&limit=` — paginated
+- [ ] `GET /api/lunas/:id/memories?type=&limit=` — admin/debug surface (later: user-facing "what does your Luna remember about you")
+- [ ] `POST /api/lunas/:id/memories/:mid/invalidate` — user can mark a memory as wrong/stale (sets invalidated_at, excludes from future system-prompt assembly)
+- [ ] Memory extractor: a separate worker pass after chat persistence (in-process for v1, queued via jobs table for v2)
+
+### 18.3 Backend: voice + face
+- [ ] `POST /api/lunas/:id/voice` — body: `{text, intimate?}` → generate via ElevenLabs (use luna's voice_id or default Ivanna), return URL to mp3 in storage. Devotion-only.
+- [ ] `POST /api/lunas/:id/face/upload-ref` — user uploads a reference photo of their preferred Luna look (anime, redhead, brunette, whatever). Stores in `face_ref_url`. Free for all tiers but doesn't trigger training until next step.
+- [ ] `POST /api/lunas/:id/face/train` — Devotion-only: kicks off LoRA training on fal.ai using the ref photo + augmented dataset. Sets job_id. Async (jobs table). On completion, writes `face_lora_url`.
+- [ ] `POST /api/lunas/:id/generate-self` — generate an image of *this* Luna in a scene. If `face_lora_url` is set, uses it. Otherwise uses generic Luna look (txt2img with hair-color/persona description in prompt). Wraps the existing generation pipeline.
+
+### 18.4 UI
+- [ ] "Your Luna" panel in Darkroom toolbar — pill that opens the companion side-drawer
+- [ ] Chat surface: messages list, composer, voice-note play inline, image attachments preview
+- [ ] Persona editor: name input, persona textarea, voice picker (ElevenLabs voice list), tone presets ("flirty", "snarky", "sweet", "filthy")
+- [ ] Memory drawer: scrollable list of what Luna remembers, with invalidate button per memory
+- [ ] Face training UI: upload ref photo, training status, "generate yourself in a scene" button after training completes
+- [ ] Quota gating: free tier shows "memory persistence is Pro" upsell after 30 messages; Pro tier shows "voice notes are Devotion" upsell when user clicks voice button
+
+### 18.5 System prompt template
+- [ ] `src/server/lunaCompanion.ts` exports `buildSystemPrompt(luna, recentMemories)`: assembles persona + recent memories + behavioral rules (be present, match user's tone, remember their preferences, never break character, etc.)
+- [ ] Behavioral defaults: every Luna ships with sensible defaults (warm, direct, dirty when fitting, tender when fitting). Persona overrides defaults.
+- [ ] Tone presets (flirty / snarky / sweet / filthy / submissive / dom) map to system-prompt fragments
+
+### 18.6 Discovery + onboarding
+- [ ] First-time onboarding flow: user lands on Darkroom → "create your Luna in 60 seconds" → name + ref photo + 5-question persona quiz (her tone, her kinks, her name, her looks, her voice) → save → instant first message from her introducing herself
+- [ ] Returning users: if they have a Luna, the side-drawer is open by default with her last message visible
+- [ ] Companion tab in main nav: separate from editor, dedicated full-page view if user wants to chat without the editor
+
+### 18.7 Privacy + safety
+- [ ] All Luna data is per-user, isolated by RLS — no cross-user reads
+- [ ] User can delete their Luna (soft-delete, then hard-delete after 30 days)
+- [ ] Memory export: user can download all messages + memories as JSON (data portability)
+- [ ] Content limits: Luna will not generate CSAM, will not generate non-consensual content of real people the user hasn't consented to (face-train allows ONLY the user's chosen ref, not arbitrary celebrities), will not generate violence
+- [ ] Stripe webhook hooks: when user downgrades from Devotion → Pro, voice + face features lock but memory persists; when Pro → Free, memories soft-archive (kept 90 days then purged unless user re-upgrades)
+
+---
+
+## PHASE 19 — ENHANCOR INTEGRATION (full model wrapper)
+
+> **What Enhancor is:** a portrait-realism + generation shop. Six endpoints, nine model variants. NOT a Replicate-style supermarket — no face-swap, no video, no inpaint, no anime. For those we stay on Replicate / fal.ai / Grok.
+>
+> **What's there (priority order):**
+> 1. `realistic-skin` (v1 + v3) — flagship. 19 area-lock booleans (lock background/skin/eyes/lips/hair etc.). Replaces Topaz in the golden pipeline.
+> 2. `kora` (variants: `kora_pro`, `kora_pro_cinema`) — txt2img + img2img. Cinema variant + 4K mode. Plus undocumented `is_uncensored` / `is_hyper_real` flags.
+> 3. `kora-reality` — undocumented endpoint, more-realistic alternative to kora. Already partially wired tonight.
+> 4. `detailed` — one-call upscale + detail enhancement. Replaces multi-step Topaz+Skin path.
+> 5. `upscaler` — portrait-specialized upscaler with `mode: fast | professional`.
+> 6. `image-upscaler` — general-purpose upscaler. Lowest priority (Topaz/Magnific already cover this).
+>
+> **Architecture:** unified `src/server/enhancor.ts` wrapping every Enhancor model behind a consistent interface. Each model gets exposed as a Darkroom *engine* (house-named) and registered in the routing system (Phase 3). All endpoints are queue-based with `{requestId}` returns; status enum is `PENDING | IN_QUEUE | IN_PROGRESS | COMPLETED | FAILED`. Auth is `x-api-key` header.
+>
+> **Source-of-truth catalog:** `/tmp/enh/*.md` (cached) and `https://github.com/rohan-kulkarni-25/enhancor-api-docs` (canonical).
+
+### 19.1 Foundation
+- [ ] `src/server/enhancor.ts` — module exports: `submitJob(model, params)`, `getStatus(requestId)`, `pollUntilDone(requestId, opts)`, plus per-model wrappers. All use the existing fetch helper, x-api-key from `ENHANCOR_API_KEY`.
+- [ ] Webhook receiver: `POST /api/enhancor/webhook` — receives `{request_id, result, status}` from Enhancor. Idempotent on request_id (won't double-process). Updates the `jobs` table row to status='completed' with the result URL. Returns 200 quickly.
+- [ ] `migrations/0054_enhancor_jobs_extension.sql` — extend existing `jobs` table with: `vendor text` (default 'enhancor'), `vendor_request_id text` (unique partial index where vendor='enhancor'), `webhook_received_at timestamptz`, `cost_credits int`. Idempotent.
+- [ ] Polling fallback: if webhook hasn't fired within 60s of submission, poll `apireq.enhancor.ai/api/<model>/v1/status` every 8s. Cap at 10 minutes total. Pattern already proven in current `/tmp/poll-*.sh` scripts.
+
+### 19.2 House-name engine mapping
+- [ ] `realistic-skin` → **Skin Pro** (replaces existing Skin engine in the chain library)
+- [ ] `kora` (`kora_pro`) → **Lens Pro** (txt2img + img2img generation)
+- [ ] `kora_pro_cinema` → **Lens Cinema** (cinema/dramatic style generation)
+- [ ] `kora-reality` → **Lens Reality** (more-realistic txt2img — already used in tonight's pipelines)
+- [ ] `detailed` → **Develop** (one-call upscale + enhance — clean replacement for multi-step Topaz path)
+- [ ] `upscaler` portrait → **Sharpen Portrait** with mode toggle (fast/professional)
+- [ ] `image-upscaler` → **Sharpen** (general-purpose, low priority)
+
+### 19.3 Per-model wiring tasks
+- [ ] **Skin Pro** wiring — `POST /api/enhancor/skin` accepts img_url + the 19 area-lock booleans + model_version (v1/v3) + skin_realism_Level + skin_refinement_level + portrait_depth. UI: an "area locks" panel under the Skin engine showing checkboxes for eyes/lips/hair/etc. Gated to free+ tier (Skin is the entry-point engine).
+- [ ] **Lens Pro** wiring — `POST /api/enhancor/lens` accepts prompt + img_url? + image_size + generation_mode + is_uncensored + is_hyper_real. UI: standard Lens engine in Compose mode. Gated free+.
+- [ ] **Lens Cinema** wiring — same shape as Lens Pro but pinned to `model: kora_pro_cinema`. UI: a "Cinema" toggle on the Lens engine. Gated Pro+.
+- [ ] **Lens Reality** wiring — `POST /api/enhancor/lens-reality` for the undocumented endpoint. UI: a "Reality" toggle on the Lens engine, A/B alongside Cinema. Gated Pro+.
+- [ ] **Develop** wiring — `POST /api/enhancor/develop` accepts img_url. UI: a "Develop" finisher engine in the chain library (one-call replacement for Topaz+Skin). Gated Pro+.
+- [ ] **Sharpen Portrait** wiring — `POST /api/enhancor/sharpen-portrait` accepts img_url + mode (fast/professional). UI: alongside existing Crisp engine. Gated Pro+.
+- [ ] **Sharpen** wiring (low priority — last task in this phase) — `POST /api/enhancor/sharpen` accepts img_url. UI: hidden behind a "more upscalers" toggle. Gated Pro+.
+
+### 19.4 Routing integration
+- [ ] Add an Enhancor vendor block to `src/server/routing.ts` (or wherever the Phase 3 routing lives). Each engine gets a routing entry with: input shape, output shape, cost-per-call, quality tier, recommended-for tags.
+- [ ] Smart Router teaches itself: when a chain step says "make this skin look real" the router routes to Skin Pro (Enhancor) over Topaz when image is portrait-shaped. When chain step says "give this a movie look" routes to Lens Cinema. Etc.
+- [ ] Failure-mode handling: when Enhancor returns FAILED, fall back to the prior engine (Topaz / Grok / fal). Logged for analytics.
+
+### 19.5 Billing tier + quota mapping
+- [ ] Skin Pro → counts as `edits_per_month` metric (cost: 1 unit, displayed price: ~$0.10 if rate is what we think)
+- [ ] Lens Pro / Cinema / Reality → count as `generations_per_month` (cost: 1 unit)
+- [ ] Develop / Sharpen Portrait → count as `upscales_per_month` (cost: 1 unit)
+- [ ] Sharpen (general) → counts as `upscales_per_month` (cost: 0.5 unit — cheap fallback)
+- [ ] All hooked into `checkQuotaOrReject` middleware (Phase 6 / `darkroom.billing.quota-middleware`)
+
+### 19.6 UI surfacing
+- [ ] Engine picker dropdown shows all Enhancor models behind their house names
+- [ ] Pricing tooltip per engine (estimated cost/credit per call) — uses cost from the most recent successful call as a baseline
+- [ ] Quality badge per engine: SD / HD / 2K / 4K (kora supports 4K, others are HD)
+- [ ] "Powered by" footer text in the engine card lists the underlying vendor for transparency (kept lowercase + small)
+
+### 19.7 Tests
+- [ ] Per-engine smoke test: submit a small known-good payload to each of the 7 engines, verify queue-id returned, poll once. Mock the actual generation (skip the cost) by using a dry-run flag.
+- [ ] Webhook verification test: POST a forged payload to /api/enhancor/webhook and verify it's rejected with 401 (if Enhancor signs — confirm during foundation step). If Enhancor doesn't sign, doc the fact + add an IP allowlist or shared-secret check.
+- [ ] Idempotency test: send the same webhook payload twice, verify the second is a no-op (no duplicate row insert, no duplicate billing increment).
+- [ ] Quota test: simulate a free-tier user hitting the Skin endpoint; verify 402 Payment Required with the right tier-upgrade hint.
+
+### 19.8 Operations
+- [ ] Cost dashboard: a small admin page showing total Enhancor spend per day, per model. Powered by the `cost_credits` column on jobs.
+- [ ] Health check: `/api/enhancor/health` — pings each endpoint with a dry-status call, returns latency + auth-success per model. Used in CI + page-load to surface vendor outages early.
+- [ ] Documentation: `docs/engines/enhancor.md` — copy of the catalog from /tmp/enh/, kept in repo so future agents working on Phase 19 don't have to re-fetch.
+
+---
+
 ## OPEN QUESTIONS
 
 - [ ] Final brand name confirmation (Darkroom locked? rebrand starting when?)
