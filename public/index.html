@@ -894,6 +894,8 @@
             <option value="hosiery">Hosiery</option>
           </select>
           <label><input type="checkbox" id="wardrobe-featured-only"> Featured only</label>
+          <input id="wardrobe-search-input" type="text" placeholder="Search wardrobe..."
+            style="background:#1a1a1a;color:#f5f5f5;border:1px solid #2a2a2a;padding:4px 8px;border-radius:4px;flex:1;min-width:120px;" />
           <button type="button" class="action-btn" id="wardrobe-refresh-btn" style="border-color:#f472b6;color:#f472b6;font-size:0.78rem;padding:4px 10px;">Refresh</button>
         </div>
         <div id="wardrobe-grid" class="wardrobe-grid"></div>
@@ -3978,14 +3980,16 @@ async function loadWardrobeGrid({ force } = {}) {
       const url = item?.asset?.source_url || '';
       const name = item?.name || item?.subcategory || item?.category || 'item';
       const category = item?.category || '';
+      const tagList = Array.isArray(item?.tags) ? item.tags.join(',').toLowerCase() : '';
       const safeUrl = escapeWardrobeHtml(url);
       const safeName = escapeWardrobeHtml(name);
       const safeCat = escapeWardrobeHtml(category);
+      const safeTags = escapeWardrobeHtml(tagList);
       const featuredBadge = item?.featured
         ? '<span class="wardrobe-card-cat" style="background:#fbbf2422;color:#fbbf24;margin-left:4px;">featured</span>'
         : '';
       return `
-        <div class="wardrobe-card" data-url="${safeUrl}" data-name="${safeName}" data-cat="${safeCat}" title="${safeName} — ${safeCat}">
+        <div class="wardrobe-card" data-url="${safeUrl}" data-name="${safeName}" data-cat="${safeCat}" data-tags="${safeTags}" title="${safeName} — ${safeCat}">
           ${url
             ? `<img class="wardrobe-card-img" src="${safeUrl}" alt="${safeName}" loading="lazy" onerror="this.style.display='none'">`
             : `<div class="wardrobe-card-img" style="display:flex;align-items:center;justify-content:center;color:#555;font-size:10px;">no image</div>`}
@@ -4005,6 +4009,9 @@ async function loadWardrobeGrid({ force } = {}) {
         useWardrobeItem(url, name);
       });
     });
+    // Re-apply any active search filter after the grid has been re-rendered
+    // so the user's typed query keeps filtering the new card set.
+    if (typeof applyWardrobeSearch === 'function') applyWardrobeSearch();
     _wardrobeLoaded = true;
   } catch (e) {
     grid.innerHTML = `<div class="wardrobe-empty" style="color:#ef4444;">Failed to load wardrobe: ${escapeWardrobeHtml(e?.message || String(e))}</div>`;
@@ -4038,6 +4045,37 @@ async function useWardrobeItem(url, name) {
   }
 }
 
+// Client-side search filter for the wardrobe grid. Matches the user's query
+// (case-insensitive substring) against each card's name + category + tag list.
+// Empty query reveals every card. Pure DOM — does not refetch from the API.
+function applyWardrobeSearch() {
+  const q = (document.getElementById('wardrobe-search-input')?.value || '').toLowerCase().trim();
+  document.querySelectorAll('.wardrobe-card').forEach(card => {
+    const name = (card.dataset.name || '').toLowerCase();
+    const cat = (card.dataset.cat || '').toLowerCase();
+    const tags = (card.dataset.tags || '').toLowerCase();
+    const matches = !q || name.includes(q) || cat.includes(q) || tags.includes(q);
+    card.style.display = matches ? '' : 'none';
+  });
+
+  // Show/hide an inline empty-state message when the search hides every card.
+  const visibleCount = Array.from(document.querySelectorAll('.wardrobe-card'))
+    .filter(c => c.style.display !== 'none').length;
+  let emptyMsg = document.getElementById('wardrobe-search-empty');
+  if (q && visibleCount === 0) {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('div');
+      emptyMsg.id = 'wardrobe-search-empty';
+      emptyMsg.style.cssText = 'color:#888;padding:12px;font-style:italic;';
+      emptyMsg.textContent = 'No wardrobe items match search.';
+      document.getElementById('wardrobe-grid')?.appendChild(emptyMsg);
+    }
+    emptyMsg.style.display = '';
+  } else if (emptyMsg) {
+    emptyMsg.style.display = 'none';
+  }
+}
+
 function initWardrobeTab() {
   const panel = document.getElementById('wardrobe-tab');
   if (!panel) return;
@@ -4048,6 +4086,8 @@ function initWardrobeTab() {
   document.getElementById('wardrobe-category-filter')?.addEventListener('change', () => loadWardrobeGrid({ force: true }));
   document.getElementById('wardrobe-featured-only')?.addEventListener('change', () => loadWardrobeGrid({ force: true }));
   document.getElementById('wardrobe-refresh-btn')?.addEventListener('click', () => loadWardrobeGrid({ force: true }));
+  // Client-side search — instant filter, no API roundtrip.
+  document.getElementById('wardrobe-search-input')?.addEventListener('input', applyWardrobeSearch);
 }
 
 // Apply a Darkroom LUT/aesthetic preset by slug. Server-side hidden prompt.
