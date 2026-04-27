@@ -1002,6 +1002,9 @@
           <button type="button" class="action-btn forge-btn" id="wardrobe-forge-btn"
             style="border:none;background:#a78bfa;color:#fff;font-size:0.78rem;padding:4px 10px;border-radius:4px;cursor:pointer;"
             title="Forge a new wardrobe garment from an upload or current image">+ Forge</button>
+          <button type="button" class="action-btn detail-submit-btn" id="detail-submit-open-btn"
+            style="border:none;background:#f472b6;color:#fff;font-size:0.78rem;padding:4px 10px;border-radius:4px;cursor:pointer;"
+            title="Submit a custom detail brush (nipple/areola/cameltoe/etc) for operator approval">+ Detail</button>
         </div>
         <div id="wardrobe-grid" class="wardrobe-grid"></div>
       </details>
@@ -1548,6 +1551,95 @@
         <button type="button" class="btn-cancel" onclick="closeForgeModal()">Cancel</button>
         <button type="button" id="forge-submit-btn" class="btn-save"
           style="background:#a78bfa;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;">Forge</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Submit Detail Brush modal — see darkroom.details.user-asset-submission.
+     Lets a user push a custom detail-brush patch (nipple/areola/cameltoe/etc)
+     into detail_brush_assets with is_hidden=true. An operator manually flips
+     is_hidden=false to approve before the brush enters the public catalog. -->
+<div class="modal-overlay" id="detail-submit-modal">
+  <div class="modal" style="max-width:560px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <h2 style="margin:0;">Submit Detail Brush</h2>
+      <button class="modal-close" onclick="closeDetailSubmitModal()" style="background:none;border:none;color:#888;font-size:1.4rem;cursor:pointer;line-height:1;padding:0 4px;">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="forge-row" style="color:#888;font-size:0.78rem;margin-bottom:10px;">
+        Submitted brushes are hidden by default. An operator approves them
+        before they appear in the public detail-brush catalog.
+      </div>
+
+      <div class="forge-row">
+        <label>Image URL</label>
+        <input type="text" id="detail-submit-url"
+          placeholder="https://... (or upload a file below)"
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px 10px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <div class="forge-row" style="margin-top:8px;">
+        <label>...or upload a file</label>
+        <input type="file" id="detail-submit-file" accept="image/*"
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Slug <span style="color:#666;font-weight:400;">(URL-safe id, lowercase a-z 0-9 dash, 3-60 chars)</span></label>
+        <input type="text" id="detail-submit-slug" pattern="[a-z0-9-]+" maxlength="60"
+          placeholder="nipple-puffy-large"
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px 10px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Label</label>
+        <input type="text" id="detail-submit-label"
+          placeholder="Puffy Nipple — Large"
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px 10px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Category</label>
+        <select id="detail-submit-category"
+          style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 10px;border-radius:8px;font-size:0.85rem;width:100%;">
+          <option value="anatomical">Anatomical</option>
+          <option value="fabric">Fabric</option>
+          <option value="lighting">Lighting</option>
+          <option value="fx">FX</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Brush prompt</label>
+        <textarea id="detail-submit-prompt" rows="3"
+          placeholder="add puffy nipple, photorealistic, soft skin texture..."
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px 10px;border-radius:6px;width:100%;font-size:0.85rem;font-family:inherit;resize:vertical;"></textarea>
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Engine</label>
+        <select id="detail-submit-engine"
+          style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 10px;border-radius:8px;font-size:0.85rem;width:100%;">
+          <option value="brush">Brush (Flux Fill)</option>
+          <option value="strip">Strip (P-Edit)</option>
+          <option value="lens">Lens (Grok)</option>
+        </select>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:0.82rem;margin-top:14px;">
+        <input type="checkbox" id="detail-submit-nsfw" checked>
+        NSFW content
+      </label>
+
+      <div id="detail-submit-status"
+        style="margin-top:14px;font-size:0.85rem;color:#aaa;min-height:1.2em;"></div>
+
+      <div class="modal-actions" style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+        <button type="button" class="btn-cancel" onclick="closeDetailSubmitModal()">Cancel</button>
+        <button type="button" id="detail-submit-btn" class="btn-save primary-action"
+          style="background:#f472b6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;">Submit for Approval</button>
       </div>
     </div>
   </div>
@@ -4594,7 +4686,9 @@ function initWardrobeTab() {
   });
   // Forge button — opens the modal that drives /api/wardrobe/forge.
   document.getElementById('wardrobe-forge-btn')?.addEventListener('click', openForgeModal);
+  document.getElementById('detail-submit-open-btn')?.addEventListener('click', openDetailSubmitModal);
   initForgeModal();
+  initDetailSubmitModal();
 }
 
 // --- Wardrobe Forge ---
@@ -4759,6 +4853,114 @@ async function submitForge() {
   } finally {
     btn.disabled = false;
     _forgeBusy = false;
+  }
+}
+
+// --- Submit Detail Brush ------------------------------------------------------
+// User-submitted detail-brush patch flow. Calls POST /api/details/submit.
+// Submission lands as is_hidden=true so an operator must manually flip the
+// flag before it appears in the public detail-brush catalog.
+// See darkroom.details.user-asset-submission.
+
+let _detailSubmitBusy = false;
+let _detailSubmitInited = false;
+
+function openDetailSubmitModal() {
+  const modal = document.getElementById('detail-submit-modal');
+  if (!modal) return;
+  modal.classList.add('active');
+  // Reset status + clear any stale form state. Don't wipe field values on
+  // open — the user may have prefilled and re-opened the modal.
+  const status = document.getElementById('detail-submit-status');
+  if (status) { status.innerText = ''; status.style.color = '#aaa'; }
+}
+
+function closeDetailSubmitModal() {
+  const modal = document.getElementById('detail-submit-modal');
+  if (!modal) return;
+  modal.classList.remove('active');
+  const status = document.getElementById('detail-submit-status');
+  if (status) { status.innerText = ''; status.style.color = '#aaa'; }
+}
+
+function initDetailSubmitModal() {
+  if (_detailSubmitInited) return;
+  _detailSubmitInited = true;
+  document.getElementById('detail-submit-btn')?.addEventListener('click', submitDetailBrush);
+}
+
+async function submitDetailBrush() {
+  if (_detailSubmitBusy) return;
+  const status = document.getElementById('detail-submit-status');
+  const btn = document.getElementById('detail-submit-btn');
+  if (!status || !btn) return;
+
+  _detailSubmitBusy = true;
+  btn.disabled = true;
+  status.style.color = '#aaa';
+  status.innerText = 'Submitting...';
+
+  try {
+    let assetUrl = (document.getElementById('detail-submit-url')?.value || '').trim();
+    const file = document.getElementById('detail-submit-file')?.files?.[0];
+
+    // If no URL was pasted but a file was picked, push it through /api/uploads
+    // first and use the resulting public URL. uploadAsset() is the project's
+    // existing helper for this exact pattern (see Forge flow).
+    if (!assetUrl && file) {
+      status.innerText = 'Uploading file...';
+      const uploaded = await uploadAsset(file, { folder: 'uploads' });
+      assetUrl = uploaded?.url || '';
+      if (!assetUrl) throw new Error('upload returned no url');
+    }
+    if (!assetUrl) throw new Error('Provide an image URL or upload a file');
+
+    const slug = (document.getElementById('detail-submit-slug')?.value || '').trim();
+    const label = (document.getElementById('detail-submit-label')?.value || '').trim();
+    const category = document.getElementById('detail-submit-category')?.value || 'anatomical';
+    const prompt = (document.getElementById('detail-submit-prompt')?.value || '').trim();
+    const engineDefault = document.getElementById('detail-submit-engine')?.value || 'brush';
+    const isNsfw = !!document.getElementById('detail-submit-nsfw')?.checked;
+
+    if (!slug) throw new Error('Slug is required');
+    if (!label) throw new Error('Label is required');
+    if (!prompt) throw new Error('Brush prompt is required');
+
+    const body = {
+      asset_url: assetUrl,
+      slug,
+      label,
+      category,
+      prompt,
+      engine_default: engineDefault,
+      is_nsfw: isNsfw,
+    };
+
+    status.innerText = 'Saving submission...';
+    const resp = await fetch('/api/details/submit', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      // 409 = slug collision; surface a friendlier message than the raw error.
+      if (resp.status === 409) {
+        throw new Error(`Slug "${slug}" already exists — pick a different one`);
+      }
+      throw new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
+    }
+
+    const idShort = data.item?.id ? String(data.item.id).slice(0, 8) : '?';
+    status.style.color = '#22c55e';
+    status.innerText = `Submitted (id ${idShort}). Awaiting operator approval.`;
+    setTimeout(closeDetailSubmitModal, 1500);
+  } catch (e) {
+    status.style.color = '#ef4444';
+    status.innerText = 'Failed: ' + (e?.message || String(e));
+  } finally {
+    btn.disabled = false;
+    _detailSubmitBusy = false;
   }
 }
 

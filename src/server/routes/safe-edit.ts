@@ -354,6 +354,32 @@ export async function handleSafeEditRoutes(
     return handleWardrobeForge(req);
   }
 
+  // ---------------------------------------------------------------------------
+  // User-submitted detail brushes
+  //
+  //   POST /api/details/submit       Insert a user's custom detail-brush row
+  //                                   into detail_brush_assets with
+  //                                   is_hidden=true. Operator must flip the
+  //                                   flag (manual SQL) before the brush
+  //                                   appears in the public catalog.
+  //
+  //   GET  /api/details/submissions  List submissions matching ?is_hidden=
+  //                                   (default true → pending). v1 has no
+  //                                   per-user filter; detail_brush_assets
+  //                                   does not yet carry user_id.
+  //
+  // See darkroom.details.user-asset-submission.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/details/submit" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleDetailSubmit(req);
+  }
+
+  if (url.pathname === "/api/details/submissions" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleDetailSubmissions(url);
+  }
+
   // Multi-angle variant routes — POST to add an angle, DELETE to remove one.
   // Path shape: /api/wardrobe/:id/angles[/:angle]. The id segment must look
   // like a uuid so we don't shadow other /api/wardrobe/* routes.
@@ -6403,6 +6429,272 @@ async function handleWatchRoute(
   } catch (err: any) {
     return Response.json(
       { error: err?.message || "watch routing failed" },
+      { status: 500 }
+    );
+  }
+}
+
+// =============================================================================
+// User-submitted detail brushes
+//
+// POST /api/details/submit  inserts a row into detail_brush_assets with
+// is_hidden=true so an operator must approve before the brush appears in the
+// public catalog. The asset_url is stored on the row's params jsonb (under
+// `submitted_asset_url`) — detail_brush_assets has no preview_asset_url
+// column, but params is jsonb, so this keeps the migration untouched.
+//
+// GET  /api/details/submissions  returns the rows matching ?is_hidden= so the
+// submitting client can poll their own submissions. v1 has no user_id column
+// on detail_brush_assets, so this endpoint returns ALL rows matching the
+// filter — sufficient for the immediate "did my submission go through" UX.
+// Per-user scoping is a future task once detail_brush_assets carries owner.
+//
+// Rate-limiting / abuse prevention: TODO. There is no per-IP, per-user, or
+// per-slug throttle today. The is_hidden gate is the only safety net — an
+// abusive submission can fill the table but cannot pollute the public
+// catalog without manual approval.
+// =============================================================================
+
+const DETAIL_SUBMIT_VALID_CATEGORIES = new Set([
+  "anatomical",
+  "fabric",
+  "lighting",
+  "fx",
+  "custom",
+]);
+
+const DETAIL_SUBMIT_VALID_ENGINES = new Set(["brush", "strip", "lens"]);
+
+const DETAIL_SUBMIT_SLUG_RE = /^[a-z0-9-]+$/;
+
+async function handleDetailSubmit(req: Request): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const body: any = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+
+    const assetUrl =
+      typeof body.asset_url === "string" ? body.asset_url.trim() : "";
+    const slug = typeof body.slug === "string" ? body.slug.trim() : "";
+    const label = typeof body.label === "string" ? body.label.trim() : "";
+    const category =
+      typeof body.category === "string" ? body.category.trim() : "";
+    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    const negativePrompt =
+      typeof body.negative_prompt === "string"
+        ? body.negative_prompt.trim()
+        : "";
+    const engineDefault =
+      typeof body.engine_default === "string" && body.engine_default.trim()
+        ? body.engine_default.trim()
+        : "brush";
+    // NSFW defaults to true — these brushes are typically nipple/areola/
+    // cameltoe content, hence the "submit detail" flow exists at all.
+    const isNsfw = body.is_nsfw === undefined ? true : Boolean(body.is_nsfw);
+    const params =
+      body.params && typeof body.params === "object" && !Array.isArray(body.params)
+        ? (body.params as Record<string, any>)
+        : {};
+
+    // Required fields
+    if (!assetUrl) {
+      return Response.json(
+        { error: "asset_url required", field: "asset_url" },
+        { status: 400 }
+      );
+    }
+    if (!slug) {
+      return Response.json(
+        { error: "slug required", field: "slug" },
+        { status: 400 }
+      );
+    }
+    if (!label) {
+      return Response.json(
+        { error: "label required", field: "label" },
+        { status: 400 }
+      );
+    }
+    if (!category) {
+      return Response.json(
+        { error: "category required", field: "category" },
+        { status: 400 }
+      );
+    }
+    if (!prompt) {
+      return Response.json(
+        { error: "prompt required", field: "prompt" },
+        { status: 400 }
+      );
+    }
+
+    // Format / enum validation
+    if (!DETAIL_SUBMIT_SLUG_RE.test(slug) || slug.length < 3 || slug.length > 60) {
+      return Response.json(
+        {
+          error:
+            "slug must match /^[a-z0-9-]+$/ and be 3-60 characters",
+          field: "slug",
+        },
+        { status: 400 }
+      );
+    }
+    if (!DETAIL_SUBMIT_VALID_CATEGORIES.has(category)) {
+      return Response.json(
+        {
+          error: `invalid category — valid: ${[
+            ...DETAIL_SUBMIT_VALID_CATEGORIES,
+          ].join(" | ")}`,
+          field: "category",
+        },
+        { status: 400 }
+      );
+    }
+    if (!DETAIL_SUBMIT_VALID_ENGINES.has(engineDefault)) {
+      return Response.json(
+        {
+          error: `invalid engine_default — valid: ${[
+            ...DETAIL_SUBMIT_VALID_ENGINES,
+          ].join(" | ")}`,
+          field: "engine_default",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Merge user-supplied params with required fields. The asset_url and
+    // submission marker live on params jsonb because detail_brush_assets has
+    // no first-class column for either — but params is purpose-built for
+    // engine-specific overrides + arbitrary metadata.
+    const mergedParams: Record<string, any> = {
+      ...params,
+      submitted_asset_url: assetUrl,
+      is_user_submission: true,
+      submitted_at: new Date().toISOString(),
+    };
+
+    const nowIso = new Date().toISOString();
+    const row: Record<string, any> = {
+      slug,
+      label,
+      category,
+      prompt,
+      engine_default: engineDefault,
+      params: mergedParams,
+      // v1 hard-rule: every user submission lands hidden. Operator approval
+      // (manual SQL flip) gates public visibility.
+      is_hidden: true,
+      is_nsfw: isNsfw,
+      featured: false,
+      // 999 puts new submissions at the end of any per-category ordering
+      // until an operator reorders them.
+      position: 999,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    if (negativePrompt) row.negative_prompt = negativePrompt;
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/detail_brush_assets`, {
+      method: "POST",
+      headers: supaHeaders(),
+      body: JSON.stringify(row),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      // PostgREST surfaces unique-violation as 409 with code 23505.
+      if (
+        res.status === 409 ||
+        errText.includes("23505") ||
+        /duplicate key/i.test(errText)
+      ) {
+        return Response.json(
+          { error: "slug_already_exists", slug, detail: errText },
+          { status: 409 }
+        );
+      }
+      return Response.json(
+        { error: "detail_submit_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+    const created = await res.json();
+    const item = Array.isArray(created) ? created[0] : created;
+
+    return Response.json({ ok: true, item }, { status: 201 });
+  } catch (err: any) {
+    return Response.json(
+      { error: "detail_submit_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleDetailSubmissions(url: URL): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    // ?is_hidden=false explicitly opts into the approved-list view; default
+    // is is_hidden=true (pending submissions). Anything else falls back to
+    // pending.
+    const isHiddenParam = url.searchParams.get("is_hidden");
+    const isHidden = isHiddenParam === "false" ? false : true;
+
+    const qs = new URLSearchParams();
+    qs.set("is_hidden", `eq.${isHidden}`);
+    qs.set("order", "created_at.desc");
+    qs.set("limit", "200");
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/detail_brush_assets?${qs.toString()}`,
+      {
+        // Prefer: count=exact returns the total count in Content-Range so the
+        // client knows how many submissions are pending without re-querying.
+        headers: { ...supaHeaders(), Prefer: "count=exact" },
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      // Table may be missing on a fresh install — surface gracefully so the
+      // UI can show "no submissions yet" instead of an opaque 500.
+      if (res.status === 404 || /relation .* does not exist/i.test(errText)) {
+        return Response.json({ items: [], count: 0 });
+      }
+      return Response.json(
+        { error: "detail_submissions_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const items = await res.json();
+    // PostgREST returns the count in Content-Range as "0-N/total".
+    let count = Array.isArray(items) ? items.length : 0;
+    const cr = res.headers.get("Content-Range");
+    if (cr) {
+      const slash = cr.indexOf("/");
+      if (slash >= 0) {
+        const totalStr = cr.slice(slash + 1).trim();
+        const total = parseInt(totalStr, 10);
+        if (Number.isFinite(total)) count = total;
+      }
+    }
+
+    return Response.json({
+      items: Array.isArray(items) ? items : [],
+      count,
+      is_hidden: isHidden,
+    });
+  } catch (err: any) {
+    return Response.json(
+      { error: "detail_submissions_error", detail: err?.message || String(err) },
       { status: 500 }
     );
   }
