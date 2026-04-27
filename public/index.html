@@ -897,6 +897,9 @@
           <input id="wardrobe-search-input" type="text" placeholder="Search wardrobe..."
             style="background:#1a1a1a;color:#f5f5f5;border:1px solid #2a2a2a;padding:4px 8px;border-radius:4px;flex:1;min-width:120px;" />
           <button type="button" class="action-btn" id="wardrobe-refresh-btn" style="border-color:#f472b6;color:#f472b6;font-size:0.78rem;padding:4px 10px;">Refresh</button>
+          <button type="button" class="action-btn forge-btn" id="wardrobe-forge-btn"
+            style="border:none;background:#a78bfa;color:#fff;font-size:0.78rem;padding:4px 10px;border-radius:4px;cursor:pointer;"
+            title="Forge a new wardrobe garment from an upload or current image">+ Forge</button>
         </div>
         <div id="wardrobe-grid" class="wardrobe-grid"></div>
       </details>
@@ -1353,6 +1356,96 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeLutExtractModal()">Close</button>
         <button id="lut-extract-btn" class="btn-save" onclick="runLutExtract()">Extract LUT</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Forge Wardrobe Garment modal — see darkroom.active.wardrobe-forge-mvp.
+     Three modes (upload / from_image / generate-deferred). On submit, calls
+     POST /api/wardrobe/forge which (1) uploads or crops, (2) bg-strips via
+     BiRefNet, (3) inserts an assets row, (4) inserts a wardrobe row pointing
+     at it. On success, the wardrobe grid auto-reloads to surface the new card. -->
+<div class="modal-overlay" id="forge-modal">
+  <div class="modal" style="max-width:560px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <h2 style="margin:0;">Forge Wardrobe Garment</h2>
+      <button class="modal-close" onclick="closeForgeModal()" style="background:none;border:none;color:#888;font-size:1.4rem;cursor:pointer;line-height:1;padding:0 4px;">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="forge-mode-tabs"
+        style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid #2a2a2a;padding-bottom:8px;">
+        <button type="button" class="forge-tab active" data-mode="upload"
+          style="background:#a78bfa22;color:#a78bfa;border:1px solid #a78bfa;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:0.85rem;">Upload PNG/JPG</button>
+        <button type="button" class="forge-tab" data-mode="from_image"
+          style="background:#1a1a1a;color:#888;border:1px solid #2a2a2a;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:0.85rem;">From Current Image</button>
+      </div>
+
+      <div class="forge-mode-panel" data-panel="upload">
+        <label>Image file (transparent PNG ideal; we'll bg-strip otherwise)</label>
+        <input type="file" id="forge-file-input" accept="image/png,image/jpeg,image/webp"
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <div class="forge-mode-panel" data-panel="from_image" style="display:none;">
+        <label>Pick a version from the current edit stack</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="forge-version-select"
+            style="flex:1;background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 10px;border-radius:8px;font-size:0.85rem;"></select>
+          <img id="forge-version-preview" alt="preview"
+            style="width:64px;height:64px;border-radius:6px;object-fit:cover;border:1px solid #333;background:#0a0a0a;">
+        </div>
+        <div style="color:#888;font-size:0.78rem;margin-top:6px;">
+          Background will be stripped after extraction.
+        </div>
+      </div>
+
+      <div class="forge-row" style="margin-top:14px;">
+        <label>Category</label>
+        <select id="forge-category"
+          style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 10px;border-radius:8px;font-size:0.85rem;width:100%;">
+          <option value="top">Top</option>
+          <option value="bottom">Bottom</option>
+          <option value="dress">Dress</option>
+          <option value="lingerie">Lingerie</option>
+          <option value="outerwear">Outerwear</option>
+          <option value="swimwear">Swimwear</option>
+          <option value="accessory">Accessory</option>
+          <option value="footwear">Footwear</option>
+          <option value="hosiery">Hosiery</option>
+        </select>
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Subcategory <span style="color:#666;font-weight:400;">(optional)</span></label>
+        <input type="text" id="forge-subcategory" placeholder="crop tank, bralette, thong..."
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px 10px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Name <span style="color:#666;font-weight:400;">(optional)</span></label>
+        <input type="text" id="forge-name" placeholder="silk crop tank — black"
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px 10px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <div class="forge-row" style="margin-top:12px;">
+        <label>Tags <span style="color:#666;font-weight:400;">(comma-separated)</span></label>
+        <input type="text" id="forge-tags" placeholder="silk, crop, black"
+          style="background:#1a1a1a;color:#e0e0e0;border:1px solid #333;padding:8px 10px;border-radius:6px;width:100%;font-size:0.85rem;">
+      </div>
+
+      <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:0.82rem;margin-top:14px;">
+        <input type="checkbox" id="forge-skip-bg-strip">
+        Skip background strip (image is already transparent)
+      </label>
+
+      <div id="forge-status"
+        style="margin-top:14px;font-size:0.85rem;color:#aaa;min-height:1.2em;"></div>
+
+      <div class="modal-actions" style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+        <button type="button" class="btn-cancel" onclick="closeForgeModal()">Cancel</button>
+        <button type="button" id="forge-submit-btn" class="btn-save"
+          style="background:#a78bfa;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;">Forge</button>
       </div>
     </div>
   </div>
@@ -4088,6 +4181,174 @@ function initWardrobeTab() {
   document.getElementById('wardrobe-refresh-btn')?.addEventListener('click', () => loadWardrobeGrid({ force: true }));
   // Client-side search — instant filter, no API roundtrip.
   document.getElementById('wardrobe-search-input')?.addEventListener('input', applyWardrobeSearch);
+  // Forge button — opens the modal that drives /api/wardrobe/forge.
+  document.getElementById('wardrobe-forge-btn')?.addEventListener('click', openForgeModal);
+  initForgeModal();
+}
+
+// --- Wardrobe Forge ---
+// Three-mode garment-add flow. Calls POST /api/wardrobe/forge which performs
+// bg-strip + assets-insert + wardrobe-insert in one request. After success the
+// wardrobe grid auto-refreshes so the new garment shows up immediately.
+
+let _forgeMode = 'upload';
+let _forgeBusy = false;
+let _forgeInited = false;
+
+function openForgeModal() {
+  const modal = document.getElementById('forge-modal');
+  if (!modal) return;
+  modal.classList.add('active');
+  setForgeMode('upload');
+  populateForgeVersionSelect();
+  // Clear any prior status text + selections.
+  const status = document.getElementById('forge-status');
+  if (status) status.innerText = '';
+  const fileInput = document.getElementById('forge-file-input');
+  if (fileInput) fileInput.value = '';
+}
+
+function closeForgeModal() {
+  const modal = document.getElementById('forge-modal');
+  if (!modal) return;
+  modal.classList.remove('active');
+  const status = document.getElementById('forge-status');
+  if (status) status.innerText = '';
+}
+
+function setForgeMode(mode) {
+  _forgeMode = mode;
+  document.querySelectorAll('.forge-tab').forEach(t => {
+    const active = t.dataset.mode === mode;
+    t.classList.toggle('active', active);
+    if (active) {
+      t.style.background = '#a78bfa22';
+      t.style.color = '#a78bfa';
+      t.style.borderColor = '#a78bfa';
+    } else {
+      t.style.background = '#1a1a1a';
+      t.style.color = '#888';
+      t.style.borderColor = '#2a2a2a';
+    }
+  });
+  document.querySelectorAll('.forge-mode-panel').forEach(p => {
+    p.style.display = p.dataset.panel === mode ? '' : 'none';
+  });
+}
+
+function populateForgeVersionSelect() {
+  const sel = document.getElementById('forge-version-select');
+  const preview = document.getElementById('forge-version-preview');
+  if (!sel) return;
+  const stack = (typeof versionStack !== 'undefined' ? versionStack : []) || [];
+  sel.innerHTML = '';
+  if (stack.length === 0) {
+    const opt = new Option('No versions yet — generate or upload first', '');
+    opt.disabled = true;
+    sel.appendChild(opt);
+    if (preview) preview.src = '';
+    return;
+  }
+  stack.forEach((v, i) => {
+    const label = v?.label ? `v${i + 1} — ${v.label}` : `v${i + 1}`;
+    sel.appendChild(new Option(label, v?.url || ''));
+  });
+  // Default to the latest version.
+  sel.selectedIndex = stack.length - 1;
+  if (preview) preview.src = stack[sel.selectedIndex]?.url || '';
+}
+
+function initForgeModal() {
+  if (_forgeInited) return;
+  _forgeInited = true;
+  document.querySelectorAll('.forge-tab').forEach(t => {
+    t.addEventListener('click', () => setForgeMode(t.dataset.mode));
+  });
+  document.getElementById('forge-version-select')?.addEventListener('change', e => {
+    const preview = document.getElementById('forge-version-preview');
+    if (preview) preview.src = e.target.value || '';
+  });
+  document.getElementById('forge-submit-btn')?.addEventListener('click', submitForge);
+}
+
+async function submitForge() {
+  if (_forgeBusy) return;
+  const status = document.getElementById('forge-status');
+  const btn = document.getElementById('forge-submit-btn');
+  if (!status || !btn) return;
+
+  _forgeBusy = true;
+  btn.disabled = true;
+  status.style.color = '#aaa';
+  status.innerText = 'Forging garment...';
+
+  const category = document.getElementById('forge-category')?.value || 'top';
+  const subcategory = (document.getElementById('forge-subcategory')?.value || '').trim();
+  const name = (document.getElementById('forge-name')?.value || '').trim();
+  const tagsRaw = document.getElementById('forge-tags')?.value || '';
+  const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const skipBgStrip = !!document.getElementById('forge-skip-bg-strip')?.checked;
+
+  try {
+    let body;
+    if (_forgeMode === 'upload') {
+      const file = document.getElementById('forge-file-input')?.files?.[0];
+      if (!file) throw new Error('Please pick a file to upload');
+      status.innerText = 'Uploading file...';
+      // Push raw bytes to the existing upload endpoint, then forge from the URL.
+      const uploaded = await uploadAsset(file, { folder: 'garments' });
+      const assetUrl = uploaded?.url;
+      if (!assetUrl) throw new Error('upload returned no url');
+      body = {
+        mode: 'upload',
+        asset_url: assetUrl,
+        category,
+        subcategory: subcategory || undefined,
+        name: name || undefined,
+        tags,
+        skip_bg_strip: skipBgStrip || undefined,
+      };
+      status.innerText = 'Stripping background + saving...';
+    } else if (_forgeMode === 'from_image') {
+      const sourceUrl = document.getElementById('forge-version-select')?.value || '';
+      if (!sourceUrl) throw new Error('Pick a version from the stack');
+      body = {
+        mode: 'from_image',
+        source_url: sourceUrl,
+        category,
+        subcategory: subcategory || undefined,
+        name: name || undefined,
+        tags,
+        skip_bg_strip: skipBgStrip || undefined,
+      };
+      status.innerText = 'Stripping background + saving...';
+    } else {
+      throw new Error(`Unsupported mode: ${_forgeMode}`);
+    }
+
+    const resp = await fetch('/api/wardrobe/forge', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      throw new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
+    }
+
+    status.style.color = '#22c55e';
+    status.innerText = 'Forged. Reloading wardrobe...';
+    if (typeof loadWardrobeGrid === 'function') {
+      try { await loadWardrobeGrid({ force: true }); } catch (_) { /* non-fatal */ }
+    }
+    setTimeout(closeForgeModal, 600);
+  } catch (e) {
+    status.style.color = '#ef4444';
+    status.innerText = 'Failed: ' + (e?.message || String(e));
+  } finally {
+    btn.disabled = false;
+    _forgeBusy = false;
+  }
 }
 
 // Apply a Darkroom LUT/aesthetic preset by slug. Server-side hidden prompt.

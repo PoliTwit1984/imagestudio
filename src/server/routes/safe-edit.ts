@@ -299,6 +299,11 @@ export async function handleSafeEditRoutes(
     return handleWardrobeCreate(req);
   }
 
+  if (url.pathname === "/api/wardrobe/forge" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleWardrobeForge(req);
+  }
+
   return null;
 }
 
@@ -4785,6 +4790,355 @@ async function handleWardrobeCreate(req: Request): Promise<Response> {
   } catch (err: any) {
     return Response.json(
       { error: "wardrobe_create_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+// =============================================================================
+// Wardrobe Forge — POST /api/wardrobe/forge
+//
+// Single endpoint that ties bg-strip + asset insert + wardrobe insert into one
+// call so the UI doesn't need to chain four requests. Three modes:
+//
+//   mode='upload'      — caller already pushed bytes via POST /api/uploads and
+//                        gives us the resulting public URL. We optionally
+//                        bg-strip (FAL BiRefNet via the same path /api/remove-bg
+//                        uses), persist as an `assets` row (asset_type='curated'),
+//                        and link it from a fresh `wardrobe` row.
+//
+//   mode='from_image'  — caller picks an existing image (e.g. a version-stack
+//                        URL) and optionally a crop region. We crop with sharp,
+//                        re-upload, bg-strip the result, then continue exactly
+//                        like 'upload'.
+//
+//   mode='generate'    — DEFERRED. Returns 501. Generating a transparent
+//                        garment from a prompt requires a tuned t2i + post-
+//                        process chain that v1 does not ship. The client UI
+//                        does not expose this mode either; the handler stub
+//                        exists for forward-compat only.
+//
+// Response (success): { ok: true, wardrobe, asset, preview_url }
+// Errors return JSON { error, detail? } with appropriate status.
+// =============================================================================
+
+const FORGE_VALID_CATEGORIES = WARDROBE_VALID_CATEGORIES;
+
+async function handleWardrobeForge(req: Request): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const { uploadToStorage, buildUploadPath } = await import("../supabase");
+
+    const body: any = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+
+    const mode = String(body.mode || "").trim();
+    if (!mode) {
+      return Response.json({ error: "mode required", field: "mode" }, { status: 400 });
+    }
+
+    // 'generate' is intentionally not implemented in v1 — see header comment.
+    if (mode === "generate") {
+      return Response.json(
+        {
+          error: "generate mode is a future feature; use upload or from_image",
+          mode,
+        },
+        { status: 501 }
+      );
+    }
+
+    if (mode !== "upload" && mode !== "from_image") {
+      return Response.json(
+        { error: `unknown mode '${mode}' — valid: upload | from_image | generate`, field: "mode" },
+        { status: 400 }
+      );
+    }
+
+    const category = typeof body.category === "string" ? body.category.trim() : "";
+    if (!category) {
+      return Response.json({ error: "category required", field: "category" }, { status: 400 });
+    }
+    // Soft validation — wardrobe table accepts free-text categories. We only
+    // warn through the response.
+    const categoryKnown = FORGE_VALID_CATEGORIES.has(category);
+
+    const subcategory = typeof body.subcategory === "string" ? body.subcategory.trim() : "";
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const tags: string[] = Array.isArray(body.tags)
+      ? body.tags.filter((t: any) => typeof t === "string" && t.trim()).map((t: string) => t.trim())
+      : [];
+
+    // Resolve the input URL for bg-strip:
+    //   upload     → asset_url (already an uploaded public URL)
+    //   from_image → source_url, optionally cropped via sharp first
+    let workingUrl = "";
+    let sourceLabel = "";
+
+    if (mode === "upload") {
+      const assetUrl = typeof body.asset_url === "string" ? body.asset_url.trim() : "";
+      if (!assetUrl) {
+        return Response.json({ error: "asset_url required for upload mode", field: "asset_url" }, { status: 400 });
+      }
+      workingUrl = assetUrl;
+      sourceLabel = "upload";
+    } else {
+      // from_image
+      const sourceUrl = typeof body.source_url === "string" ? body.source_url.trim() : "";
+      if (!sourceUrl) {
+        return Response.json({ error: "source_url required for from_image mode", field: "source_url" }, { status: 400 });
+      }
+
+      const region = body.region;
+      if (region && typeof region === "object" &&
+          Number.isFinite(region.x) && Number.isFinite(region.y) &&
+          Number.isFinite(region.width) && Number.isFinite(region.height) &&
+          region.width > 0 && region.height > 0) {
+        // Crop with sharp, re-upload to garments/ as the new working URL.
+        try {
+          const sharp = (await import("sharp")).default;
+          const dl = await fetch(sourceUrl);
+          if (!dl.ok) {
+            return Response.json(
+              { error: "source_fetch_failed", detail: `HTTP ${dl.status}` },
+              { status: 400 }
+            );
+          }
+          const sourceBuf = Buffer.from(await dl.arrayBuffer());
+          const meta = await sharp(sourceBuf).metadata();
+          const W = meta.width || 0;
+          const H = meta.height || 0;
+          // Clamp the region so we don't ask sharp to extract beyond the bounds.
+          const left = Math.max(0, Math.min(W - 1, Math.floor(region.x)));
+          const top = Math.max(0, Math.min(H - 1, Math.floor(region.y)));
+          const width = Math.max(1, Math.min(W - left, Math.floor(region.width)));
+          const height = Math.max(1, Math.min(H - top, Math.floor(region.height)));
+          const cropped = await sharp(sourceBuf)
+            .extract({ left, top, width, height })
+            .png()
+            .toBuffer();
+          workingUrl = await uploadBufferToStorage(
+            cropped,
+            "image/png",
+            buildUploadPath,
+            uploadToStorage,
+            "forge-crop"
+          );
+        } catch (err: any) {
+          return Response.json(
+            { error: "crop_failed", detail: err?.message || String(err) },
+            { status: 500 }
+          );
+        }
+      } else {
+        workingUrl = sourceUrl;
+      }
+      sourceLabel = "from_image";
+    }
+
+    // Bg-strip step. Skip if caller asserts the input is already transparent
+    // (saves a FAL hit and round-trip). The /api/remove-bg handler also short-
+    // circuits when alpha looks real, but for already-transparent uploads the
+    // caller can skip cleanly with skip_bg_strip=true.
+    let transparentUrl = workingUrl;
+    let bgStripped = false;
+    let bgStrippedSkipReason: string | null = null;
+    const skipBgStrip = body.skip_bg_strip === true;
+
+    if (skipBgStrip) {
+      bgStrippedSkipReason = "caller_skipped";
+    } else {
+      try {
+        // Probe alpha first — same logic as handleRemoveBg's short-circuit.
+        // If the image already has real transparency, just keep it.
+        const sharp = (await import("sharp")).default;
+        const probe = await fetch(workingUrl);
+        if (probe.ok) {
+          const probeBuf = Buffer.from(await probe.arrayBuffer());
+          const meta = await sharp(probeBuf).metadata();
+          if (meta.hasAlpha) {
+            const alphaStats = await sharp(probeBuf).extractChannel("alpha").stats();
+            const alphaChannel = alphaStats.channels[0];
+            if (alphaChannel && alphaChannel.min < 250) {
+              bgStrippedSkipReason = "already_transparent";
+            }
+          }
+        }
+      } catch {
+        // Probe failure non-fatal — fall through to BiRefNet.
+      }
+
+      if (!bgStrippedSkipReason) {
+        try {
+          const cutoutRes = await fetch("https://fal.run/fal-ai/birefnet/v2", {
+            method: "POST",
+            headers: {
+              Authorization: `Key ${env("FAL_API_KEY")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ image_url: workingUrl, output_format: "png" }),
+          });
+          if (!cutoutRes.ok) {
+            const errText = (await cutoutRes.text()).slice(0, 300);
+            return Response.json(
+              { error: "bg_strip_failed", detail: `Cutout ${cutoutRes.status}: ${errText}` },
+              { status: 502 }
+            );
+          }
+          const cutoutData = await cutoutRes.json();
+          const remoteUrl = cutoutData.image?.url || cutoutData.images?.[0]?.url;
+          if (!remoteUrl) {
+            return Response.json(
+              { error: "bg_strip_failed", detail: "Cutout returned no image" },
+              { status: 502 }
+            );
+          }
+          // Re-host so it doesn't expire and is CORS-friendly for the canvas.
+          const dl = await fetch(remoteUrl);
+          if (!dl.ok) {
+            return Response.json(
+              { error: "bg_strip_failed", detail: `download ${dl.status}` },
+              { status: 502 }
+            );
+          }
+          const buf = Buffer.from(await dl.arrayBuffer());
+          transparentUrl = await uploadBufferToStorage(
+            buf,
+            "image/png",
+            buildUploadPath,
+            uploadToStorage,
+            "forge-cutout"
+          );
+          bgStripped = true;
+        } catch (err: any) {
+          return Response.json(
+            { error: "bg_strip_error", detail: err?.message || String(err) },
+            { status: 500 }
+          );
+        }
+      }
+    }
+
+    // Pull dims off the final transparent PNG so the assets row carries
+    // width/height (the wardrobe grid pre-allocates space without re-decoding).
+    let finalWidth: number | null = null;
+    let finalHeight: number | null = null;
+    try {
+      const sharp = (await import("sharp")).default;
+      const dl = await fetch(transparentUrl);
+      if (dl.ok) {
+        const buf = Buffer.from(await dl.arrayBuffer());
+        const meta = await sharp(buf).metadata();
+        finalWidth = meta.width || null;
+        finalHeight = meta.height || null;
+      }
+    } catch {
+      // dims are nice-to-have, not blocking.
+    }
+
+    // Insert assets row. asset_type='curated' is the wardrobe-library bucket
+    // per the migration 0042 comment. Tags get echoed through so search by
+    // garment material/color hits the asset table too.
+    const nowIso = new Date().toISOString();
+    const assetRow: Record<string, any> = {
+      asset_type: "curated",
+      source_url: transparentUrl,
+      mime_type: "image/png",
+      tags,
+      metadata: {
+        forge: {
+          mode: sourceLabel,
+          original_url: workingUrl,
+          bg_stripped: bgStripped,
+          bg_strip_skip_reason: bgStrippedSkipReason,
+        },
+      },
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    if (finalWidth !== null) assetRow.width = finalWidth;
+    if (finalHeight !== null) assetRow.height = finalHeight;
+
+    const assetRes = await fetch(`${SUPABASE_URL}/rest/v1/assets`, {
+      method: "POST",
+      headers: supaHeaders(),
+      body: JSON.stringify(assetRow),
+    });
+    if (!assetRes.ok) {
+      const errText = await assetRes.text();
+      return Response.json(
+        { error: "asset_create_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+    const assetCreated = await assetRes.json();
+    const asset = Array.isArray(assetCreated) ? assetCreated[0] : assetCreated;
+    if (!asset?.id) {
+      return Response.json(
+        { error: "asset_create_failed", detail: "asset row missing id" },
+        { status: 500 }
+      );
+    }
+
+    // Insert wardrobe row pointing at the new asset.
+    const wardrobeRow: Record<string, any> = {
+      asset_id: asset.id,
+      category,
+      tags,
+      attributes: {
+        forge: {
+          mode: sourceLabel,
+          category_known: categoryKnown,
+        },
+      },
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    if (subcategory) wardrobeRow.subcategory = subcategory;
+    if (name) wardrobeRow.name = name;
+
+    const wardrobeRes = await fetch(`${SUPABASE_URL}/rest/v1/wardrobe`, {
+      method: "POST",
+      headers: supaHeaders(),
+      body: JSON.stringify(wardrobeRow),
+    });
+    if (!wardrobeRes.ok) {
+      const errText = await wardrobeRes.text();
+      // FK violation should be impossible (we just created the asset), but
+      // surface it explicitly if it ever happens.
+      if (errText.includes("23503") || /violates foreign key/i.test(errText)) {
+        return Response.json(
+          { error: "asset_not_found", asset_id: asset.id, detail: errText },
+          { status: 422 }
+        );
+      }
+      return Response.json(
+        { error: "wardrobe_create_failed", detail: errText, asset_id: asset.id },
+        { status: 500 }
+      );
+    }
+    const wardrobeCreated = await wardrobeRes.json();
+    const wardrobe = Array.isArray(wardrobeCreated) ? wardrobeCreated[0] : wardrobeCreated;
+
+    return Response.json(
+      {
+        ok: true,
+        wardrobe,
+        asset,
+        preview_url: transparentUrl,
+        bg_stripped: bgStripped,
+        bg_strip_skip_reason: bgStrippedSkipReason,
+      },
+      { status: 201 }
+    );
+  } catch (err: any) {
+    return Response.json(
+      { error: "wardrobe_forge_error", detail: err?.message || String(err) },
       { status: 500 }
     );
   }
