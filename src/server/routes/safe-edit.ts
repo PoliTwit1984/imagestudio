@@ -252,6 +252,88 @@ export async function handleSafeEditRoutes(
     return handleFaceLockDriftCheck(req);
   }
 
+  if (url.pathname === "/api/asset-chain" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+    try {
+      const id = url.searchParams.get("id");
+      const sourceUrl = url.searchParams.get("source_url");
+      if (!id && !sourceUrl) {
+        return Response.json({ error: "id or source_url required" }, { status: 400 });
+      }
+      const headers = supaHeaders();
+
+      // 1. Resolve the seed asset
+      const seedQuery = id
+        ? `id=eq.${encodeFilterValue(id)}`
+        : `source_url=eq.${encodeFilterValue(sourceUrl!)}`;
+      const seedResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/assets?${seedQuery}&select=*&limit=1`,
+        { headers },
+      );
+      if (!seedResp.ok) return Response.json({ error: `seed lookup ${seedResp.status}` }, { status: 502 });
+      const seedRows = await seedResp.json();
+      const seed = seedRows[0];
+      if (!seed) return Response.json({ error: "asset not found" }, { status: 404 });
+
+      // 2. Walk UP via parent_id to find root
+      const ancestors: any[] = [];
+      let cur: any = seed;
+      const seenUp = new Set<string>([seed.id]);
+      let upHops = 0;
+      while (cur?.parent_id && upHops < 20) {
+        if (seenUp.has(cur.parent_id)) break;
+        const parentResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/assets?id=eq.${encodeFilterValue(cur.parent_id)}&select=*&limit=1`,
+          { headers },
+        );
+        if (!parentResp.ok) break;
+        const rows = await parentResp.json();
+        const parent = rows[0];
+        if (!parent) break;
+        ancestors.unshift(parent);
+        seenUp.add(parent.id);
+        cur = parent;
+        upHops++;
+      }
+      const root = ancestors[0] || seed;
+
+      // 3. BFS DOWN from root to collect all descendants
+      const descendants: any[] = [];
+      let frontier = [root.id];
+      const seenDown = new Set<string>([root.id]);
+      let depth = 0;
+      while (frontier.length && depth < 8) {
+        const inList = frontier.map((x) => `"${x}"`).join(",");
+        const childResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/assets?parent_id=in.(${encodeURIComponent(inList)})&select=*&limit=200`,
+          { headers },
+        );
+        if (!childResp.ok) break;
+        const rows = await childResp.json();
+        const fresh = rows.filter((r: any) => !seenDown.has(r.id));
+        if (!fresh.length) break;
+        for (const r of fresh) {
+          descendants.push(r);
+          seenDown.add(r.id);
+        }
+        frontier = fresh.map((r: any) => r.id);
+        depth++;
+      }
+
+      return Response.json({
+        ok: true,
+        seed_id: seed.id,
+        root,
+        nodes: [root, ...descendants.filter((d) => d.id !== root.id)],
+        ancestors_walked: upHops,
+        descendants_found: descendants.filter((d) => d.id !== root.id).length,
+      });
+    } catch (e: any) {
+      return Response.json({ error: e?.message || "asset-chain failed" }, { status: 500 });
+    }
+  }
+
   if (url.pathname === "/api/engine-compatibility" && req.method === "GET") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     // Static map of (engine × content_profile) → verdict. Frontend uses this
