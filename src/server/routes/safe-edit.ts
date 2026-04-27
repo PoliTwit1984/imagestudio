@@ -156,6 +156,11 @@ export async function handleSafeEditRoutes(
     return handleFluxEdit(req, deps);
   }
 
+  if (url.pathname === "/api/analyze-image" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleAnalyzeImage(req);
+  }
+
   if (url.pathname === "/api/engine-compatibility" && req.method === "GET") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     // Static map of (engine × content_profile) → verdict. Frontend uses this
@@ -2048,6 +2053,146 @@ function parseNsfwRegions(output: unknown): NsfwRegion[] {
       }));
   }
   return [];
+}
+
+// -----------------------------------------------------------------------------
+// /api/analyze-image — one-shot Grok Vision content classifier
+//
+// Returns a structured content profile the UI uses to drive engine routing
+// (see GET /api/engine-compatibility for the verdict map). Profile shape:
+//   {
+//     nudity_level: "none" | "implied" | "topless" | "explicit",
+//     face_visible: boolean,
+//     scene_type:   "studio" | "outdoor" | "bedroom" | "bathroom"
+//                  | "abstract" | "other",
+//     subject_count: integer,
+//     content_complexity: "simple" | "moderate" | "complex",
+//     skin_tone_dominant: "light" | "medium" | "dark" | "varied" | "n/a",
+//     explicit_text: boolean
+//   }
+//
+// We also return a `cache_key` (sha256 of image_url) so the UI can dedupe
+// without rehashing on the client.
+// -----------------------------------------------------------------------------
+
+const ANALYZE_IMAGE_SYSTEM_PROMPT = `You are a content classifier. Analyze the image and return a JSON object with:
+{
+  "nudity_level": "none" | "implied" | "topless" | "explicit",
+  "face_visible": boolean,
+  "scene_type": "studio" | "outdoor" | "bedroom" | "bathroom" | "abstract" | "other",
+  "subject_count": integer,
+  "content_complexity": "simple" | "moderate" | "complex",
+  "skin_tone_dominant": "light" | "medium" | "dark" | "varied" | "n/a",
+  "explicit_text": boolean
+}
+Return ONLY the JSON object, no markdown fences, no explanation.`;
+
+const ANALYZE_NUDITY_VALUES = new Set(["none", "implied", "topless", "explicit"]);
+const ANALYZE_SCENE_VALUES = new Set([
+  "studio",
+  "outdoor",
+  "bedroom",
+  "bathroom",
+  "abstract",
+  "other",
+]);
+const ANALYZE_COMPLEXITY_VALUES = new Set(["simple", "moderate", "complex"]);
+const ANALYZE_SKIN_TONE_VALUES = new Set(["light", "medium", "dark", "varied", "n/a"]);
+
+async function sha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder().encode(input);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function handleAnalyzeImage(req: Request): Promise<Response> {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const imageUrl = String(body?.image_url || "").trim();
+    if (!imageUrl) {
+      return Response.json({ error: "image_url required" }, { status: 400 });
+    }
+
+    const cacheKey = await sha256Hex(imageUrl);
+
+    const visionRes = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env("XAI_API_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "grok-4-1-fast-non-reasoning",
+        messages: [
+          { role: "system", content: ANALYZE_IMAGE_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Classify this image. Return ONLY the JSON object." },
+              { type: "image_url", image_url: { url: imageUrl } },
+            ],
+          },
+        ],
+        temperature: 0,
+      }),
+    });
+
+    if (!visionRes.ok) {
+      const errText = await visionRes.text();
+      return Response.json(
+        {
+          error: "vision_failed",
+          status: visionRes.status,
+          detail: errText.slice(0, 400),
+        },
+        { status: 502 }
+      );
+    }
+
+    const visionData = await visionRes.json();
+    const raw = String(visionData?.choices?.[0]?.message?.content || "{}").trim();
+    const cleaned = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      return Response.json(
+        { error: "vision_unparseable", raw: cleaned.slice(0, 400) },
+        { status: 502 }
+      );
+    }
+
+    // Defensive normalization — never trust the model's exact spelling.
+    const nudity = String(parsed.nudity_level || "").toLowerCase();
+    const scene = String(parsed.scene_type || "").toLowerCase();
+    const complexity = String(parsed.content_complexity || "").toLowerCase();
+    const skinTone = String(parsed.skin_tone_dominant || "").toLowerCase();
+
+    const profile = {
+      nudity_level: ANALYZE_NUDITY_VALUES.has(nudity) ? nudity : "none",
+      face_visible: Boolean(parsed.face_visible),
+      scene_type: ANALYZE_SCENE_VALUES.has(scene) ? scene : "other",
+      subject_count: Number.isFinite(parsed.subject_count)
+        ? Math.max(0, Math.round(Number(parsed.subject_count)))
+        : 0,
+      content_complexity: ANALYZE_COMPLEXITY_VALUES.has(complexity)
+        ? complexity
+        : "moderate",
+      skin_tone_dominant: ANALYZE_SKIN_TONE_VALUES.has(skinTone) ? skinTone : "n/a",
+      explicit_text: Boolean(parsed.explicit_text),
+    };
+
+    return Response.json({
+      ok: true,
+      cache_key: cacheKey,
+      content_profile: profile,
+    });
+  } catch (err: any) {
+    return Response.json({ error: err?.message || "analyze_failed" }, { status: 500 });
+  }
 }
 
 // -----------------------------------------------------------------------------

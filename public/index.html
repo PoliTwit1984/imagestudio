@@ -234,6 +234,24 @@
   .edit-status.loading { background: #1a1a2a; border: 1px solid #4158d0; color: #818cf8; }
   .edit-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 
+  /* Smart routing — engine compatibility dots + live caption.
+     Dots colored from the (engine x content_profile) verdict map. */
+  .engine-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle; box-shadow: 0 0 4px currentColor;
+    background: #666; color: #666;
+  }
+  .engine-dot.dot-likely     { background: #22c55e; color: #22c55e; }
+  .engine-dot.dot-may-refuse { background: #f59e0b; color: #f59e0b; }
+  .engine-dot.dot-will-refuse{ background: #ef4444; color: #ef4444; }
+  .engine-dot.dot-loading    { background: #555; color: #555; opacity: 0.6; }
+  .compat-caption {
+    margin-top: 6px; margin-bottom: 8px; font-size: 0.78rem; color: #888;
+    font-style: italic; min-height: 1em;
+  }
+  .compat-caption .compat-good { color: #22c55e; font-style: normal; }
+  .compat-caption .compat-bad  { color: #ef4444; font-style: normal; }
+
   /* Lightbox */
   .lightbox {
     display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -996,16 +1014,21 @@
           <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="AI rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
           <button class="enhance-btn" id="edit-pedit-optimize-btn" onclick="optimizePEditPromptForEdit()" style="font-size:0.78rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669);" title="Rewrite your prompt to match Strip's documented best practices: action verb + target + preservation clause. Recommended when Strip is the selected engine.">Strip</button>
           <select class="edit-engine-select" id="edit-engine-select" title="Lens: img2img re-gen | Frame: composition-preserving NL edit | Strip: no filter, NSFW-permissive | Glance: fast scene swap | Eye: highest fidelity | Brush: auto-mask then surgical inpaint (NSFW-permissive)">
-            <option value="grok">Lens</option>
-            <option value="fal">Frame</option>
-            <option value="pedit">Strip</option>
-            <option value="nano">Glance</option>
-            <option value="gpt">Eye</option>
-            <option value="flux">Brush (auto-mask)</option>
+            <option value="grok" data-engine-key="lens">Lens</option>
+            <option value="fal" data-engine-key="frame">Frame</option>
+            <option value="pedit" data-engine-key="strip">Strip</option>
+            <option value="nano" data-engine-key="glance">Glance</option>
+            <option value="gpt" data-engine-key="eye">Eye</option>
+            <option value="flux" data-engine-key="brush">Brush (auto-mask)</option>
             <option value="smart">Watch (auto)</option>
           </select>
           <button class="edit-btn" id="edit-btn" onclick="editImage()" title="Apply the edit using the selected engine">Edit</button>
         </div>
+        <!-- Smart-routing compatibility row: per-engine green/amber/red dots
+             driven by content_profile from POST /api/analyze-image and the
+             verdict map at GET /api/engine-compatibility. -->
+        <div class="compat-row" id="compat-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px;font-size:0.78rem;color:#bbb;"></div>
+        <div class="compat-caption" id="compat-caption">Loading routing hints...</div>
         <div class="edit-row" style="margin-top:8px;">
           <button class="edit-btn" id="make-nsfw-btn" onclick="makeNsfw()" style="background:linear-gradient(135deg,#dc2626,#9333ea);border-color:transparent;flex:1;" title="Strip transforms the image (NSFW or anything) → Develop upscaler. The Joe pipeline in one click.">🔥 Make NSFW + Upscale</button>
           <select class="edit-engine-select" id="make-nsfw-upscaler" title="Which upscaler to run after Strip">
@@ -1186,6 +1209,205 @@ let characters = [];
 let loras = [];
 let versionStack = []; // [{url, label}]
 let versionIndex = -1;
+
+// --- Smart routing (darkroom.active.smart-routing-mvp) -----------------------
+// Engine compatibility map (engine × content_profile → verdict). Populated
+// once at boot from GET /api/engine-compatibility.
+let engineCompatMap = null;
+// Display labels for the compat row. Keys are the canonical "house" engine
+// names from /api/engine-compatibility (lens, frame, strip, glance, eye,
+// brush, skin, blend, lock). The edit-engine-select uses internal IDs that
+// map to these via data-engine-key on each <option>.
+const ENGINE_DISPLAY = {
+  lens: 'Lens', frame: 'Frame', strip: 'Strip', glance: 'Glance',
+  eye: 'Eye', brush: 'Brush', skin: 'Skin', blend: 'Blend', lock: 'Lock',
+};
+// Subset shown in the compat row + caption — matches the engines available
+// from the edit dropdown.
+const ENGINES_FOR_COMPAT = ['lens', 'frame', 'strip', 'glance', 'eye', 'brush'];
+let currentContentProfile = null; // last successful analyze-image result
+let currentAnalysisCacheKey = null;
+let analyzeInflight = null;       // dedupe parallel calls for same URL
+
+async function sha256HexClient(s) {
+  const enc = new TextEncoder().encode(s);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function loadEngineCompat() {
+  try {
+    const res = await fetch('/api/engine-compatibility', { headers: headers() });
+    if (!res.ok) return;
+    engineCompatMap = await res.json();
+    renderEngineCompatDots();
+  } catch (_) { /* non-fatal: dots stay loading */ }
+}
+
+// Map content_profile.nudity_level to the column in engine-compatibility map.
+// V1 only ships sfw + nsfw_topless columns; treat any non-none as nsfw_topless.
+function profileToCompatColumn(profile) {
+  if (!profile) return null;
+  return profile.nudity_level && profile.nudity_level !== 'none'
+    ? 'nsfw_topless' : 'sfw';
+}
+
+function verdictFor(engineKey) {
+  if (!engineCompatMap || !engineCompatMap.engines) return null;
+  const col = profileToCompatColumn(currentContentProfile);
+  if (!col) return null;
+  const e = engineCompatMap.engines[engineKey];
+  return e ? (e[col] || null) : null;
+}
+
+function dotClassForVerdict(v) {
+  if (v === 'likely') return 'dot-likely';
+  if (v === 'may-refuse') return 'dot-may-refuse';
+  if (v === 'will-refuse') return 'dot-will-refuse';
+  return 'dot-loading';
+}
+
+// Decorate <option> labels in the edit-engine-select with a leading colored
+// glyph reflecting the current engine × profile verdict. <select> can't
+// host real DOM dots so we use a unicode bullet on the option text.
+function decorateEngineOptions() {
+  const sel = document.getElementById('edit-engine-select');
+  if (!sel) return;
+  for (const opt of sel.options) {
+    const key = opt.dataset.engineKey;
+    if (!key) continue;
+    if (!opt.dataset.baseLabel) opt.dataset.baseLabel = opt.text;
+    const v = verdictFor(key);
+    const glyph = v === 'likely' ? '• ' :
+                  v === 'may-refuse' ? '○ ' :
+                  v === 'will-refuse' ? '× ' : '';
+    opt.text = (glyph || '') + opt.dataset.baseLabel;
+  }
+}
+
+function renderEngineCompatDots() {
+  const row = document.getElementById('compat-row');
+  if (!row) return;
+  const fragments = ENGINES_FOR_COMPAT.map((key) => {
+    const v = verdictFor(key);
+    const cls = dotClassForVerdict(v);
+    const verdictLabel = v ? v : 'loading';
+    return `<span class="engine-pill" title="${ENGINE_DISPLAY[key]}: ${verdictLabel}">`
+      + `<span class="engine-dot ${cls}"></span>${ENGINE_DISPLAY[key]}</span>`;
+  });
+  row.innerHTML = fragments.join('');
+  decorateEngineOptions();
+  updateCompatCaption();
+}
+
+function updateCompatCaption() {
+  const cap = document.getElementById('compat-caption');
+  if (!cap) return;
+  if (!engineCompatMap) {
+    cap.textContent = 'Loading routing hints...';
+    return;
+  }
+  if (!currentContentProfile) {
+    cap.textContent = currentUrl
+      ? 'Analyzing image for routing hints...'
+      : 'Generate or load an image to see engine compatibility.';
+    return;
+  }
+  const likely = [], willRefuse = [];
+  for (const key of ENGINES_FOR_COMPAT) {
+    const v = verdictFor(key);
+    if (v === 'likely') likely.push(ENGINE_DISPLAY[key]);
+    else if (v === 'will-refuse') willRefuse.push(ENGINE_DISPLAY[key]);
+  }
+  const parts = [];
+  if (likely.length) {
+    parts.push(`<span class="compat-good">${likely.join(', ')} likely.</span>`);
+  }
+  if (willRefuse.length) {
+    parts.push(`<span class="compat-bad">${willRefuse.join(', ')} will probably refuse.</span>`);
+  }
+  cap.innerHTML = parts.length ? parts.join(' ') : 'No strong routing signal.';
+}
+
+async function analyzeCurrentImage(opts = {}) {
+  const url = (opts.url || currentUrl || '').trim();
+  if (!url) {
+    currentContentProfile = null;
+    currentAnalysisCacheKey = null;
+    renderEngineCompatDots();
+    return null;
+  }
+  const cacheKey = await sha256HexClient(url);
+  // Cheap fast path — sessionStorage hit, no network.
+  try {
+    const cached = sessionStorage.getItem('analysis-' + cacheKey);
+    if (cached) {
+      const profile = JSON.parse(cached);
+      currentContentProfile = profile;
+      currentAnalysisCacheKey = cacheKey;
+      renderEngineCompatDots();
+      return profile;
+    }
+  } catch (_) { /* fall through to network */ }
+  // De-dupe simultaneous calls for the same URL.
+  if (analyzeInflight && analyzeInflight.url === url) {
+    return analyzeInflight.promise;
+  }
+  // Show loading dots while we wait.
+  currentContentProfile = null;
+  currentAnalysisCacheKey = null;
+  renderEngineCompatDots();
+  const promise = (async () => {
+    try {
+      const res = await fetch('/api/analyze-image', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ image_url: url }),
+      });
+      if (!res.ok) throw new Error('analyze ' + res.status);
+      const data = await res.json();
+      const profile = data.content_profile || null;
+      if (profile) {
+        sessionStorage.setItem('analysis-' + cacheKey, JSON.stringify(profile));
+      }
+      // Only commit if the URL hasn't changed underneath us.
+      if (url === currentUrl) {
+        currentContentProfile = profile;
+        currentAnalysisCacheKey = cacheKey;
+        renderEngineCompatDots();
+      }
+      return profile;
+    } catch (_) {
+      // Graceful degrade — leave content_profile null so dots fall to "may-refuse".
+      if (url === currentUrl) {
+        currentContentProfile = { nudity_level: 'none' /* fallback assume sfw */ };
+        renderEngineCompatDots();
+      }
+      return null;
+    } finally {
+      if (analyzeInflight && analyzeInflight.url === url) analyzeInflight = null;
+    }
+  })();
+  analyzeInflight = { url, promise };
+  return promise;
+}
+
+// Hook into currentUrl changes — every code path that mutates currentUrl
+// can call this safely (no-op when url is empty, deduped via cache).
+function onCurrentImageChanged() { analyzeCurrentImage().catch(() => {}); }
+
+// Watch for currentUrl changes via a thin polling guard so we don't have to
+// rewrite every existing assignment site. Cheap (string compare) and only
+// fires the analyze when the URL actually flipped.
+let _lastSeenUrl = '';
+setInterval(() => {
+  if (currentUrl !== _lastSeenUrl) {
+    _lastSeenUrl = currentUrl;
+    onCurrentImageChanged();
+  }
+}, 400);
+// --- /Smart routing ---------------------------------------------------------
 // Darkroom Polish — engine-conditional realism stanza. Default ON; stored in
 // localStorage as '0' / '1'. Read via getPolish() and threaded into request
 // bodies so the server can apply applyDarkroomPolish() on the prompt path.
@@ -1264,6 +1486,8 @@ async function showApp() {
   await loadCharacters();
   await loadLoras();
   loadHistory();
+  // Fire-and-forget — populates engineCompatMap and renders the dot row.
+  loadEngineCompat();
 }
 
 async function loadLoras() {
