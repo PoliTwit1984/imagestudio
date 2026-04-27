@@ -980,7 +980,281 @@ export async function handleSafeEditRoutes(
     return Response.json({ ok: true, tier, user_id: userId, limits, usage });
   }
 
+  // ---------------------------------------------------------------------------
+  // Stripe webhook + Checkout Session (wave 39).
+  //
+  //   POST /api/billing/stripe-webhook
+  //     Receives signed Stripe events (subscription.created/updated/deleted,
+  //     invoice.paid/payment_failed). Verifies HMAC-SHA256 signature using
+  //     STRIPE_WEBHOOK_SECRET; updates the local subscriptions table via
+  //     PostgREST upsert keyed on stripe_subscription_id (Postgres handles the
+  //     idempotency race). Refuses with 503 when STRIPE_WEBHOOK_SECRET is
+  //     unset so we don't accidentally mark users as paid in dev.
+  //
+  //     NOTE: this endpoint is intentionally auth-bypassed because Stripe
+  //     can't send our internal bearer token. Security is provided by the
+  //     HMAC signature check inside handleStripeWebhook().
+  //
+  //   POST /api/billing/checkout
+  //     Creates a Stripe Checkout Session for a tier slug. Returns { url } so
+  //     the client can redirect to Stripe-hosted checkout. Refuses with 503
+  //     when STRIPE_SECRET_KEY is unset or when the tier has no
+  //     stripe_price_id_monthly configured.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/billing/stripe-webhook" && req.method === "POST") {
+    return handleStripeWebhook(req, deps);
+  }
+
+  if (url.pathname === "/api/billing/checkout" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleCreateCheckout(req);
+  }
+
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Stripe webhook handler
+//
+// Reads the RAW request body (req.text()) — required because Stripe computes
+// the signature over the raw bytes, not over a re-serialized JSON object. Bun
+// gives us this via Request.text(); we never call req.json() on this path.
+//
+// On success: upserts the subscriptions row keyed on stripe_subscription_id
+// (Postgres handles concurrent retries via on_conflict merge). On any
+// signature failure we return 4xx and Stripe stops retrying. On any
+// downstream upsert failure we return 500 so Stripe retries — the upsert is
+// idempotent so retries are safe.
+// ---------------------------------------------------------------------------
+async function handleStripeWebhook(
+  req: Request,
+  deps: Pick<RouteDeps, "saveGeneration" | "getCharacter">,
+): Promise<Response> {
+  const { verifyStripeSignature, STRIPE_WEBHOOK_SECRET } = await import("../stripe");
+
+  // Gate: refuse cleanly when not configured. Prevents accidental processing
+  // (and avoids the surprising case where a webhook in dev silently flips a
+  // user's tier without keys configured).
+  if (!STRIPE_WEBHOOK_SECRET) {
+    return Response.json(
+      { error: "Stripe webhook not configured (STRIPE_WEBHOOK_SECRET unset)" },
+      { status: 503 },
+    );
+  }
+
+  // Read raw body for signature verification — must be the bytes Stripe sent,
+  // not a re-serialized parse.
+  const rawBody = await req.text();
+  const sig = req.headers.get("stripe-signature");
+  const verified = await verifyStripeSignature(rawBody, sig);
+  if (!verified.ok) {
+    console.warn(`[stripe-webhook] signature verification failed: ${verified.reason}`);
+    return Response.json({ error: `signature: ${verified.reason}` }, { status: 400 });
+  }
+
+  // Parse event after signature passes.
+  let event: any;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+  const eventId = event?.id;
+  const eventType = event?.type;
+  if (!eventId || !eventType) {
+    return Response.json({ error: "missing_event_id_or_type" }, { status: 400 });
+  }
+
+  // Idempotency: the subscriptions upsert is keyed on stripe_subscription_id
+  // with on_conflict=stripe_subscription_id, so re-processing the same Stripe
+  // event simply re-applies the same row. For the events that don't touch a
+  // subscription row (invoice.*), we no-op for v1 — the subscription event
+  // already updated the user's state.
+  try {
+    await processStripeEvent(event, deps);
+  } catch (e: any) {
+    console.error(
+      `[stripe-webhook] processing ${eventType} (${eventId}) failed:`,
+      e,
+    );
+    // 500 → Stripe will retry. Idempotency in processStripeEvent keeps that safe.
+    return Response.json({ error: e?.message || "processing_failed" }, { status: 500 });
+  }
+
+  return Response.json({ ok: true, event_type: eventType, event_id: eventId });
+}
+
+// Per-event branch. Subscription events update the local mirror; invoice
+// events are logged-only for v1 (the matching subscription event already
+// updated state, and we don't yet act on payment_failed beyond what Stripe
+// reflects via subscription.status transitions).
+async function processStripeEvent(
+  event: any,
+  _deps: Pick<RouteDeps, "saveGeneration" | "getCharacter">,
+): Promise<void> {
+  const type: string = event.type;
+  const obj = event?.data?.object || {};
+  const eventId: string = event?.id;
+
+  switch (type) {
+    case "customer.subscription.created":
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted": {
+      const subId = obj.id;
+      const customerId = obj.customer;
+      const status = obj.status;
+      const periodStart = obj.current_period_start
+        ? new Date(obj.current_period_start * 1000).toISOString()
+        : null;
+      const periodEnd = obj.current_period_end
+        ? new Date(obj.current_period_end * 1000).toISOString()
+        : null;
+      const cancelAtPeriodEnd = !!obj.cancel_at_period_end;
+
+      // Resolve tier from price id by matching against BILLING_TIERS. Falls
+      // back to 'free' when nothing matches (operator hasn't filled a slot
+      // yet, or Stripe sent a price we don't recognize). Free is a safe
+      // fallback — the user just won't see the upgraded limits until the
+      // operator wires the price id in.
+      const { BILLING_TIERS } = await import("../billing");
+      let tier: string | null = null;
+      const items = obj.items?.data || [];
+      for (const item of items) {
+        const priceId = item?.price?.id;
+        if (!priceId) continue;
+        for (const [tierKey, cfg] of Object.entries(BILLING_TIERS)) {
+          if ((cfg as any).stripe_price_id_monthly === priceId) {
+            tier = tierKey;
+            break;
+          }
+        }
+        if (tier) break;
+      }
+
+      // Upsert keyed on stripe_subscription_id. Idempotent under concurrent
+      // delivery from Stripe.
+      if (!SUPABASE_URL) {
+        console.log(
+          `[stripe-webhook] ${type} (${eventId}) — SUPABASE_URL unset, skipping upsert`,
+        );
+        return;
+      }
+
+      const upsertBody = {
+        stripe_subscription_id: subId,
+        stripe_customer_id: customerId,
+        status: type === "customer.subscription.deleted" ? "cancelled" : status,
+        tier: tier || "free",
+        current_period_start: periodStart,
+        current_period_end: periodEnd,
+        cancel_at_period_end: cancelAtPeriodEnd,
+        // user_id set by checkout via metadata.user_id; null is acceptable
+        // (the row still mirrors Stripe state and can be reconciled later).
+        user_id: obj?.metadata?.user_id || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/subscriptions?on_conflict=stripe_subscription_id`,
+        {
+          method: "POST",
+          headers: {
+            ...supaHeaders(),
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates,return=minimal",
+          },
+          body: JSON.stringify(upsertBody),
+        },
+      );
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`subscriptions upsert ${r.status}: ${txt.slice(0, 200)}`);
+      }
+      console.log(
+        `[stripe-webhook] upserted ${subId} (${type}) → tier=${tier} status=${upsertBody.status}`,
+      );
+      return;
+    }
+    case "invoice.paid":
+    case "invoice.payment_failed":
+      // No-op for v1 — the matching subscription.updated event already
+      // updated state. Logged so we can confirm Stripe is delivering.
+      console.log(`[stripe-webhook] ${type} (${eventId}) — no-op for v1`);
+      return;
+    default:
+      console.log(`[stripe-webhook] unhandled event type ${type} (${eventId})`);
+      return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Checkout Session handler — POST /api/billing/checkout
+//
+// Body: { tier, success_url, cancel_url, customer_email?, user_id? }
+// Returns: { ok: true, url, id } on success, 4xx/5xx on input or Stripe error.
+//
+// Validates the tier against BILLING_TIERS, refuses 'free' (no checkout
+// needed), then asks Stripe to mint a hosted Checkout Session and returns
+// the URL for the client to redirect to. The metadata.user_id we set here
+// is what the webhook reads back when it sees customer.subscription.created
+// — that's how we tie the Stripe subscription back to a Darkroom user.
+// ---------------------------------------------------------------------------
+async function handleCreateCheckout(req: Request): Promise<Response> {
+  const { isStripeConfigured, createCheckoutSession } = await import("../stripe");
+  if (!isStripeConfigured()) {
+    return Response.json(
+      {
+        error:
+          "Stripe not configured (set STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET in env)",
+      },
+      { status: 503 },
+    );
+  }
+
+  try {
+    const body = await req.json();
+    const tierKey = String(body.tier || "");
+    const successUrl = String(body.success_url || "");
+    const cancelUrl = String(body.cancel_url || "");
+    const customerEmail = body.customer_email ? String(body.customer_email) : undefined;
+    const userId = body.user_id ? String(body.user_id) : undefined;
+
+    if (!tierKey || !successUrl || !cancelUrl) {
+      return Response.json(
+        { error: "tier, success_url, cancel_url required" },
+        { status: 400 },
+      );
+    }
+
+    const { BILLING_TIERS } = await import("../billing");
+    const tier = (BILLING_TIERS as any)[tierKey];
+    if (!tier) return Response.json({ error: `unknown tier: ${tierKey}` }, { status: 400 });
+    if (tier.tier === "free") {
+      return Response.json(
+        { error: "Free tier doesn't require checkout" },
+        { status: 400 },
+      );
+    }
+    const priceId = tier.stripe_price_id_monthly;
+    if (!priceId) {
+      return Response.json(
+        { error: `tier ${tierKey} has no stripe_price_id_monthly configured` },
+        { status: 503 },
+      );
+    }
+
+    const session = await createCheckoutSession({
+      priceId,
+      successUrl,
+      cancelUrl,
+      customerEmail,
+      metadata: userId ? { user_id: userId, tier: tierKey } : { tier: tierKey },
+    });
+
+    return Response.json({ ok: true, url: session.url, id: session.id });
+  } catch (e: any) {
+    return Response.json({ error: e?.message || "checkout_failed" }, { status: 500 });
+  }
 }
 
 // /api/flux-edit — auto-mask + Flux Fill Pro in one call.
