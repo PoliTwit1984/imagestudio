@@ -8272,11 +8272,15 @@ async function setComposePoseRef(urlOrFile) {
   if (urlOrFile instanceof File) {
     const form = new FormData();
     form.append('file', urlOrFile);
-    form.append('folder', 'uploads');
+    form.append('folder', 'poses');
     try {
-      const upResp = await fetch('/api/uploads', { method: 'POST', headers: headers(), body: form });
+      // CRITICAL: don't spread headers() here — it includes Content-Type: application/json
+      // which overrides the browser's auto-set multipart boundary and breaks FormData parsing.
+      // Auth header only.
+      const authH = (typeof headers === 'function') ? { Authorization: headers().Authorization } : {};
+      const upResp = await fetch('/api/uploads', { method: 'POST', headers: authH, body: form });
       const upData = await upResp.json();
-      if (!upResp.ok) throw new Error(upData.error || 'upload failed');
+      if (!upResp.ok || !upData.url) throw new Error(upData.error || 'upload failed');
       _composePoseRefUrl = upData.url;
     } catch (e) {
       if (typeof toast === 'function') toast('Pose ref upload failed: ' + e.message);
@@ -8308,19 +8312,21 @@ async function autofillPromptFromPoseRef(refUrl) {
   const existing = (promptEl.value || '').trim();
   if (existing && !promptEl.dataset.poseRefAutoFilled) return;
 
-  const status = document.getElementById('compose-pose-ref-preview');
   try {
+    // Server expects { pose_image_url } and returns { ok, poseDescription }.
+    // Earlier draft sent {image_url} and read .prompt — both wrong; that's why
+    // the auto-fill never landed.
     const resp = await fetch('/api/analyze-pose', {
       method: 'POST',
       headers: { ...headers(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_url: refUrl }),
+      body: JSON.stringify({ pose_image_url: refUrl }),
     });
     const data = await resp.json();
     if (!resp.ok) {
       if (typeof toast === 'function') toast('Pose analyze failed: ' + (data.error || resp.statusText));
       return;
     }
-    const suggestion = data.prompt || data.suggestion || data.description || data.scene || '';
+    const suggestion = data.poseDescription || data.prompt || data.suggestion || data.description || data.scene || '';
     if (!suggestion) return;
     promptEl.value = suggestion;
     promptEl.dataset.poseRefAutoFilled = '1';
