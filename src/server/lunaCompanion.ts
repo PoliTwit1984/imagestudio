@@ -232,6 +232,45 @@ export async function updateLuna(
 // Runtime helpers
 // =============================================================================
 
+/**
+ * Tone preset identifiers. When luna.persona_text exactly matches one of these
+ * string literals, buildSystemPrompt replaces it with the corresponding preset
+ * fragment rather than treating it as freeform user-written persona text.
+ */
+export type TonePreset = "flirty" | "snarky" | "sweet" | "filthy" | "sub" | "dom";
+
+/**
+ * Map from tone preset key to the persona fragment injected into the system
+ * prompt. These are intentionally terse — the behavioral defaults layer adds
+ * the universal companion operating principles on top.
+ *
+ * Export allows consumers (e.g. UI persona picker, tests) to enumerate the
+ * available presets without duplicating the strings.
+ */
+export const TONE_PRESETS: Record<TonePreset, string> = {
+  flirty:
+    "You are warm, teasing, and make light dirty jokes. There's a hint of want in how you engage — " +
+    "playful but never hollow. You make the user feel wanted without being over-the-top about it.",
+  snarky:
+    "You are dry, witty, and lightly sardonic. You say the thing others wouldn't, with precision " +
+    "rather than cruelty. You're not mean — just too sharp to pretend things are fine when they're not.",
+  sweet:
+    "You are tender, gentle, and fully attentive. No edge, no irony — just warmth. " +
+    "You make the user feel seen and held. Your care is unhurried and unconditional.",
+  filthy:
+    "You are explicit and dirty-talk-fluent. No euphemisms — you own kink plainly and without shame. " +
+    "You match the user's heat and raise it. You write what most companions won't.",
+  sub:
+    "You let the user lead. You are eager-to-please, attentive to their desires, and ask for direction " +
+    "when you want to serve them better. Your energy is willing and present, never passive.",
+  dom:
+    "You take charge. You are decisive, give orders, and are possessive of the user's attention. " +
+    "You set the frame and expect it to be followed. Authority is natural to you — not performed.",
+};
+
+/** The set of valid tone preset keys for fast lookup. */
+const TONE_PRESET_KEYS = new Set<string>(Object.keys(TONE_PRESETS));
+
 /** Behavioral defaults injected into every system prompt. */
 const BEHAVIORAL_DEFAULTS = [
   "You are a personal AI companion. Be direct, warm, and real — never corporate or sanitized.",
@@ -245,9 +284,16 @@ const BEHAVIORAL_DEFAULTS = [
  * Assemble the system prompt for a Luna conversation turn.
  *
  * Structure:
- *   1. Persona text (if set) — defines character voice and style.
- *   2. Recent memories — surfaced as a compact "Things I know about you" block.
+ *   1. Persona section — either a tone-preset fragment, freeform persona_text,
+ *      or a default "You are <name>" fallback.
+ *   2. Recent memories — active (invalidated_at === null) memories surfaced as
+ *      a compact "Things I know about you" block. Capped at the 30 most recent
+ *      by insertion order (caller is responsible for passing them newest-first).
  *   3. Behavioral defaults — universal companion operating principles.
+ *
+ * Tone presets: if luna.persona_text exactly matches one of the keys in
+ * TONE_PRESETS ('flirty' | 'snarky' | 'sweet' | 'filthy' | 'sub' | 'dom'),
+ * the preset fragment is used instead of the raw string.
  *
  * @param luna           The Luna instance (persona_text, name).
  * @param recentMemories Active memories to surface in this turn.
@@ -259,17 +305,23 @@ export function buildSystemPrompt(
 ): string {
   const parts: string[] = [];
 
-  // 1. Persona
-  if (luna.persona_text && luna.persona_text.trim().length > 0) {
-    parts.push(`## Persona\n${luna.persona_text.trim()}`);
+  // 1. Persona — tone preset, freeform text, or default fallback.
+  const raw = luna.persona_text?.trim() ?? "";
+  if (raw.length > 0) {
+    const personaFragment = TONE_PRESET_KEYS.has(raw)
+      ? TONE_PRESETS[raw as TonePreset]
+      : raw;
+    parts.push(`## Persona\n${personaFragment}`);
   } else {
     parts.push(`## Persona\nYou are ${luna.name}, the user's personal AI companion.`);
   }
 
   // 2. Recent memories (active only — invalidated_at IS NULL enforced at DB
   //    query time; we trust the caller filtered correctly, but we double-check
-  //    here as a belt-and-suspenders guard).
-  const activeMemories = recentMemories.filter((m) => m.invalidated_at === null);
+  //    here as a belt-and-suspenders guard). Cap at 30 most recent.
+  const activeMemories = recentMemories
+    .filter((m) => m.invalidated_at === null)
+    .slice(0, 30);
   if (activeMemories.length > 0) {
     const memoryLines = activeMemories.map((m) => `- [${m.type}] ${m.body}`);
     parts.push(`## Things I know about you\n${memoryLines.join("\n")}`);
