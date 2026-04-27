@@ -13,6 +13,83 @@ import {
 import type { RouteDeps } from "./types";
 
 // =============================================================================
+// Quota middleware (wave 39)
+//
+// Pairs with src/server/billing.ts (wave 38). Public surface:
+//
+//   * extractUserId(req)              — pull a user id from the x-user-id header,
+//                                       returning null when unset/invalid. v1
+//                                       hook until per-user auth is wired.
+//   * checkQuotaOrReject(req, metric) — gate a route. Returns null when the user
+//                                       is under quota OR unauthed (silent
+//                                       passthrough — single shared bearer
+//                                       today, no per-user enforcement). Returns
+//                                       a 402 Response when over quota.
+//   * incrementUsageBackground(req,m) — fire-and-forget +1 against the user's
+//                                       monthly counter. Always non-fatal.
+//
+// 402 response shape (consumed by the upgrade modal so it can target the
+// metric that hit):
+//   { error, quota_exceeded: true, metric, used, limit, tier, remaining }
+//
+// TODO(per-user-auth): when checkAuth() / Supabase Auth gives us a real
+// session.user.id, replace the x-user-id header read with that lookup. The
+// silent passthrough below preserves existing behavior in the meantime.
+// =============================================================================
+
+function extractUserId(req: Request): string | null {
+  // v1: optional x-user-id header. When auth is wired per-user, this becomes
+  // a real session lookup. Until then, null = unauthed = free-tier passthrough.
+  const fromHeader = req.headers.get("x-user-id");
+  if (fromHeader && /^[a-f0-9-]{8,}$/i.test(fromHeader)) return fromHeader;
+  return null;
+}
+
+async function checkQuotaOrReject(
+  req: Request,
+  metric: import("../billing").BillingMetric,
+): Promise<Response | null> {
+  const userId = extractUserId(req);
+  // TODO(per-user-auth): silent passthrough until checkAuth surfaces a real
+  // user id. Single shared bearer today — enforcing on it would either gate
+  // every caller (broken) or bucket all calls under one synthetic id (lies
+  // in usage_quota). Better to no-op until the upgrade modal has a real
+  // identity to send back.
+  if (!userId) return null;
+
+  const { checkQuota } = await import("../billing");
+  const check = await checkQuota(userId, metric);
+  if (check.ok) return null;
+
+  return Response.json(
+    {
+      error: `Quota exceeded for ${metric}. You've used ${check.used} of ${check.limit} this month on ${check.tier} tier.`,
+      quota_exceeded: true,
+      metric: check.metric,
+      used: check.used,
+      limit: check.limit,
+      tier: check.tier,
+      remaining: check.remaining,
+    },
+    { status: 402 },
+  );
+}
+
+async function incrementUsageBackground(
+  req: Request,
+  metric: import("../billing").BillingMetric,
+): Promise<void> {
+  const userId = extractUserId(req);
+  if (!userId) return;
+  try {
+    const { incrementUsage } = await import("../billing");
+    await incrementUsage(userId, metric, 1);
+  } catch (e) {
+    console.warn("[quota] incrementUsage failed (non-fatal):", e);
+  }
+}
+
+// =============================================================================
 // Smart Edit pipeline
 //
 // Use case: edit an image (change background, lighting, outfit color, etc.)
@@ -357,6 +434,8 @@ export async function handleSafeEditRoutes(
   // ---------------------------------------------------------------------------
   if (url.pathname === "/api/replay-chain" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const quotaReject = await checkQuotaOrReject(req, "chains_runs");
+    if (quotaReject) return quotaReject;
     if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
     try {
       let body: any = {};
@@ -447,6 +526,7 @@ export async function handleSafeEditRoutes(
         },
       });
 
+      void incrementUsageBackground(req, "chains_runs");
       return Response.json({ ok: true, job_id, step_count: sequence.length });
     } catch (e: any) {
       return Response.json({ error: e?.message || "replay-chain failed" }, { status: 500 });
@@ -475,8 +555,12 @@ export async function handleSafeEditRoutes(
   // ---------------------------------------------------------------------------
   if (url.pathname === "/api/chains/run" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const quotaReject = await checkQuotaOrReject(req, "chains_runs");
+    if (quotaReject) return quotaReject;
     if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
-    return handleChainsRun(req, deps);
+    const res = await handleChainsRun(req, deps);
+    if (res.status >= 200 && res.status < 300) void incrementUsageBackground(req, "chains_runs");
+    return res;
   }
 
   // ---------------------------------------------------------------------------
@@ -631,13 +715,21 @@ export async function handleSafeEditRoutes(
 
   if (url.pathname === "/api/reveal/async" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
-    return handleRevealAsync(req, deps);
+    const quotaReject = await checkQuotaOrReject(req, "upscales");
+    if (quotaReject) return quotaReject;
+    const res = await handleRevealAsync(req, deps);
+    if (res.status >= 200 && res.status < 300) void incrementUsageBackground(req, "upscales");
+    return res;
   }
 
   if (url.pathname.startsWith("/api/reveal/preset/") && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const quotaReject = await checkQuotaOrReject(req, "upscales");
+    if (quotaReject) return quotaReject;
     const slug = url.pathname.slice("/api/reveal/preset/".length);
-    return handleRevealPreset(req, slug, deps);
+    const res = await handleRevealPreset(req, slug, deps);
+    if (res.status >= 200 && res.status < 300) void incrementUsageBackground(req, "upscales");
+    return res;
   }
 
   // ---------------------------------------------------------------------------
@@ -650,7 +742,11 @@ export async function handleSafeEditRoutes(
 
   if (url.pathname === "/api/lut/extract" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
-    return handleLutExtract(req);
+    const quotaReject = await checkQuotaOrReject(req, "lut_extracts");
+    if (quotaReject) return quotaReject;
+    const res = await handleLutExtract(req);
+    if (res.status >= 200 && res.status < 300) void incrementUsageBackground(req, "lut_extracts");
+    return res;
   }
 
   // ---------------------------------------------------------------------------
@@ -828,6 +924,60 @@ export async function handleSafeEditRoutes(
   if (url.pathname === "/api/crop/outpaint" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handleCropOutpaint(req, deps);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Billing read endpoints (wave 39).
+  //
+  //   GET /api/billing/tiers — public-ish (still gated by checkAuth so
+  //                            unauthenticated callers can't enumerate the
+  //                            pricing matrix). Returns the BILLING_TIERS map
+  //                            with stripe_price_id_monthly stripped, so the
+  //                            UI can render the pricing/upgrade view without
+  //                            leaking operator-side IDs.
+  //
+  //   GET /api/billing/me    — current user's tier + per-metric usage snapshot
+  //                            for the active calendar month. When no
+  //                            x-user-id is supplied (single-shared-bearer
+  //                            mode), returns the free-tier defaults with
+  //                            zeroed usage so the UI can still render a
+  //                            usage panel pre-auth.
+  //
+  // The two endpoints together give the upgrade modal (triggered by the 402
+  // shape above) enough to (a) tell the user where they are, and (b) show
+  // the upgrade options without a Stripe round-trip.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/billing/tiers" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const { BILLING_TIERS } = await import("../billing");
+    // Strip stripe_price_id_monthly from the public response — defense in depth
+    // even though those slots are null until the operator wires Stripe up.
+    const safe = Object.fromEntries(
+      Object.entries(BILLING_TIERS).map(([k, v]) => {
+        const { stripe_price_id_monthly: _drop, ...rest } = v as any;
+        return [k, rest];
+      }),
+    );
+    return Response.json({ ok: true, tiers: safe });
+  }
+
+  if (url.pathname === "/api/billing/me" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const userId = extractUserId(req);
+    const { getUserTier, getTierLimits, getCurrentUsage } = await import("../billing");
+    const tier = await getUserTier(userId);
+    const limits = getTierLimits(tier);
+    const metrics: import("../billing").BillingMetric[] = [
+      "generations",
+      "edits",
+      "upscales",
+      "jobs",
+      "chains_runs",
+      "lut_extracts",
+    ];
+    const usage: Record<string, number> = {};
+    for (const m of metrics) usage[m] = await getCurrentUsage(userId, m);
+    return Response.json({ ok: true, tier, user_id: userId, limits, usage });
   }
 
   return null;
