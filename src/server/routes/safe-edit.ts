@@ -216,6 +216,17 @@ async function handleFluxEdit(
       prompt,
       imagePromptUrl,
     });
+
+    // Detect blank/uniform-color results — fal.ai's content moderation
+    // silently returns a black placeholder instead of an error. Catch it.
+    const isBlank = await isImageBlankOrUniform(editedBuf);
+    if (isBlank) {
+      return Response.json({
+        ok: false,
+        error: "Flux edit blocked by content filter on this image. Try a different engine (Strip is more permissive).",
+      }, { status: 422 });
+    }
+
     const resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage, "flux-edit");
 
     try {
@@ -1743,6 +1754,17 @@ async function handleInpaint(
       imagePromptUrl,
       imagePromptStrength: garmentStrength,
     });
+
+    // Detect blank/uniform-color results — fal.ai's content moderation
+    // silently returns a black placeholder instead of an error. Catch it.
+    const isBlank = await isImageBlankOrUniform(editedBuf);
+    if (isBlank) {
+      return Response.json({
+        ok: false,
+        error: "Inpaint blocked by content filter on this image. Try a different engine (Strip is more permissive).",
+      }, { status: 422 });
+    }
+
     let resultUrl = await uploadBufferToStorage(editedBuf, "image/png", buildUploadPath, uploadToStorage, "inpaint");
 
     if (upscaler === "topaz") {
