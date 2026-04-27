@@ -255,6 +255,15 @@
     cursor: pointer; overflow: hidden; transition: border-color 0.15s;
   }
   .wardrobe-card:hover { border-color: #f472b6; }
+  .wardrobe-card[draggable="true"] { cursor: grab; }
+  .wardrobe-card[draggable="true"]:active { cursor: grabbing; }
+  body.wardrobe-dragging .wardrobe-card { cursor: grabbing; }
+  /* Drop-target highlight applied during a wardrobe drag. */
+  .drop-target-active {
+    outline: 3px dashed #a78bfa;
+    outline-offset: -3px;
+    background-color: rgba(167, 139, 250, 0.15) !important;
+  }
   .wardrobe-card-img {
     width: 100%; aspect-ratio: 1; object-fit: cover; background: #0a0a0a;
     display: block;
@@ -4021,6 +4030,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderPresetGrid();
   initPresetIntensity();
   initWardrobeTab();
+  wireWardrobeDropTargets();
 });
 
 // --- Wardrobe ---
@@ -4082,9 +4092,9 @@ async function loadWardrobeGrid({ force } = {}) {
         ? '<span class="wardrobe-card-cat" style="background:#fbbf2422;color:#fbbf24;margin-left:4px;">featured</span>'
         : '';
       return `
-        <div class="wardrobe-card" data-url="${safeUrl}" data-name="${safeName}" data-cat="${safeCat}" data-tags="${safeTags}" title="${safeName} — ${safeCat}">
+        <div class="wardrobe-card" draggable="true" data-url="${safeUrl}" data-name="${safeName}" data-cat="${safeCat}" data-tags="${safeTags}" title="${safeName} — ${safeCat}">
           ${url
-            ? `<img class="wardrobe-card-img" src="${safeUrl}" alt="${safeName}" loading="lazy" onerror="this.style.display='none'">`
+            ? `<img class="wardrobe-card-img" src="${safeUrl}" alt="${safeName}" loading="lazy" onerror="this.style.display='none'" draggable="false">`
             : `<div class="wardrobe-card-img" style="display:flex;align-items:center;justify-content:center;color:#555;font-size:10px;">no image</div>`}
           <div class="wardrobe-card-meta">
             <div class="wardrobe-card-name">${safeName}</div>
@@ -4102,6 +4112,9 @@ async function loadWardrobeGrid({ force } = {}) {
         useWardrobeItem(url, name);
       });
     });
+    // Wire HTML5 drag for each card so users can drop them onto the result
+    // image / mask painter canvas as a faster alternative to clicking.
+    wireWardrobeDrag();
     // Re-apply any active search filter after the grid has been re-rendered
     // so the user's typed query keeps filtering the new card set.
     if (typeof applyWardrobeSearch === 'function') applyWardrobeSearch();
@@ -4136,6 +4149,77 @@ async function useWardrobeItem(url, name) {
   } catch (e) {
     toast('Failed to set wardrobe ref: ' + (e?.message || e));
   }
+}
+
+// --- Wardrobe drag-and-drop ---
+// Cards are draggable; drop targets are the result image and the mask painter
+// canvas. A drop reuses useWardrobeItem(), so the behavior is identical to a
+// click — just faster for repeat work.
+const _WARDROBE_DRAG_MIME = 'application/x-darkroom-wardrobe';
+
+function wireWardrobeDrag() {
+  document.querySelectorAll('.wardrobe-card').forEach(card => {
+    if (card.dataset._dragWired === '1') return;
+    card.dataset._dragWired = '1';
+    card.addEventListener('dragstart', (e) => {
+      const url = card.dataset.url || '';
+      const name = card.dataset.name || '';
+      if (!url) { e.preventDefault(); return; }
+      try {
+        e.dataTransfer.setData(_WARDROBE_DRAG_MIME, JSON.stringify({ url, name }));
+        // Plain-text fallback so external apps see something useful too.
+        e.dataTransfer.setData('text/plain', url);
+        e.dataTransfer.effectAllowed = 'copy';
+      } catch (_) { /* setData can throw under some sandboxes */ }
+      document.body.classList.add('wardrobe-dragging');
+    });
+    card.addEventListener('dragend', () => {
+      document.body.classList.remove('wardrobe-dragging');
+      document.querySelectorAll('.drop-target-active').forEach(el => el.classList.remove('drop-target-active'));
+    });
+  });
+}
+
+function _attachWardrobeDropTarget(el) {
+  if (!el || el.dataset._wardrobeDropWired === '1') return;
+  el.dataset._wardrobeDropWired = '1';
+  el.addEventListener('dragover', (e) => {
+    const types = e.dataTransfer && e.dataTransfer.types;
+    if (types && Array.from(types).includes(_WARDROBE_DRAG_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      el.classList.add('drop-target-active');
+    }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-target-active'));
+  el.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    el.classList.remove('drop-target-active');
+    let raw = '';
+    try { raw = e.dataTransfer.getData(_WARDROBE_DRAG_MIME) || ''; } catch (_) {}
+    if (!raw) return;
+    try {
+      const { url, name } = JSON.parse(raw);
+      if (!url) return;
+      if (typeof useWardrobeItem === 'function') {
+        await useWardrobeItem(url, name);
+      }
+    } catch (err) {
+      console.error('wardrobe drop parse failed', err);
+    }
+  });
+}
+
+function wireWardrobeDropTargets() {
+  // Main result image (always present in the DOM).
+  _attachWardrobeDropTarget(document.getElementById('result-img'));
+  // Wrapper too so the catch zone is generous around the image edges.
+  _attachWardrobeDropTarget(document.querySelector('.result-img-wrap'));
+  // Mask painter canvas + its stage. Painter is modal — it exists in the DOM
+  // even when display:none, so wiring once at boot is fine.
+  _attachWardrobeDropTarget(document.getElementById('mask-fg'));
+  _attachWardrobeDropTarget(document.getElementById('mask-bg'));
+  _attachWardrobeDropTarget(document.getElementById('mask-stage'));
 }
 
 // Client-side search filter for the wardrobe grid. Matches the user's query
