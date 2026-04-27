@@ -454,6 +454,32 @@ export async function handleSafeEditRoutes(
   }
 
   // ---------------------------------------------------------------------------
+  // POST /api/chains/run — execute an inline or saved chain definition on a
+  // fresh source URL.
+  //
+  //   Body (Mode A — inline):
+  //     { chain_definition: [{ engine, prompt, params? }, ...], source_url, user_id? }
+  //   Body (Mode B — saved):
+  //     { chain_id: <slug>, source_url, user_id?, params_overrides? }
+  //   Response: { ok, job_id, step_count, chain_name }
+  //
+  // Mirrors /api/replay-chain but consumes a forward-declared step list (from
+  // body or from a `presets` row with preset_type='chain') instead of walking
+  // an existing asset chain. Each step's output URL feeds the next step's
+  // input. Final asset row chains via parent_id back to the source URL's
+  // asset, intermediates land in metadata.intermediates so the UI can
+  // surface the per-step trail.
+  //
+  // Reuses executeEditSequence (defined below) — same engine dispatch +
+  // rehosting + skip-non-replayable behavior the replay-chain handler uses.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/chains/run" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+    return handleChainsRun(req, deps);
+  }
+
+  // ---------------------------------------------------------------------------
   // Asset metadata mutate — star / archive / tag a row in `assets`.
   //
   //   PATCH /api/assets/:id   body { starred?, archived?, tags? }
@@ -8508,4 +8534,201 @@ async function executeEditSequence(
     steps_applied: stepsApplied,
     steps_skipped: stepsSkipped,
   };
+}
+
+// =============================================================================
+// /api/chains/run helpers — load a saved chain by slug + dispatch the run.
+//
+// Saved chains live in the `presets` table with preset_type='chain'. The
+// `chain_definition` jsonb column accepts either { steps: [...] } or a bare
+// array of steps. Each step has { engine, prompt, params? }. handleChainsRun
+// validates the shape, builds a ReplayEditStep[]-compatible sequence, and
+// dispatches a spawnJob() that pipes the steps through executeEditSequence.
+//
+// Why reuse executeEditSequence: same engine dispatch logic, same rehost +
+// intermediate tracking, same skip-non-replayable behavior. Forward-declared
+// chains and replayed-asset chains both flatten down to "list of edit steps
+// applied to a starting URL" — once the sequence is built, the rest is
+// identical.
+// =============================================================================
+
+async function loadChainBySlug(
+  slug: string,
+): Promise<{ definition: any[]; name: string } | null> {
+  if (!SUPABASE_URL) return null;
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/presets?slug=eq.${encodeFilterValue(slug)}&preset_type=eq.chain&select=id,name,chain_definition&limit=1`,
+    { headers: supaHeaders() },
+  );
+  if (!r.ok) return null;
+  const rows = await r.json();
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return null;
+  // chain_definition can be either { steps: [...] } or a bare array.
+  const def = row.chain_definition;
+  const steps = Array.isArray(def)
+    ? def
+    : Array.isArray(def?.steps)
+      ? def.steps
+      : [];
+  return { definition: steps, name: row.name || slug };
+}
+
+async function handleChainsRun(req: Request, deps: any): Promise<Response> {
+  try {
+    let body: any = {};
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+    const sourceUrl = String(body.source_url || "").trim();
+    if (!sourceUrl) {
+      return Response.json({ error: "source_url required" }, { status: 400 });
+    }
+
+    // Resolve the chain steps — either inline (Mode A) or by slug (Mode B).
+    let chainSteps: any[] = [];
+    let chainName = "inline-chain";
+    let chainSlug: string | null = null;
+    if (body.chain_definition !== undefined && body.chain_definition !== null) {
+      const def = body.chain_definition;
+      chainSteps = Array.isArray(def)
+        ? def
+        : Array.isArray(def?.steps)
+          ? def.steps
+          : [];
+    } else if (body.chain_id) {
+      chainSlug = String(body.chain_id);
+      const loaded = await loadChainBySlug(chainSlug);
+      if (!loaded) {
+        return Response.json({ error: "chain not found", chain_id: chainSlug }, { status: 404 });
+      }
+      chainSteps = loaded.definition;
+      chainName = loaded.name;
+    } else {
+      return Response.json(
+        { error: "chain_definition or chain_id required" },
+        { status: 400 },
+      );
+    }
+
+    if (!Array.isArray(chainSteps) || !chainSteps.length) {
+      return Response.json({ error: "chain has no steps" }, { status: 400 });
+    }
+
+    // Validate step shape up-front so a malformed chain fails synchronously
+    // (4xx) instead of getting buried in a job-row failure the user has to
+    // poll for.
+    for (let i = 0; i < chainSteps.length; i++) {
+      const s = chainSteps[i];
+      if (!s || typeof s !== "object" || !s.engine || !s.prompt) {
+        return Response.json(
+          { error: `step ${i + 1} missing engine or prompt`, step_index: i },
+          { status: 400 },
+        );
+      }
+    }
+
+    // Build a ReplayEditStep[]-compatible sequence. executeEditSequence reads
+    // engine / prompt / edit_action; node_id + source_url are unused at run
+    // time but kept on the type for future telemetry. params_overrides on the
+    // request body shallow-merges over the saved-chain step.params (Mode B
+    // only — inline chains already carry their own params).
+    const overrides =
+      body.params_overrides && typeof body.params_overrides === "object"
+        ? body.params_overrides
+        : null;
+    const sequence = chainSteps.map((s: any) => {
+      const baseParams = s.params && typeof s.params === "object" ? s.params : {};
+      const mergedParams =
+        chainSlug && overrides ? { ...baseParams, ...overrides } : baseParams;
+      return {
+        engine: String(s.engine),
+        prompt: String(s.prompt),
+        params: mergedParams,
+        edit_action: s.edit_action ?? null,
+        asset_type: s.asset_type ?? "edit",
+        source_url: null,
+        node_id: null,
+      };
+    });
+
+    const stepCount = sequence.length;
+
+    const { job_id } = await spawnJob(deps, {
+      engine: "chain",
+      job_type: "chain-run",
+      user_id: body.user_id ?? null,
+      params: {
+        chain_name: chainName,
+        chain_id: chainSlug,
+        source_url: sourceUrl,
+        step_count: stepCount,
+      },
+      worker: async (jobId, updateProgress) => {
+        try {
+          const result = await executeEditSequence(sourceUrl, sequence, updateProgress);
+
+          // Catalog the final asset. parent_id chains back to whatever asset
+          // was at source_url (so the chain renders as a branch off the
+          // source in the history graph). saveAsset failure is non-fatal —
+          // the job still completed.
+          let outputAssetId: string | null = null;
+          try {
+            const parentId = await (deps as any).lookupAssetIdByUrl?.(sourceUrl);
+            outputAssetId = await (deps as any).saveAsset?.({
+              asset_type: "edit",
+              source_url: result.final_url,
+              engine: "chain",
+              edit_action: "chain-run",
+              prompt: `Chain: ${chainName} (${stepCount} steps)`,
+              parent_id: parentId || null,
+              metadata: {
+                chain_name: chainName,
+                chain_id: chainSlug,
+                chain_step_count: stepCount,
+                steps_applied: result.steps_applied,
+                steps_skipped: result.steps_skipped,
+                intermediates: result.intermediate_urls,
+                steps: sequence.map((s) => ({
+                  engine: s.engine,
+                  prompt: s.prompt,
+                  params: s.params,
+                })),
+                source_url: sourceUrl,
+                job_id: jobId,
+              },
+              tags: ["chain"],
+            });
+          } catch (e) {
+            console.error("[chains/run] saveAsset failed (non-fatal):", e);
+          }
+
+          return {
+            output_url: result.final_url,
+            output_asset_id: outputAssetId || undefined,
+          };
+        } catch (e: any) {
+          if (e instanceof CancellationError) throw e;
+          return {
+            error: String(e?.message || e),
+            error_class: "service",
+          };
+        }
+      },
+    });
+
+    return Response.json({
+      ok: true,
+      job_id,
+      step_count: stepCount,
+      chain_name: chainName,
+    });
+  } catch (e: any) {
+    return Response.json(
+      { error: e?.message || "chains/run failed" },
+      { status: 500 },
+    );
+  }
 }
