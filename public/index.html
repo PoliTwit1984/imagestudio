@@ -1169,6 +1169,17 @@
               <span id="mask-garment-strength-val">0.65</span>
             </label>
             <img id="mask-garment-preview" style="display:none;height:60px;border-radius:6px;border:1px solid #444;">
+            <!-- Save-to-Wardrobe pill — shown only when /api/remove-bg
+                 reports wardrobe_eligible:true on its result. One-click
+                 affordance that opens the existing forge modal pre-filled
+                 with the cutout URL. See darkroom.wardrobe.auto-save. -->
+            <button type="button" id="wardrobe-save-pill" class="save-to-wardrobe"
+              onclick="saveToWardrobe()" title="Save this transparent cutout to your wardrobe"
+              style="display:none;background:#a78bfa22;color:#a78bfa;border:1px solid #a78bfa;
+                     padding:4px 10px;border-radius:999px;font-size:0.78rem;cursor:pointer;
+                     line-height:1.2;white-space:nowrap;">
+              ★ Save to Wardrobe
+            </button>
           </div>
           <div id="mask-garment-strip" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px;padding:8px;background:#0a0a0a;border-radius:8px;">
             <!-- thumbnails inserted dynamically -->
@@ -3462,6 +3473,65 @@ function setGarmentUrl(url, rawUrl) {
   renderGarmentStrip();
 }
 
+// Tracks the most recent /api/remove-bg result that was deemed eligible for
+// wardrobe save. saveToWardrobe() reads this when the pill is clicked.
+// Cleared whenever a non-eligible result lands.
+let _lastWardrobeEligibleAsset = null;
+
+// Show/hide the Save-to-Wardrobe pill based on the eligibility verdict the
+// server returned on /api/remove-bg. eligibilityReason is exposed via tooltip
+// so a non-eligible result can show why ("alpha_too_low", "too_small", etc).
+function updateWardrobeSavePill(data) {
+  const pill = document.getElementById('wardrobe-save-pill');
+  if (!pill) return;
+  const eligible = !!(data && data.wardrobe_eligible);
+  if (eligible) {
+    _lastWardrobeEligibleAsset = {
+      asset_url: data.image_url,
+      meta: data.wardrobe_eligibility_meta || null,
+    };
+    pill.style.display = 'inline-block';
+    pill.title = 'Save this transparent cutout to your wardrobe';
+  } else {
+    _lastWardrobeEligibleAsset = null;
+    pill.style.display = 'none';
+    if (data && data.wardrobe_eligibility_reason) {
+      pill.title = `Not eligible (${data.wardrobe_eligibility_reason})`;
+    }
+  }
+}
+
+// One-click save-to-wardrobe affordance. Opens the existing forge modal in
+// 'upload' mode with the cutout URL pre-staged so the user can confirm
+// category/name/tags and submit. We bypass the file-picker by attaching the
+// asset URL directly to the forge submit body via a sticky variable that
+// submitForge() consults; a separate, simpler one-click path can be added
+// later if usage shows the modal step is friction.
+function saveToWardrobe() {
+  if (!_lastWardrobeEligibleAsset || !_lastWardrobeEligibleAsset.asset_url) {
+    toast('Nothing to save — generate a cutout first');
+    return;
+  }
+  // Open the forge modal and stash the prefilled URL on a global the modal
+  // submit handler picks up. Keeps the change surgical — no rewrite of the
+  // existing forge UI.
+  window._forgePrefillAssetUrl = _lastWardrobeEligibleAsset.asset_url;
+  if (typeof openForgeModal === 'function') {
+    openForgeModal();
+    // Most cutouts are already transparent — pre-check skip-bg-strip so the
+    // server doesn't double-strip the alpha.
+    const skipBg = document.getElementById('forge-skip-bg-strip');
+    if (skipBg) skipBg.checked = true;
+    const status = document.getElementById('forge-status');
+    if (status) {
+      status.style.color = '#a78bfa';
+      status.innerText = 'Pre-filled from cutout — confirm category and submit.';
+    }
+  } else {
+    toast('Forge modal not available');
+  }
+}
+
 async function removeGarmentBg(silent) {
   // The current URL field holds the "raw" / pre-strip version at this point.
   // We strip it for visual cutout, but PRESERVE the raw URL so P-Edit and
@@ -3479,6 +3549,8 @@ async function removeGarmentBg(silent) {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Remove BG failed');
     setGarmentUrl(data.image_url, rawUrl);
+    // Show the save-to-wardrobe pill iff the server marked the cutout eligible.
+    updateWardrobeSavePill(data);
     if (!silent) toast('Background removed');
   } catch (err) {
     console.error('garment-load', 'removeGarmentBg failed', err);
@@ -3489,6 +3561,8 @@ async function removeGarmentBg(silent) {
     if (!silent) toast('Remove BG failed: ' + err.message);
     // Best-effort fallback: still set the raw URL so manual retry / Place Overlay can attempt it.
     try { setGarmentUrl(rawUrl); } catch (_) {}
+    // No eligible cutout to save on error.
+    updateWardrobeSavePill(null);
   } finally {
     btn.disabled = false; btn.textContent = orig;
   }
@@ -4719,6 +4793,8 @@ function closeForgeModal() {
   modal.classList.remove('active');
   const status = document.getElementById('forge-status');
   if (status) status.innerText = '';
+  // Clear any pending save-to-wardrobe prefill so the next open is clean.
+  window._forgePrefillAssetUrl = null;
 }
 
 function setForgeMode(mode) {
@@ -4797,13 +4873,23 @@ async function submitForge() {
   try {
     let body;
     if (_forgeMode === 'upload') {
-      const file = document.getElementById('forge-file-input')?.files?.[0];
-      if (!file) throw new Error('Please pick a file to upload');
-      status.innerText = 'Uploading file...';
-      // Push raw bytes to the existing upload endpoint, then forge from the URL.
-      const uploaded = await uploadAsset(file, { folder: 'garments' });
-      const assetUrl = uploaded?.url;
-      if (!assetUrl) throw new Error('upload returned no url');
+      // Prefill path: when saveToWardrobe() opens this modal, it sets
+      // window._forgePrefillAssetUrl to the cutout URL so the user doesn't
+      // have to pick a file. Consume it once and clear so subsequent opens
+      // fall back to the normal file-picker flow.
+      const prefilled = window._forgePrefillAssetUrl || null;
+      let assetUrl = prefilled;
+      if (!assetUrl) {
+        const file = document.getElementById('forge-file-input')?.files?.[0];
+        if (!file) throw new Error('Please pick a file to upload');
+        status.innerText = 'Uploading file...';
+        // Push raw bytes to the existing upload endpoint, then forge from the URL.
+        const uploaded = await uploadAsset(file, { folder: 'garments' });
+        assetUrl = uploaded?.url;
+        if (!assetUrl) throw new Error('upload returned no url');
+      } else {
+        status.innerText = 'Saving to wardrobe...';
+      }
       body = {
         mode: 'upload',
         asset_url: assetUrl,
@@ -4813,7 +4899,9 @@ async function submitForge() {
         tags,
         skip_bg_strip: skipBgStrip || undefined,
       };
-      status.innerText = 'Stripping background + saving...';
+      // Consume the prefill so the next modal open is a fresh upload flow.
+      window._forgePrefillAssetUrl = null;
+      if (!prefilled) status.innerText = 'Stripping background + saving...';
     } else if (_forgeMode === 'from_image') {
       const sourceUrl = document.getElementById('forge-version-select')?.value || '';
       if (!sourceUrl) throw new Error('Pick a version from the stack');

@@ -1968,6 +1968,91 @@ async function handleDescribeGarment(req: Request): Promise<Response> {
 // Body: { image_url } → { image_url }
 // -----------------------------------------------------------------------------
 
+// Wardrobe-eligibility heuristics for a cutout produced by /api/remove-bg.
+// A garment is "save-to-wardrobe" eligible when:
+//   - dimensions exceed a minimum (256 × 256) so the saved entry isn't a
+//     thumbnail, AND
+//   - alpha coverage is between 5% and 95% — i.e. the image actually has a
+//     visible subject AND a transparent background. Coverage outside that
+//     range usually means BiRefNet either cut everything (~0%) or nothing
+//     (~100%, fully opaque), neither of which is a useful wardrobe asset.
+// Returns {eligible, reason} so the caller can echo the decision.
+const WARDROBE_MIN_DIM = 256;
+const WARDROBE_MIN_ALPHA_COVERAGE = 0.30; // 30% per spec — keeps small accents in
+const WARDROBE_MAX_ALPHA_COVERAGE = 0.95; // ~fully opaque means bg-strip didn't fire
+
+async function computeWardrobeEligibility(buf: Buffer): Promise<{
+  eligible: boolean;
+  reason: string;
+  alpha_coverage?: number;
+  width?: number;
+  height?: number;
+}> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const img = sharp(buf);
+    const meta = await img.metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+    if (width < WARDROBE_MIN_DIM || height < WARDROBE_MIN_DIM) {
+      return {
+        eligible: false,
+        reason: "too_small",
+        width,
+        height,
+      };
+    }
+    if (!meta.hasAlpha) {
+      return {
+        eligible: false,
+        reason: "no_alpha_channel",
+        width,
+        height,
+      };
+    }
+    // Compute fraction of pixels with alpha > 128 (i.e. solidly visible).
+    // sharp.stats() returns mean alpha in 0..255 — convert to 0..1 coverage
+    // proxy. Cheaper than rasterizing and counting pixels manually.
+    const alphaStats = await sharp(buf).extractChannel("alpha").stats();
+    const alphaChannel = alphaStats.channels[0];
+    if (!alphaChannel) {
+      return { eligible: false, reason: "alpha_stats_unavailable", width, height };
+    }
+    const coverage = alphaChannel.mean / 255; // 0..1
+    if (coverage < WARDROBE_MIN_ALPHA_COVERAGE) {
+      return {
+        eligible: false,
+        reason: "alpha_too_low",
+        alpha_coverage: Number(coverage.toFixed(3)),
+        width,
+        height,
+      };
+    }
+    if (coverage > WARDROBE_MAX_ALPHA_COVERAGE) {
+      return {
+        eligible: false,
+        reason: "alpha_too_high",
+        alpha_coverage: Number(coverage.toFixed(3)),
+        width,
+        height,
+      };
+    }
+    return {
+      eligible: true,
+      reason: "eligible",
+      alpha_coverage: Number(coverage.toFixed(3)),
+      width,
+      height,
+    };
+  } catch (err: any) {
+    // Eligibility check is best-effort — never block the cutout response.
+    return {
+      eligible: false,
+      reason: `eligibility_check_failed: ${String(err?.message || err).slice(0, 80)}`,
+    };
+  }
+}
+
 async function handleRemoveBg(req: Request): Promise<Response> {
   try {
     const body = await req.json();
@@ -1988,11 +2073,21 @@ async function handleRemoveBg(req: Request): Promise<Response> {
           const alphaStats = await sharp(probeBuf).extractChannel("alpha").stats();
           const alphaChannel = alphaStats.channels[0];
           if (alphaChannel && alphaChannel.min < 250) {
+            // Image is already a cutout — re-use it AND run the wardrobe
+            // eligibility check on it so the UI can prompt to save.
+            const elig = await computeWardrobeEligibility(probeBuf);
             return Response.json({
               ok: true,
               image_url: imageUrl,
               skipped: true,
               reason: "already has transparency",
+              wardrobe_eligible: elig.eligible,
+              wardrobe_eligibility_reason: elig.reason,
+              wardrobe_eligibility_meta: {
+                alpha_coverage: elig.alpha_coverage,
+                width: elig.width,
+                height: elig.height,
+              },
             });
           }
         }
@@ -2023,7 +2118,23 @@ async function handleRemoveBg(req: Request): Promise<Response> {
     const { uploadToStorage, buildUploadPath } = await import("../supabase");
     const finalUrl = await uploadBufferToStorage(buf, "image/png", buildUploadPath, uploadToStorage, "cutout");
 
-    return Response.json({ ok: true, image_url: finalUrl });
+    // Wardrobe-eligibility post-check on the cutout we just produced. The
+    // value is advisory only — failures are non-fatal and don't change the
+    // cutout response. UI uses this to decide whether to surface the
+    // "★ Save to Wardrobe" affordance on the result image.
+    const elig = await computeWardrobeEligibility(buf);
+
+    return Response.json({
+      ok: true,
+      image_url: finalUrl,
+      wardrobe_eligible: elig.eligible,
+      wardrobe_eligibility_reason: elig.reason,
+      wardrobe_eligibility_meta: {
+        alpha_coverage: elig.alpha_coverage,
+        width: elig.width,
+        height: elig.height,
+      },
+    });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
   }
@@ -2880,6 +2991,13 @@ async function handleSmartEdit(
     let resultUrl = "";
     let modelUsed = "";
     let fallbackReason: string | null = null;
+    // Re-route diagnostics for explicit model paths that go through the
+    // free re-routing wrapper. (Auto path uses its own Eye→Strip fallback
+    // below; that's a separate, pre-existing flow that pre-dates the
+    // engine-compatibility map.)
+    let rerouted:
+      | { from: string; to: string; refusal_reason: string }
+      | null = null;
 
     // Single-image edits (no mask) get the identity anchor prepended.
     // If a mask is supplied, this is a brush/protect-region flow and the
@@ -2889,16 +3007,36 @@ async function handleSmartEdit(
       ? `${IDENTITY_ANCHOR}. ${body.prompt}`
       : body.prompt;
 
-    // Explicit model paths
-    if (preferModel === "pedit") {
-      resultUrl = await callPEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
-      modelUsed = "Strip";
-    } else if (preferModel === "nano") {
-      resultUrl = await callNanoBanana({ imageUrl: body.image_url, prompt: anchoredPrompt });
-      modelUsed = "Glance";
-    } else if (preferModel === "grok") {
-      resultUrl = await callGrokEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
-      modelUsed = "Lens";
+    // Map model preference → canonical engine name for the re-routing layer.
+    const PREF_TO_ENGINE: Record<string, string> = {
+      nano: "glance",
+      grok: "lens",
+      pedit: "strip",
+    };
+
+    // Explicit model paths — wrap with callWithRerouting so a content-filter
+    // refusal on a SFW-leaning engine fans over to the next-best one.
+    // (Strip/P-Edit refusals stay fatal — REROUTING_FATAL_ENGINES.)
+    if (preferModel === "pedit" || preferModel === "nano" || preferModel === "grok") {
+      const engineKey = PREF_TO_ENGINE[preferModel]!;
+      const dispatched = await callWithRerouting(engineKey, null, {
+        imageUrl: body.image_url,
+        prompt: anchoredPrompt,
+        maskUrl: body.mask_url,
+      });
+      resultUrl = dispatched.url;
+      const niceName: Record<string, string> = {
+        glance: "Glance",
+        lens: "Lens",
+        strip: "Strip",
+        eye: "Eye",
+        brush: "Brush",
+      };
+      modelUsed = niceName[dispatched.engineUsed] || dispatched.engineUsed;
+      if (dispatched.rerouted) {
+        rerouted = dispatched.rerouted;
+        fallbackReason = `${niceName[dispatched.rerouted.from] || dispatched.rerouted.from} refused; rerouted to ${niceName[dispatched.rerouted.to] || dispatched.rerouted.to}`;
+      }
     } else if (preferModel === "gpt" || preferModel === "auto") {
       // Eye first
       try {
@@ -2912,16 +3050,17 @@ async function handleSmartEdit(
         modelUsed = "Eye";
       } catch (err: any) {
         const msg = String(err?.message || err);
-        const isContentRefusal =
-          msg.includes("safety") ||
-          msg.includes("content_policy") ||
-          msg.includes("rejected") ||
-          msg.includes("400");
+        const isContentRefusal = isContentFilterError(err);
         if (preferModel === "gpt" || !isContentRefusal) {
           if (preferModel === "gpt") throw err;
           fallbackReason = `Eye error: ${msg.slice(0, 200)}`;
         } else {
           fallbackReason = "Eye refused (content policy); falling back to Strip";
+          rerouted = {
+            from: "eye",
+            to: "strip",
+            refusal_reason: msg.slice(0, 200),
+          };
         }
       }
 
@@ -2943,12 +3082,14 @@ async function handleSmartEdit(
       revised_prompt: body.prompt,
     });
 
-    return Response.json({
+    const smartResp: any = {
       ok: true,
       url: resultUrl,
       model: modelUsed,
       fallback_reason: fallbackReason,
-    });
+    };
+    if (rerouted) smartResp.rerouted = rerouted;
+    return Response.json(smartResp);
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
   }
@@ -6268,49 +6409,174 @@ async function getOrComputeWatchProfile(imageUrl: string): Promise<WatchProfile 
   }
 }
 
-// Dispatch a watch-routed edit to the chosen engine using the per-engine
-// inner call functions already defined above. Returns the upstream URL or
-// throws with an engine-tagged error message.
-async function dispatchWatchEdit(args: {
-  chosen_engine: WatchDecision["chosen_engine"];
+// =============================================================================
+// Free re-routing on content-filter refusal
+// =============================================================================
+// When an engine refuses an edit on safety/content grounds, transparently fall
+// over to the next-best engine for the same content profile (per the
+// engine-compatibility verdict map exposed at GET /api/engine-compatibility).
+//
+// Affected engines: Lens, Glance, Eye, Frame — the SFW-leaning engines that
+// tend to refuse anything spicy. Brush, Strip, Lock are mask-based or
+// NSFW-tolerant; their refusal is treated as a real error and not retried.
+//
+// Cost note: the failed engine call already happened, so the caller pays for
+// it on the upstream API. The retry is "free" in the sense that we don't
+// charge the user twice on our side and don't recurse — exactly ONE re-route
+// per request, then fail through with the original error.
+// =============================================================================
+
+// Static mirror of the (engine × content_profile) verdict map exposed at
+// GET /api/engine-compatibility. Keep these two definitions in sync if you
+// ever change one — the API response is the public contract, this map is
+// the runtime-routing copy.
+type EngineVerdict = "likely" | "may-refuse" | "will-refuse";
+const REROUTE_ENGINE_COMPAT: Record<string, Record<string, EngineVerdict>> = {
+  lens:   { sfw: "likely", nsfw_topless: "may-refuse" },
+  glance: { sfw: "likely", nsfw_topless: "may-refuse" },
+  strip:  { sfw: "likely", nsfw_topless: "likely" },
+  brush:  { sfw: "likely", nsfw_topless: "likely" },
+  eye:    { sfw: "likely", nsfw_topless: "will-refuse" },
+  frame:  { sfw: "likely", nsfw_topless: "will-refuse" },
+  skin:   { sfw: "likely", nsfw_topless: "may-refuse" },
+  blend:  { sfw: "likely", nsfw_topless: "likely" },
+  lock:   { sfw: "likely", nsfw_topless: "likely" },
+};
+
+// Rank verdicts when picking a fallback. Lower = better.
+const VERDICT_RANK: Record<EngineVerdict, number> = {
+  "likely": 0,
+  "may-refuse": 1,
+  "will-refuse": 99, // never pick a will-refuse engine for fallback
+};
+
+// Engines whose refusal is non-recoverable (mask-based or NSFW-tolerant).
+const REROUTING_FATAL_ENGINES = new Set(["brush", "strip", "lock"]);
+
+// Engines that are wired through dispatchWatchEdit / per-engine call functions
+// in this file. Frame (Bria) is in generation.ts only, so it isn't a valid
+// fallback target from a safe-edit dispatch.
+const REROUTING_AVAILABLE_ENGINES = new Set(["lens", "glance", "strip", "brush", "eye"]);
+
+// Map a WatchProfile to a coarse content_profile key the compat map uses.
+// Only two profiles today (sfw / nsfw_topless) — that's the public contract.
+function rerouteContentProfileKey(profile: WatchProfile | null | undefined): string {
+  if (!profile) return "sfw";
+  const nudity = String(profile.nudity_level || "none").toLowerCase();
+  if (profile.explicit_acts) return "nsfw_topless"; // best available bucket
+  if (nudity === "topless" || nudity === "implied" || nudity === "explicit") return "nsfw_topless";
+  return "sfw";
+}
+
+// Returns the engines from the compat map ordered by verdict rank for the
+// given profile, excluding "will-refuse" entries and any engines not actually
+// wired through dispatchWatchEdit.
+function enginesForProfile(profile: WatchProfile | null | undefined): string[] {
+  const key = rerouteContentProfileKey(profile);
+  const candidates: Array<{ name: string; rank: number }> = [];
+  for (const [name, verdicts] of Object.entries(REROUTE_ENGINE_COMPAT)) {
+    if (!REROUTING_AVAILABLE_ENGINES.has(name)) continue;
+    const v = verdicts[key];
+    if (!v || v === "will-refuse") continue;
+    candidates.push({ name, rank: VERDICT_RANK[v] ?? 50 });
+  }
+  candidates.sort((a, b) => a.rank - b.rank);
+  return candidates.map((c) => c.name);
+}
+
+// Pick the next-best engine for a profile, skipping the failed one and any
+// "will-refuse" engines. Returns null when there's no usable alternative.
+function pickNextEngine(
+  failedEngine: string,
+  profile: WatchProfile | null | undefined
+): string | null {
+  const ordered = enginesForProfile(profile);
+  for (const name of ordered) {
+    if (name === failedEngine) continue;
+    return name;
+  }
+  return null;
+}
+
+// Heuristic: did this error come from an engine refusing on content grounds?
+// Common signatures across the engines we wrap:
+//   - OpenAI gpt-image-2: HTTP 400 with "safety", "content_policy", "rejected".
+//   - xAI Grok: HTTP 400/422 with "safety", "policy", "moderation", "violates".
+//   - fal.ai (nano-banana): HTTP 400/422 with "safety" / "filter".
+//   - Replicate p-image-edit: less common — only flags blatant refusals.
+// We err on the side of recall: any of these fragments tips us into a retry.
+function isContentFilterError(e: unknown): boolean {
+  if (!e) return false;
+  const msg = String((e as any)?.message || e || "").toLowerCase();
+  if (!msg) return false;
+  // Status-code shortcuts (engine call functions all embed `${res.status}` in
+  // the thrown error message, e.g. "Eye 400: ...", "Lens 422: ...").
+  const has400 = / 400:| 400 /.test(msg) || msg.includes("status 400");
+  const has422 = / 422:| 422 /.test(msg) || msg.includes("status 422");
+  // Phrase-based detection (case-insensitive).
+  const KEYWORDS = [
+    "safety",
+    "content_policy",
+    "content policy",
+    "policy violation",
+    "moderation",
+    "moderated",
+    "rejected",
+    "refused",
+    "violates",
+    "violation",
+    "not allowed",
+    "disallowed",
+    "filtered",
+    "content filter",
+    "unsafe",
+    "explicit",
+    "sexual",
+    "nsfw",
+  ];
+  const hasKeyword = KEYWORDS.some((k) => msg.includes(k));
+  // Only return true if we have either a 400/422 status OR a clear keyword.
+  // 5xx errors are upstream-failure, not refusal — never reroute on those.
+  if (msg.includes(" 5") && /\b5\d\d\b/.test(msg)) return false;
+  return hasKeyword || (has400 && hasKeyword) || has422;
+}
+
+type DispatchEngineArgs = {
   imageUrl: string;
   prompt: string;
   maskUrl?: string;
   refUrls?: string[];
-}): Promise<string> {
-  // Single-image edits prepend the identity anchor (matches the existing
-  // /api/edit and /api/smart-edit conventions). Mask flows skip the anchor.
-  const isSingleImageEdit = !args.maskUrl;
-  const anchored = isSingleImageEdit
-    ? `${IDENTITY_ANCHOR}. ${args.prompt}`
-    : args.prompt;
+};
 
-  switch (args.chosen_engine) {
+// Inner dispatch — calls one engine, no rerouting logic. Returns the upstream
+// URL or throws. dispatchWatchEdit and callWithRerouting both build on this.
+async function callEngineByName(
+  engineName: string,
+  args: DispatchEngineArgs
+): Promise<string> {
+  switch (engineName) {
     case "lens":
-      return await callGrokEdit({ imageUrl: args.imageUrl, prompt: anchored });
+      return await callGrokEdit({ imageUrl: args.imageUrl, prompt: args.prompt });
     case "glance":
-      return await callNanoBanana({ imageUrl: args.imageUrl, prompt: anchored });
+      return await callNanoBanana({ imageUrl: args.imageUrl, prompt: args.prompt });
     case "strip":
-      return await callPEdit({ imageUrl: args.imageUrl, prompt: anchored, refUrls: args.refUrls });
+      return await callPEdit({ imageUrl: args.imageUrl, prompt: args.prompt, refUrls: args.refUrls });
     case "eye":
       return await callGptImage2Edit({
         imageUrl: args.imageUrl,
         maskUrl: args.maskUrl,
-        prompt: anchored,
+        prompt: args.prompt,
         size: GPT_SIZE,
         quality: GPT_QUALITY,
       });
     case "brush": {
-      // Brush requires a mask. If watch picked brush without a mask the
-      // routing rules are inconsistent — surface a clear error rather than
-      // silently producing garbage.
       if (!args.maskUrl) {
-        throw new Error("Brush requires a mask_url; watch routing chose Brush without one");
+        throw new Error("Brush requires a mask_url");
       }
       const buf = await callFluxFillPro({
         imageUrl: args.imageUrl,
         maskUrl: args.maskUrl,
-        prompt: anchored,
+        prompt: args.prompt,
       });
       const { uploadToStorage, buildUploadPath } = await import("../supabase");
       return await uploadBufferToStorage(
@@ -6321,12 +6587,81 @@ async function dispatchWatchEdit(args: {
         "watch-brush"
       );
     }
-    default: {
-      // Defensive — pickWatchEngine should never return anything else.
-      const x: never = args.chosen_engine;
-      throw new Error(`watch: unknown engine "${x}"`);
-    }
+    default:
+      throw new Error(`unknown engine "${engineName}"`);
   }
+}
+
+// Wrap a primary engine call. On content-filter refusal, fall over to the
+// next-best engine for the same content profile. Up to ONE retry total.
+// Returns { url, engineUsed, rerouted? } so the caller can attach
+// re-route diagnostics to its response.
+async function callWithRerouting(
+  primaryEngine: string,
+  profile: WatchProfile | null | undefined,
+  args: DispatchEngineArgs
+): Promise<{
+  url: string;
+  engineUsed: string;
+  rerouted?: { from: string; to: string; refusal_reason: string };
+}> {
+  try {
+    const url = await callEngineByName(primaryEngine, args);
+    return { url, engineUsed: primaryEngine };
+  } catch (e: any) {
+    // Brush/Strip/Lock refusals are fatal — no fallover.
+    if (REROUTING_FATAL_ENGINES.has(primaryEngine)) throw e;
+    if (!isContentFilterError(e)) throw e;
+    const next = pickNextEngine(primaryEngine, profile);
+    if (!next) throw e;
+    // One-and-done — if the fallback also throws, surface it directly.
+    const url = await callEngineByName(next, args);
+    return {
+      url,
+      engineUsed: next,
+      rerouted: {
+        from: primaryEngine,
+        to: next,
+        refusal_reason: String(e?.message || e).slice(0, 200),
+      },
+    };
+  }
+}
+
+// Dispatch a watch-routed edit. Returns the upstream URL plus the engine that
+// actually delivered the result and (if a content-filter refusal triggered
+// fallover) a `rerouted` diagnostic object. Free re-routing handles
+// content-filter refusals on lens/glance/eye; brush mask refusal stays fatal.
+async function dispatchWatchEdit(args: {
+  chosen_engine: WatchDecision["chosen_engine"];
+  imageUrl: string;
+  prompt: string;
+  maskUrl?: string;
+  refUrls?: string[];
+  profile?: WatchProfile | null;
+}): Promise<{
+  url: string;
+  engineUsed: string;
+  rerouted?: { from: string; to: string; refusal_reason: string };
+}> {
+  // Single-image edits prepend the identity anchor (matches the existing
+  // /api/edit and /api/smart-edit conventions). Mask flows skip the anchor.
+  const isSingleImageEdit = !args.maskUrl;
+  const anchored = isSingleImageEdit
+    ? `${IDENTITY_ANCHOR}. ${args.prompt}`
+    : args.prompt;
+
+  // Brush requires a mask up front — surface clearly rather than rerouting.
+  if (args.chosen_engine === "brush" && !args.maskUrl) {
+    throw new Error("Brush requires a mask_url; watch routing chose Brush without one");
+  }
+
+  return await callWithRerouting(args.chosen_engine, args.profile ?? null, {
+    imageUrl: args.imageUrl,
+    prompt: anchored,
+    maskUrl: args.maskUrl,
+    refUrls: args.refUrls,
+  });
 }
 
 async function handleWatchRoute(
@@ -6383,15 +6718,21 @@ async function handleWatchRoute(
           reason: "profile-unavailable fallback — Glance handles most cases",
         };
 
-    // 4. Dispatch to the chosen engine
-    let resultUrl: string;
+    // 4. Dispatch to the chosen engine (with free re-routing on content
+    //    filter refusal — see callWithRerouting / pickNextEngine above).
+    let dispatchResult: {
+      url: string;
+      engineUsed: string;
+      rerouted?: { from: string; to: string; refusal_reason: string };
+    };
     try {
-      resultUrl = await dispatchWatchEdit({
+      dispatchResult = await dispatchWatchEdit({
         chosen_engine: decision.chosen_engine,
         imageUrl,
         prompt: userPrompt,
         maskUrl,
         refUrls,
+        profile: profile ?? null,
       });
     } catch (err: any) {
       return Response.json(
@@ -6412,20 +6753,28 @@ async function handleWatchRoute(
     // 5. Return result with watch_decision attached. Fields exposed:
     //    - ok / url / engine: match the existing /api/edit response shape
     //      so callers can swap engine="watch" in without rewriting parsing.
-    //    - watch_decision: chosen_engine, reason, profile.
+    //      `engine` reflects the engine that ACTUALLY produced the result
+    //      (post-rerouting), so downstream callers see the truth.
+    //    - watch_decision: chosen_engine (originally picked), reason, profile.
+    //    - rerouted: present only when the primary engine refused and we
+    //      successfully fell over. { from, to, refusal_reason }.
     //    - reason (top-level): mirrors watch_decision.reason for the
     //      verification check (expects body.reason).
-    return Response.json({
+    const respBody: any = {
       ok: true,
-      url: resultUrl,
-      engine: decision.chosen_engine,
+      url: dispatchResult.url,
+      engine: dispatchResult.engineUsed,
       reason: decision.reason,
       watch_decision: {
         chosen_engine: decision.chosen_engine,
         reason: decision.reason,
         profile: profile ?? null,
       },
-    });
+    };
+    if (dispatchResult.rerouted) {
+      respBody.rerouted = dispatchResult.rerouted;
+    }
+    return Response.json(respBody);
   } catch (err: any) {
     return Response.json(
       { error: err?.message || "watch routing failed" },
