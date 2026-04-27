@@ -2208,6 +2208,7 @@ function resetEditStrength() {
 }
 
 let _strengthBakeDebounce = null;
+let _strengthBakeInFlight = false;
 
 async function onEditStrengthInput() {
   if (!editStrengthBefore || !editStrengthAfter) return;
@@ -2265,36 +2266,45 @@ document.addEventListener('click', (e) => {
 }, true);
 
 async function bakeEditStrengthSilent() {
+  // Guard against concurrent bakes (e.g. debounce timer racing with click-outside handler).
+  if (_strengthBakeInFlight) return;
   if (!editStrengthBefore || !editStrengthAfter) return;
-  const slider = document.getElementById('edit-strength-slider');
-  const pct = Number(slider.value);
-  if (pct === 100) {
-    // Nothing to bake — full edit is already currentUrl.
-    closeEditStrength();
-    return;
-  }
-  if (pct === 0) {
-    currentUrl = editStrengthBefore;
-    document.getElementById('result-img').src = currentUrl;
-    updateUrlStrip();
-    closeEditStrength();
-    return;
-  }
+  // Cancel any pending debounced bake — we're handling it now.
+  clearTimeout(_strengthBakeDebounce);
+  _strengthBakeInFlight = true;
   try {
-    const res = await fetch('/api/blend', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({ base_url: editStrengthBefore, top_url: editStrengthAfter, alpha: pct / 100 })
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) return;
-    currentUrl = data.image_url;
-    document.getElementById('result-img').src = currentUrl;
-    pushVersion(currentUrl, `auto-bake ${pct}%`);
-    updateUrlStrip();
-    showEditStatus(`Auto-baked at ${pct}% — locked in`, 'success');
-    closeEditStrength();
-  } catch (err) {
-    console.error('auto-bake failed', err);
+    const slider = document.getElementById('edit-strength-slider');
+    const pct = Number(slider.value);
+    if (pct === 100) {
+      // Nothing to bake — full edit is already currentUrl.
+      closeEditStrength();
+      return;
+    }
+    if (pct === 0) {
+      currentUrl = editStrengthBefore;
+      document.getElementById('result-img').src = currentUrl;
+      updateUrlStrip();
+      closeEditStrength();
+      return;
+    }
+    try {
+      const res = await fetch('/api/blend', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ base_url: editStrengthBefore, top_url: editStrengthAfter, alpha: pct / 100 })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) return;
+      currentUrl = data.image_url;
+      document.getElementById('result-img').src = currentUrl;
+      pushVersion(currentUrl, `auto-bake ${pct}%`);
+      updateUrlStrip();
+      showEditStatus(`Auto-baked at ${pct}% — locked in`, 'success');
+      closeEditStrength();
+    } catch (err) {
+      console.error('auto-bake failed', err);
+    }
+  } finally {
+    _strengthBakeInFlight = false;
   }
 }
 
