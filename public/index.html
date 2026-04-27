@@ -818,6 +818,7 @@
         <button class="action-btn" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()" title="Download the image to your device">Download</button>
         <button class="action-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
+        <button class="action-btn" id="btn-extract-lut" onclick="showLutExtractModal()" style="border-color:#c9842b;color:#c9842b;" title="Extract a 3D LUT cube from a before/after pair in the version stack. Useful for capturing a color grade you can reuse.">Extract LUT</button>
         <input type="file" id="upload-input" accept="image/*" style="display:none;" onchange="handleUpload(this)">
       </div>
 
@@ -1235,6 +1236,58 @@
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeEditCharModal()">Cancel</button>
       <button class="btn-save" onclick="saveEditChar()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Extract LUT modal -->
+<div class="modal-overlay" id="lut-extract-modal">
+  <div class="modal" style="max-width:560px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <h2 style="margin:0;">Extract LUT</h2>
+      <button class="modal-close" onclick="closeLutExtractModal()" style="background:none;border:none;color:#888;font-size:1.4rem;cursor:pointer;line-height:1;padding:0 4px;">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="lut-extract-row" style="margin-top:8px;">
+        <label>Before image</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="lut-before-select" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 10px;border-radius:8px;font-size:0.85rem;"></select>
+          <img id="lut-before-preview" class="lut-thumb" style="width:48px;height:48px;border-radius:6px;object-fit:cover;border:1px solid #333;background:#0a0a0a;">
+        </div>
+      </div>
+      <div class="lut-extract-row" style="margin-top:12px;">
+        <label>After image</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="lut-after-select" style="flex:1;background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 10px;border-radius:8px;font-size:0.85rem;"></select>
+          <img id="lut-after-preview" class="lut-thumb" style="width:48px;height:48px;border-radius:6px;object-fit:cover;border:1px solid #333;background:#0a0a0a;">
+        </div>
+      </div>
+      <div class="lut-extract-row" style="margin-top:12px;">
+        <label>Name</label>
+        <input id="lut-name-input" type="text" placeholder="My Custom LUT">
+      </div>
+      <div class="lut-extract-row" style="margin-top:12px;">
+        <label>Intensity (sample stride) <span class="lut-hint" style="color:#666;font-weight:400;">— lower = more samples, slower</span></label>
+        <input id="lut-sample-stride" type="number" min="1" max="16" value="4" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:10px;border-radius:8px;font-size:0.9rem;font-family:inherit;">
+      </div>
+      <div id="lut-extract-status" class="lut-status" style="margin-top:14px;font-size:0.85rem;color:#aaa;min-height:1.2em;"></div>
+      <div id="lut-extract-result" class="lut-result" style="display:none;margin-top:12px;padding:10px 12px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:8px;">
+        <div class="lut-result-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <strong style="color:#c9842b;">LUT PNG:</strong>
+          <a id="lut-result-url" href="#" target="_blank" rel="noopener" style="color:#c850c0;">download</a>
+        </div>
+        <div class="lut-result-row" style="margin-bottom:6px;">
+          <img id="lut-preview-img" alt="LUT preview" style="max-width:100%;border-radius:6px;border:1px solid #2a2a2a;background:#0a0a0a;">
+        </div>
+        <div class="lut-result-meta" style="font-size:0.78rem;color:#888;">
+          <span id="lut-sample-count">0</span> samples,
+          <span id="lut-empty-cells">0</span> empty cells
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeLutExtractModal()">Close</button>
+        <button id="lut-extract-btn" class="btn-save" onclick="runLutExtract()">Extract LUT</button>
+      </div>
     </div>
   </div>
 </div>
@@ -4751,6 +4804,140 @@ async function saveSetting(key) {
 }
 
 function toast(msg) { const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2000); }
+
+// --- Extract LUT modal (darkroom.lut.preset-extraction-status-ui) ---
+
+function showLutExtractModal() { openLutExtractModal(); }
+
+function openLutExtractModal() {
+  const beforeSelect = document.getElementById('lut-before-select');
+  const afterSelect = document.getElementById('lut-after-select');
+  if (!beforeSelect || !afterSelect) return;
+  beforeSelect.innerHTML = '';
+  afterSelect.innerHTML = '';
+
+  // Build option list from the version stack. Fall back to the current image if
+  // the user hasn't accumulated multiple versions yet.
+  const stack = (Array.isArray(versionStack) && versionStack.length)
+    ? versionStack
+    : (currentUrl ? [{ url: currentUrl, label: 'current' }] : []);
+
+  if (!stack.length) {
+    toast('Generate or upload an image first');
+    return;
+  }
+
+  stack.forEach((v, i) => {
+    const labelTxt = `v${i + 1}${v.label ? ' — ' + v.label : ''}`.slice(0, 80);
+    beforeSelect.appendChild(new Option(labelTxt, v.url));
+    afterSelect.appendChild(new Option(labelTxt, v.url));
+  });
+
+  // Default: before = first, after = last (or current)
+  beforeSelect.selectedIndex = 0;
+  if (stack.length >= 2) {
+    afterSelect.selectedIndex = stack.length - 1;
+  } else {
+    afterSelect.selectedIndex = 0;
+  }
+
+  // Wire change listeners (idempotent — strip any prior listener via cloneNode trick is overkill;
+  // these reference the same updateLutPreviews fn so re-binding is harmless).
+  beforeSelect.onchange = updateLutPreviews;
+  afterSelect.onchange = updateLutPreviews;
+
+  updateLutPreviews();
+
+  document.getElementById('lut-extract-result').style.display = 'none';
+  document.getElementById('lut-extract-status').innerText = '';
+  const btn = document.getElementById('lut-extract-btn');
+  if (btn) btn.disabled = false;
+
+  document.getElementById('lut-extract-modal').classList.add('active');
+}
+
+function closeLutExtractModal() {
+  document.getElementById('lut-extract-modal').classList.remove('active');
+}
+
+function updateLutPreviews() {
+  const b = document.getElementById('lut-before-select');
+  const a = document.getElementById('lut-after-select');
+  const bp = document.getElementById('lut-before-preview');
+  const ap = document.getElementById('lut-after-preview');
+  if (b && bp) bp.src = b.value || '';
+  if (a && ap) ap.src = a.value || '';
+}
+
+async function runLutExtract() {
+  const beforeSelect = document.getElementById('lut-before-select');
+  const afterSelect = document.getElementById('lut-after-select');
+  const before = beforeSelect ? beforeSelect.value : '';
+  const after = afterSelect ? afterSelect.value : '';
+  const name = (document.getElementById('lut-name-input').value || 'Custom LUT').trim();
+  const stride = parseInt(document.getElementById('lut-sample-stride').value || '4', 10) || 4;
+
+  const status = document.getElementById('lut-extract-status');
+  const btn = document.getElementById('lut-extract-btn');
+  const resultBox = document.getElementById('lut-extract-result');
+
+  if (!before || !after) {
+    status.innerText = 'Pick both a before and an after image.';
+    return;
+  }
+  if (before === after) {
+    status.innerText = 'Before and after must be different images.';
+    return;
+  }
+
+  btn.disabled = true;
+  resultBox.style.display = 'none';
+  status.innerText = 'Calling /api/lut/extract — fetching images and building cube...';
+
+  try {
+    const resp = await fetch('/api/lut/extract', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        before_url: before,
+        after_url: after,
+        name,
+        sample_step: stride,
+      }),
+    });
+
+    let data = {};
+    try { data = await resp.json(); } catch (_) { /* non-JSON error */ }
+
+    if (!resp.ok || !data.ok) {
+      status.innerText = 'Failed: ' + (data.error || resp.statusText || 'unknown error');
+      btn.disabled = false;
+      return;
+    }
+
+    status.innerText = `Done — ${data.sample_count} samples, ${data.empty_cells} empty cells filled.`;
+
+    const urlEl = document.getElementById('lut-result-url');
+    urlEl.href = data.lut_url;
+    urlEl.innerText = 'download LUT';
+
+    const previewImg = document.getElementById('lut-preview-img');
+    if (data.preview_url) {
+      previewImg.src = data.preview_url;
+      previewImg.style.display = 'block';
+    } else {
+      previewImg.style.display = 'none';
+    }
+
+    document.getElementById('lut-sample-count').innerText = data.sample_count != null ? data.sample_count : '?';
+    document.getElementById('lut-empty-cells').innerText = data.empty_cells != null ? data.empty_cells : '?';
+    resultBox.style.display = 'block';
+  } catch (e) {
+    status.innerText = 'Error: ' + (e && e.message ? e.message : String(e));
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 document.getElementById('scene').addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') generate();
