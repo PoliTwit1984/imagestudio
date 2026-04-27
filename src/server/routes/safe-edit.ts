@@ -10,6 +10,16 @@ import {
   cubeToText,
   cubeToXmp,
 } from "../lut";
+import {
+  skin,
+  lens,
+  lensCinema,
+  lensReality,
+  develop,
+  sharpenPortrait,
+  sharpen,
+  getStatus as enhancorGetStatus,
+} from "../enhancor";
 import type { RouteDeps } from "./types";
 
 // =============================================================================
@@ -1023,6 +1033,65 @@ export async function handleSafeEditRoutes(
   // ---------------------------------------------------------------------------
   if (url.pathname === "/api/enhancor/webhook" && req.method === "POST") {
     return handleEnhancorWebhook(req);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Enhancor engine routes — POST endpoints (queue pattern)
+  //
+  //   Each route accepts parameters, submits the job to the Enhancor API,
+  //   inserts a `jobs` table row with vendor='enhancor' + vendor_request_id,
+  //   and immediately returns { request_id, job_id } without waiting for the
+  //   vendor to finish. Completion arrives via POST /api/enhancor/webhook.
+  //
+  //   Webhook URL passed to the Enhancor wrapper is built from the request host
+  //   so it works across dev / staging / prod without env-var plumbing.
+  // ---------------------------------------------------------------------------
+
+  // POST /api/enhancor/skin
+  if (url.pathname === "/api/enhancor/skin" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleEnhancorSkin(req);
+  }
+
+  // POST /api/enhancor/lens
+  if (url.pathname === "/api/enhancor/lens" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleEnhancorLens(req);
+  }
+
+  // POST /api/enhancor/lens-cinema
+  if (url.pathname === "/api/enhancor/lens-cinema" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleEnhancorLensCinema(req);
+  }
+
+  // POST /api/enhancor/lens-reality
+  if (url.pathname === "/api/enhancor/lens-reality" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleEnhancorLensReality(req);
+  }
+
+  // POST /api/enhancor/develop
+  if (url.pathname === "/api/enhancor/develop" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleEnhancorDevelop(req);
+  }
+
+  // POST /api/enhancor/sharpen-portrait
+  if (url.pathname === "/api/enhancor/sharpen-portrait" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleEnhancorSharpenPortrait(req);
+  }
+
+  // POST /api/enhancor/sharpen
+  if (url.pathname === "/api/enhancor/sharpen" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleEnhancorSharpen(req);
+  }
+
+  // GET /api/enhancor/health
+  if (url.pathname === "/api/enhancor/health" && req.method === "GET") {
+    return handleEnhancorHealth();
   }
 
   return null;
@@ -9099,6 +9168,383 @@ async function handleEnhancorWebhook(req: Request): Promise<Response> {
     `[enhancor-webhook] processed request_id=${request_id} → job=${existingRow.id} status=completed`,
   );
   return Response.json({ ok: true, job_id: existingRow.id });
+}
+
+// ---------------------------------------------------------------------------
+// Shared helper — insert a jobs row for a queued Enhancor job and return
+// { request_id, job_id }.
+//
+// Purpose:   After submitting to the Enhancor API, record the job in
+//            PostgREST so the webhook handler can correlate the callback.
+// Inputs:    requestId from the Enhancor API, engine id for metadata.
+// Outputs:   JSON { request_id, job_id } with HTTP 200.
+// Side effects: POST to rest/v1/jobs (single row insert).
+// Failure behavior: non-2xx PostgREST → 500 with detail message.
+// ---------------------------------------------------------------------------
+async function insertEnhancorJobRow(
+  requestId: string,
+  engineId: string,
+): Promise<{ jobId: string }> {
+  if (!SUPABASE_URL) {
+    throw new Error("SUPABASE_URL not configured");
+  }
+  const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/jobs`, {
+    method: "POST",
+    headers: { ...supaHeaders(), Prefer: "return=representation" },
+    body: JSON.stringify({
+      vendor: "enhancor",
+      vendor_request_id: requestId,
+      status: "pending",
+      engine: engineId,
+      job_type: "enhancor",
+      params: {},
+      progress: 0,
+    }),
+  });
+  if (!insertRes.ok) {
+    const t = await insertRes.text();
+    throw new Error(`jobs insert failed ${insertRes.status}: ${t.slice(0, 200)}`);
+  }
+  const rows = await insertRes.json();
+  const jobId: string | undefined = rows?.[0]?.id;
+  if (!jobId) {
+    throw new Error("jobs insert returned no id");
+  }
+  return { jobId };
+}
+
+/** Build the enhancor webhook URL from the incoming request's host. */
+function enhancorWebhookUrl(req: Request): string {
+  const reqUrl = new URL(req.url);
+  const proto = reqUrl.protocol; // 'http:' or 'https:'
+  const host = reqUrl.host;
+  return `${proto}//${host}/api/enhancor/webhook`;
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enhancor/skin
+//
+// Purpose:   Submit a realistic-skin enhancement job (queue pattern).
+// Inputs:    JSON body: img_url (required), model_version, skin_realism_Level,
+//            skin_refinement_level, portrait_depth, output_resolution (v3),
+//            mask_image_url (v3), mask_expand (v3), plus 19 area-lock booleans.
+// Outputs:   { request_id, job_id }
+// Side effects: Enhancor API call + jobs row insert.
+// Failure behavior: missing img_url → 400; vendor/DB error → 500.
+// ---------------------------------------------------------------------------
+async function handleEnhancorSkin(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const img_url = body.img_url as string | undefined;
+  if (!img_url || typeof img_url !== "string") {
+    return Response.json({ error: "img_url is required" }, { status: 400 });
+  }
+
+  try {
+    const webhookUrl = enhancorWebhookUrl(req);
+    const { requestId } = await skin({ ...(body as any), img_url, webhookUrl });
+    const { jobId } = await insertEnhancorJobRow(requestId, "skin-pro");
+    return Response.json({ request_id: requestId, job_id: jobId });
+  } catch (e: any) {
+    console.error("[enhancor/skin] error:", e?.message || e);
+    return Response.json(
+      { error: e?.message || "enhancor/skin failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enhancor/lens
+//
+// Purpose:   Submit a Kora Pro (lens) generation job (queue pattern).
+// Inputs:    JSON body: prompt (required), img_url?, image_size?,
+//            generation_mode?, is_uncensored?, is_hyper_real?.
+// Outputs:   { request_id, job_id }
+// Side effects: Enhancor API call + jobs row insert.
+// Failure behavior: missing prompt → 400; vendor/DB error → 500.
+// ---------------------------------------------------------------------------
+async function handleEnhancorLens(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const prompt = body.prompt as string | undefined;
+  if (!prompt || typeof prompt !== "string") {
+    return Response.json({ error: "prompt is required" }, { status: 400 });
+  }
+
+  try {
+    const webhookUrl = enhancorWebhookUrl(req);
+    const { requestId } = await lens({ ...(body as any), prompt, webhookUrl });
+    const { jobId } = await insertEnhancorJobRow(requestId, "lens-pro");
+    return Response.json({ request_id: requestId, job_id: jobId });
+  } catch (e: any) {
+    console.error("[enhancor/lens] error:", e?.message || e);
+    return Response.json(
+      { error: e?.message || "enhancor/lens failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enhancor/lens-cinema
+//
+// Purpose:   Submit a Kora Pro Cinema generation job (queue pattern).
+// Inputs:    Same payload as /api/enhancor/lens; model is injected as
+//            kora_pro_cinema internally.
+// Outputs:   { request_id, job_id }
+// Side effects: Enhancor API call + jobs row insert.
+// Failure behavior: missing prompt → 400; vendor/DB error → 500.
+// ---------------------------------------------------------------------------
+async function handleEnhancorLensCinema(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const prompt = body.prompt as string | undefined;
+  if (!prompt || typeof prompt !== "string") {
+    return Response.json({ error: "prompt is required" }, { status: 400 });
+  }
+
+  try {
+    const webhookUrl = enhancorWebhookUrl(req);
+    const { requestId } = await lensCinema({ ...(body as any), prompt, webhookUrl });
+    const { jobId } = await insertEnhancorJobRow(requestId, "lens-cinema");
+    return Response.json({ request_id: requestId, job_id: jobId });
+  } catch (e: any) {
+    console.error("[enhancor/lens-cinema] error:", e?.message || e);
+    return Response.json(
+      { error: e?.message || "enhancor/lens-cinema failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enhancor/lens-reality
+//
+// Purpose:   Submit a Kora Reality generation job (queue pattern).
+// Inputs:    JSON body: prompt (required), image_size?, generation_mode?.
+// Outputs:   { request_id, job_id }
+// Side effects: Enhancor API call + jobs row insert.
+// Failure behavior: missing prompt → 400; vendor/DB error → 500.
+// ---------------------------------------------------------------------------
+async function handleEnhancorLensReality(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const prompt = body.prompt as string | undefined;
+  if (!prompt || typeof prompt !== "string") {
+    return Response.json({ error: "prompt is required" }, { status: 400 });
+  }
+
+  try {
+    const webhookUrl = enhancorWebhookUrl(req);
+    const { requestId } = await lensReality({ ...(body as any), prompt, webhookUrl });
+    const { jobId } = await insertEnhancorJobRow(requestId, "lens-reality");
+    return Response.json({ request_id: requestId, job_id: jobId });
+  } catch (e: any) {
+    console.error("[enhancor/lens-reality] error:", e?.message || e);
+    return Response.json(
+      { error: e?.message || "enhancor/lens-reality failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enhancor/develop
+//
+// Purpose:   Submit a detailed-enhancement (develop) job (queue pattern).
+// Inputs:    JSON body: img_url (required).
+// Outputs:   { request_id, job_id }
+// Side effects: Enhancor API call + jobs row insert.
+// Failure behavior: missing img_url → 400; vendor/DB error → 500.
+// ---------------------------------------------------------------------------
+async function handleEnhancorDevelop(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const img_url = body.img_url as string | undefined;
+  if (!img_url || typeof img_url !== "string") {
+    return Response.json({ error: "img_url is required" }, { status: 400 });
+  }
+
+  try {
+    const webhookUrl = enhancorWebhookUrl(req);
+    const { requestId } = await develop({ img_url, webhookUrl });
+    const { jobId } = await insertEnhancorJobRow(requestId, "develop");
+    return Response.json({ request_id: requestId, job_id: jobId });
+  } catch (e: any) {
+    console.error("[enhancor/develop] error:", e?.message || e);
+    return Response.json(
+      { error: e?.message || "enhancor/develop failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enhancor/sharpen-portrait
+//
+// Purpose:   Submit a portrait-upscaler job (queue pattern).
+// Inputs:    JSON body: img_url (required), mode ('fast' | 'professional').
+// Outputs:   { request_id, job_id }
+// Side effects: Enhancor API call + jobs row insert.
+// Failure behavior: missing img_url or invalid mode → 400; vendor/DB error → 500.
+// ---------------------------------------------------------------------------
+async function handleEnhancorSharpenPortrait(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const img_url = body.img_url as string | undefined;
+  if (!img_url || typeof img_url !== "string") {
+    return Response.json({ error: "img_url is required" }, { status: 400 });
+  }
+
+  const mode = (body.mode as string | undefined) ?? "fast";
+  if (mode !== "fast" && mode !== "professional") {
+    return Response.json(
+      { error: "mode must be 'fast' or 'professional'" },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const webhookUrl = enhancorWebhookUrl(req);
+    const { requestId } = await sharpenPortrait({ img_url, mode, webhookUrl });
+    const { jobId } = await insertEnhancorJobRow(requestId, "sharpen-portrait");
+    return Response.json({ request_id: requestId, job_id: jobId });
+  } catch (e: any) {
+    console.error("[enhancor/sharpen-portrait] error:", e?.message || e);
+    return Response.json(
+      { error: e?.message || "enhancor/sharpen-portrait failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enhancor/sharpen
+//
+// Purpose:   Submit a general image-upscaler job (queue pattern).
+// Inputs:    JSON body: img_url (required).
+// Outputs:   { request_id, job_id }
+// Side effects: Enhancor API call + jobs row insert.
+// Failure behavior: missing img_url → 400; vendor/DB error → 500.
+// ---------------------------------------------------------------------------
+async function handleEnhancorSharpen(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const img_url = body.img_url as string | undefined;
+  if (!img_url || typeof img_url !== "string") {
+    return Response.json({ error: "img_url is required" }, { status: 400 });
+  }
+
+  try {
+    const webhookUrl = enhancorWebhookUrl(req);
+    const { requestId } = await sharpen({ img_url, webhookUrl });
+    const { jobId } = await insertEnhancorJobRow(requestId, "sharpen");
+    return Response.json({ request_id: requestId, job_id: jobId });
+  } catch (e: any) {
+    console.error("[enhancor/sharpen] error:", e?.message || e);
+    return Response.json(
+      { error: e?.message || "enhancor/sharpen failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/enhancor/health
+//
+// Purpose:   Ping each Enhancor endpoint with a dry status call using a
+//            known-invalid request_id to determine reachability. Returns a
+//            per-model status object showing ok, latency_ms, and any error.
+// Inputs:    (none)
+// Outputs:   { [model]: { ok: boolean, latency_ms: number, error?: string } }
+// Side effects: one getStatus call per model slug (each is a POST to Enhancor
+//               /api/<slug>/v1/status). Expected to return a non-2xx or a
+//               "not found" body — we treat a network response of any kind as
+//               "reachable" and a thrown network error as "unreachable".
+// Failure behavior: individual slugs can fail independently; all 6 results
+//                   are always returned, with ok=false + error set on failures.
+// ---------------------------------------------------------------------------
+async function handleEnhancorHealth(): Promise<Response> {
+  const slugs = [
+    "realistic-skin",
+    "kora",
+    "kora-reality",
+    "detailed",
+    "upscaler",
+    "image-upscaler",
+  ] as const;
+
+  const PROBE_ID = "health-check-probe-00000000";
+
+  const results = await Promise.all(
+    slugs.map(async (slug) => {
+      const t0 = Date.now();
+      try {
+        // A status call with a synthetic id will fail at the vendor level
+        // (unknown request_id) but that's fine — a response of any kind
+        // means the endpoint is reachable. We catch here and mark ok=true
+        // as long as the call doesn't throw a network error.
+        await enhancorGetStatus(slug, PROBE_ID);
+        return { slug, ok: true, latency_ms: Date.now() - t0 };
+      } catch (e: any) {
+        const msg: string = e?.message || String(e);
+        // Distinguish a network failure (unreachable) from an API-level
+        // error (reachable but rejected). API errors contain "HTTP" in
+        // our error format from apiPost(); network failures do not.
+        const reachable = msg.includes("HTTP");
+        return {
+          slug,
+          ok: reachable,
+          latency_ms: Date.now() - t0,
+          error: msg,
+        };
+      }
+    }),
+  );
+
+  const output: Record<string, { ok: boolean; latency_ms: number; error?: string }> = {};
+  for (const r of results) {
+    const { slug, ...rest } = r;
+    output[slug] = rest;
+  }
+
+  return Response.json(output);
 }
 
 // =============================================================================
