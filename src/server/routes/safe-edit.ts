@@ -132,6 +132,11 @@ export async function handleSafeEditRoutes(
     return handleDetailBrush(req, deps);
   }
 
+  if (url.pathname === "/api/details/skin-tone-match" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleSkinToneMatch(req);
+  }
+
   if (url.pathname === "/api/stamp-asset" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handleStampAsset(req, deps);
@@ -3486,6 +3491,387 @@ async function collageImagesToSingle(
     .toBuffer();
 
   return uploadBufferToStorage(out, "image/png", buildUploadPath, uploadToStorage, "garment-collage");
+}
+
+// =============================================================================
+// /api/details/skin-tone-match — pure pixel-math color correction.
+//
+// Used by detail-brush + forge flows: take a generated detail asset (e.g. a
+// nipple/areola PNG) and re-shift its pixels so the average skin tone matches
+// the target image's skin region. Avoids visible color seams when the user
+// composites the detail back onto the target.
+//
+// Body:
+//   target_url   required — the canvas the detail will land on
+//   detail_url   required — the patch to color-correct
+//   mask_url     optional — single-channel mask of target_url where >128 = skin
+//   mode         optional — 'lab-mean' (default) | 'histogram-match'
+//
+// Response:
+//   { ok, url, mode, target_lab, detail_lab, shift }
+//
+// Modes:
+//   lab-mean         — compute mean LAB of target skin + mean LAB of detail
+//                      non-transparent pixels, shift detail by the delta.
+//   histogram-match  — per-channel CDF remap of detail to match target skin's
+//                      L/A/B distribution. Better on saturated details, ~3x
+//                      slower. Falls back to lab-mean if budget runs out.
+// =============================================================================
+
+async function handleSkinToneMatch(req: Request): Promise<Response> {
+  try {
+    const body = await req.json();
+    const targetUrl = String(body.target_url || "");
+    const detailUrl = String(body.detail_url || "");
+    const maskUrl = body.mask_url ? String(body.mask_url) : null;
+    const mode = String(body.mode || "lab-mean").toLowerCase();
+
+    if (!targetUrl || !detailUrl) {
+      return Response.json({ error: "target_url and detail_url required" }, { status: 400 });
+    }
+    if (!["lab-mean", "histogram-match"].includes(mode)) {
+      return Response.json({ error: "mode must be 'lab-mean' or 'histogram-match'" }, { status: 400 });
+    }
+
+    const sharp = (await import("sharp")).default;
+    const { uploadToStorage, buildUploadPath } = await import("../supabase");
+
+    const [targetResp, detailResp, maskResp] = await Promise.all([
+      fetch(targetUrl),
+      fetch(detailUrl),
+      maskUrl ? fetch(maskUrl) : Promise.resolve(null as any),
+    ]);
+    if (!targetResp.ok) return Response.json({ error: "target_url fetch failed" }, { status: 422 });
+    if (!detailResp.ok) return Response.json({ error: "detail_url fetch failed" }, { status: 422 });
+
+    const targetBuf = Buffer.from(await targetResp.arrayBuffer());
+    const detailBuf = Buffer.from(await detailResp.arrayBuffer());
+    const maskBuf = maskResp && maskResp.ok ? Buffer.from(await maskResp.arrayBuffer()) : null;
+
+    // Decode raw RGB(A) for both images.
+    const { data: targetData, info: targetInfo } = await sharp(targetBuf)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const { data: detailData, info: detailInfo } = await sharp(detailBuf)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    // Resize mask to target dims, single-channel grey.
+    let maskData: Buffer | null = null;
+    let maskInfo: { width: number; height: number } | null = null;
+    if (maskBuf) {
+      const m = await sharp(maskBuf)
+        .resize(targetInfo.width, targetInfo.height, { fit: "fill" })
+        .greyscale()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      maskData = m.data;
+      maskInfo = { width: m.info.width, height: m.info.height };
+    }
+
+    // Mean LAB over the target's skin region (mask if present, else center 30%).
+    const targetLab = computeMeanLab(targetData, targetInfo, maskData, maskInfo, false);
+
+    // Mean LAB over detail's non-transparent pixels.
+    const detailLab = computeMeanLab(detailData, detailInfo, null, null, true);
+
+    let outRaw: Buffer;
+    let histogramFallback = false;
+    if (mode === "histogram-match") {
+      try {
+        outRaw = histogramMatchDetailToTarget(targetData, targetInfo, detailData, detailInfo, maskData, maskInfo);
+      } catch (e) {
+        // Fail soft to lab-mean — still useful.
+        histogramFallback = true;
+        outRaw = applyLabShift(detailData, detailInfo, [
+          targetLab[0] - detailLab[0],
+          targetLab[1] - detailLab[1],
+          targetLab[2] - detailLab[2],
+        ]);
+      }
+    } else {
+      const shift: [number, number, number] = [
+        targetLab[0] - detailLab[0],
+        targetLab[1] - detailLab[1],
+        targetLab[2] - detailLab[2],
+      ];
+      outRaw = applyLabShift(detailData, detailInfo, shift);
+    }
+
+    const outPng = await sharp(outRaw, {
+      raw: {
+        width: detailInfo.width,
+        height: detailInfo.height,
+        channels: detailInfo.channels as 1 | 2 | 3 | 4,
+      },
+    })
+      .png()
+      .toBuffer();
+
+    const url = await uploadBufferToStorage(
+      outPng,
+      "image/png",
+      buildUploadPath,
+      uploadToStorage,
+      "skin-match",
+    );
+
+    const shift: [number, number, number] = [
+      targetLab[0] - detailLab[0],
+      targetLab[1] - detailLab[1],
+      targetLab[2] - detailLab[2],
+    ];
+
+    const headers: Record<string, string> = {};
+    if (histogramFallback) headers["x-histogram-fallback"] = "true";
+
+    return Response.json(
+      {
+        ok: true,
+        url,
+        mode,
+        target_lab: targetLab,
+        detail_lab: detailLab,
+        shift,
+        ...(histogramFallback ? { histogram_fallback: true } : {}),
+      },
+      { headers },
+    );
+  } catch (e: any) {
+    return Response.json({ error: e?.message || "skin-tone-match failed" }, { status: 500 });
+  }
+}
+
+// sRGB 0..255 → CIE LAB (D65). Inline math; no new deps.
+function rgbToLab(R: number, G: number, B: number): [number, number, number] {
+  const r = R / 255, g = G / 255, b = B / 255;
+  const lr = r <= 0.04045 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
+  const lg = g <= 0.04045 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
+  const lb = b <= 0.04045 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
+  // D65 reference white.
+  const X = (lr * 0.4124564 + lg * 0.3575761 + lb * 0.1804375) / 0.95047;
+  const Y = (lr * 0.2126729 + lg * 0.7151522 + lb * 0.0721750) / 1.00000;
+  const Z = (lr * 0.0193339 + lg * 0.1191920 + lb * 0.9503041) / 1.08883;
+  const fx = X > 0.008856 ? Math.cbrt(X) : (7.787 * X + 16 / 116);
+  const fy = Y > 0.008856 ? Math.cbrt(Y) : (7.787 * Y + 16 / 116);
+  const fz = Z > 0.008856 ? Math.cbrt(Z) : (7.787 * Z + 16 / 116);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+function labToRgb(L: number, a: number, b: number): [number, number, number] {
+  const fy = (L + 16) / 116;
+  const fx = a / 500 + fy;
+  const fz = fy - b / 200;
+  const yp = fy * fy * fy > 0.008856 ? fy * fy * fy : (fy - 16 / 116) / 7.787;
+  const xp = fx * fx * fx > 0.008856 ? fx * fx * fx : (fx - 16 / 116) / 7.787;
+  const zp = fz * fz * fz > 0.008856 ? fz * fz * fz : (fz - 16 / 116) / 7.787;
+  const X = xp * 0.95047;
+  const Y = yp * 1.00000;
+  const Z = zp * 1.08883;
+  const lr = X *  3.2404542 + Y * -1.5371385 + Z * -0.4985314;
+  const lg = X * -0.9692660 + Y *  1.8760108 + Z *  0.0415560;
+  const lb = X *  0.0556434 + Y * -0.2040259 + Z *  1.0572252;
+  const r  = lr <= 0.0031308 ? lr * 12.92 : 1.055 * Math.pow(Math.max(0, lr), 1 / 2.4) - 0.055;
+  const g  = lg <= 0.0031308 ? lg * 12.92 : 1.055 * Math.pow(Math.max(0, lg), 1 / 2.4) - 0.055;
+  const bo = lb <= 0.0031308 ? lb * 12.92 : 1.055 * Math.pow(Math.max(0, lb), 1 / 2.4) - 0.055;
+  return [r * 255, g * 255, bo * 255];
+}
+
+function clamp255(v: number): number { return Math.max(0, Math.min(255, Math.round(v))); }
+
+// Compute mean LAB over a region. Region selection:
+//   - if mask provided: pixels where mask>128
+//   - else if alphaGate: pixels where alpha>128 (detail-image case)
+//   - else: center 30% rectangle (heuristic skin-region for target_url)
+// Stride 2 for speed; ~4x fewer pixels processed at no visible accuracy cost.
+function computeMeanLab(
+  data: Buffer,
+  info: { width: number; height: number; channels: number },
+  mask: Buffer | null,
+  maskInfo: { width: number; height: number } | null,
+  alphaGate: boolean,
+): [number, number, number] {
+  const ch = info.channels;
+  let sumL = 0, sumA = 0, sumB = 0, count = 0;
+
+  const cx = info.width / 2;
+  const cy = info.height / 2;
+  const radiusX = info.width * 0.3 / 2;
+  const radiusY = info.height * 0.3 / 2;
+
+  for (let y = 0; y < info.height; y += 2) {
+    for (let x = 0; x < info.width; x += 2) {
+      const idx = (y * info.width + x) * ch;
+      let include = false;
+      if (mask && maskInfo) {
+        const m = mask[y * maskInfo.width + x];
+        include = m > 128;
+      } else if (alphaGate && ch === 4) {
+        include = data[idx + 3] > 128;
+      } else {
+        include = Math.abs(x - cx) < radiusX && Math.abs(y - cy) < radiusY;
+      }
+      if (!include) continue;
+      const lab = rgbToLab(data[idx], data[idx + 1], data[idx + 2]);
+      sumL += lab[0]; sumA += lab[1]; sumB += lab[2];
+      count++;
+    }
+  }
+  if (count === 0) return [50, 0, 0];
+  return [sumL / count, sumA / count, sumB / count];
+}
+
+// Apply a constant LAB shift to every non-transparent pixel of a detail image.
+// Returns a fresh raw buffer with the same channel layout as the input.
+function applyLabShift(
+  data: Buffer,
+  info: { width: number; height: number; channels: number },
+  shift: [number, number, number],
+): Buffer {
+  const ch = info.channels;
+  const out = Buffer.alloc(data.length);
+  for (let i = 0; i < data.length; i += ch) {
+    if (ch === 4 && data[i + 3] < 128) {
+      out[i] = data[i];
+      out[i + 1] = data[i + 1];
+      out[i + 2] = data[i + 2];
+      out[i + 3] = data[i + 3];
+      continue;
+    }
+    const lab = rgbToLab(data[i], data[i + 1], data[i + 2]);
+    const rgb = labToRgb(lab[0] + shift[0], lab[1] + shift[1], lab[2] + shift[2]);
+    out[i] = clamp255(rgb[0]);
+    out[i + 1] = clamp255(rgb[1]);
+    out[i + 2] = clamp255(rgb[2]);
+    if (ch === 4) out[i + 3] = data[i + 3];
+    else if (ch === 2) out[i + 1] = data[i + 1];
+  }
+  return out;
+}
+
+// Per-channel histogram match in LAB space. Build target CDFs from the skin
+// region, build detail CDFs from non-transparent pixels, then for each detail
+// pixel remap each LAB channel via inverse CDF lookup. ~3x more expensive than
+// the lab-mean shift but matches tonal distribution, not just the mean.
+function histogramMatchDetailToTarget(
+  targetData: Buffer,
+  targetInfo: { width: number; height: number; channels: number },
+  detailData: Buffer,
+  detailInfo: { width: number; height: number; channels: number },
+  mask: Buffer | null,
+  maskInfo: { width: number; height: number } | null,
+): Buffer {
+  // Discretize LAB:
+  //   L: 0..100   → 256 bins
+  //   a: -128..127 → 256 bins
+  //   b: -128..127 → 256 bins
+  const BINS = 256;
+  const binL = (v: number) => Math.max(0, Math.min(BINS - 1, Math.round(v / 100 * (BINS - 1))));
+  const binAB = (v: number) => Math.max(0, Math.min(BINS - 1, Math.round(v + 128)));
+  const unbinL = (b: number) => b / (BINS - 1) * 100;
+  const unbinAB = (b: number) => b - 128;
+
+  const tHistL = new Uint32Array(BINS);
+  const tHistA = new Uint32Array(BINS);
+  const tHistB = new Uint32Array(BINS);
+  const dHistL = new Uint32Array(BINS);
+  const dHistA = new Uint32Array(BINS);
+  const dHistB = new Uint32Array(BINS);
+
+  // Build target histogram over skin region (mask or center-30%).
+  const tch = targetInfo.channels;
+  const tcx = targetInfo.width / 2;
+  const tcy = targetInfo.height / 2;
+  const trX = targetInfo.width * 0.3 / 2;
+  const trY = targetInfo.height * 0.3 / 2;
+  for (let y = 0; y < targetInfo.height; y += 2) {
+    for (let x = 0; x < targetInfo.width; x += 2) {
+      const idx = (y * targetInfo.width + x) * tch;
+      let include = false;
+      if (mask && maskInfo) include = mask[y * maskInfo.width + x] > 128;
+      else include = Math.abs(x - tcx) < trX && Math.abs(y - tcy) < trY;
+      if (!include) continue;
+      const lab = rgbToLab(targetData[idx], targetData[idx + 1], targetData[idx + 2]);
+      tHistL[binL(lab[0])]++;
+      tHistA[binAB(lab[1])]++;
+      tHistB[binAB(lab[2])]++;
+    }
+  }
+
+  // Build detail histogram over non-transparent pixels.
+  const dch = detailInfo.channels;
+  for (let y = 0; y < detailInfo.height; y += 2) {
+    for (let x = 0; x < detailInfo.width; x += 2) {
+      const idx = (y * detailInfo.width + x) * dch;
+      if (dch === 4 && detailData[idx + 3] < 128) continue;
+      const lab = rgbToLab(detailData[idx], detailData[idx + 1], detailData[idx + 2]);
+      dHistL[binL(lab[0])]++;
+      dHistA[binAB(lab[1])]++;
+      dHistB[binAB(lab[2])]++;
+    }
+  }
+
+  // CDFs (normalized 0..1) for both.
+  const cdf = (h: Uint32Array): Float32Array => {
+    const out = new Float32Array(BINS);
+    let total = 0;
+    for (let i = 0; i < BINS; i++) total += h[i];
+    if (total === 0) {
+      // Identity ramp — degenerate empty histogram.
+      for (let i = 0; i < BINS; i++) out[i] = i / (BINS - 1);
+      return out;
+    }
+    let acc = 0;
+    for (let i = 0; i < BINS; i++) {
+      acc += h[i];
+      out[i] = acc / total;
+    }
+    return out;
+  };
+  const tCdfL = cdf(tHistL), tCdfA = cdf(tHistA), tCdfB = cdf(tHistB);
+  const dCdfL = cdf(dHistL), dCdfA = cdf(dHistA), dCdfB = cdf(dHistB);
+
+  // Inverse-CDF lookup: for each detail-bin, walk target CDF until we hit the
+  // same probability. Build a 256-entry remap table per channel.
+  const buildLut = (dC: Float32Array, tC: Float32Array): Uint16Array => {
+    const lut = new Uint16Array(BINS);
+    let j = 0;
+    for (let i = 0; i < BINS; i++) {
+      const p = dC[i];
+      while (j < BINS - 1 && tC[j] < p) j++;
+      lut[i] = j;
+    }
+    return lut;
+  };
+  const lutL = buildLut(dCdfL, tCdfL);
+  const lutA = buildLut(dCdfA, tCdfA);
+  const lutB = buildLut(dCdfB, tCdfB);
+
+  // Apply: for each detail pixel, LAB → bin → lut → unbin → RGB.
+  const out = Buffer.alloc(detailData.length);
+  for (let i = 0; i < detailData.length; i += dch) {
+    if (dch === 4 && detailData[i + 3] < 128) {
+      out[i] = detailData[i];
+      out[i + 1] = detailData[i + 1];
+      out[i + 2] = detailData[i + 2];
+      out[i + 3] = detailData[i + 3];
+      continue;
+    }
+    const lab = rgbToLab(detailData[i], detailData[i + 1], detailData[i + 2]);
+    const newL = unbinL(lutL[binL(lab[0])]);
+    const newA = unbinAB(lutA[binAB(lab[1])]);
+    const newB = unbinAB(lutB[binAB(lab[2])]);
+    const rgb = labToRgb(newL, newA, newB);
+    out[i] = clamp255(rgb[0]);
+    out[i + 1] = clamp255(rgb[1]);
+    out[i + 2] = clamp255(rgb[2]);
+    if (dch === 4) out[i + 3] = detailData[i + 3];
+    else if (dch === 2) out[i + 1] = detailData[i + 1];
+  }
+  return out;
 }
 
 async function uploadBufferToStorage(
