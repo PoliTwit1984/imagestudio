@@ -1,5 +1,6 @@
 import { checkAuth } from "../auth";
-import { env } from "../config";
+import { env, SUPABASE_URL } from "../config";
+import { supaHeaders } from "../supabase";
 import type { RouteDeps } from "./types";
 
 // =============================================================================
@@ -136,8 +137,10 @@ export async function handleSafeEditRoutes(
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     // Public-facing catalog: only id, name, category, description, brush_size_px,
     // strength_label. Hidden prompts and underlying engine stay server-side.
+    // Source order: detail_brush_assets DB table → DETAIL_BRUSH_REGISTRY fallback.
+    const registry = await getDetailBrushAssets({});
     return Response.json({
-      brushes: Object.entries(DETAIL_BRUSH_REGISTRY).map(([id, b]) => ({
+      brushes: Object.entries(registry).map(([id, b]) => ({
         id,
         name: b.name,
         category: b.category,
@@ -715,6 +718,104 @@ const DETAIL_BRUSH_REGISTRY: Record<string, DetailBrush> = {
     dilatePct: 0.015,
   },
 };
+
+// =============================================================================
+// getDetailBrushAssets
+//
+// Returns the active detail-brush catalog. DB-first, code-fallback:
+//   1. If `detail_brush_assets` exists and has visible rows, map them into
+//      the DETAIL_BRUSH_REGISTRY shape and return that. This lets brushes
+//      be added/edited/reordered at runtime without a code change.
+//   2. Otherwise (table missing, empty, error, or disabled) — return the
+//      in-code DETAIL_BRUSH_REGISTRY. Safe default.
+//
+// `deps.db` is reserved for a future Supabase JS client; today the code
+// uses the project's PostgREST fetch pattern (see src/server/routes/public.ts).
+// =============================================================================
+async function getDetailBrushAssets(
+  deps: { db?: any } = {}
+): Promise<typeof DETAIL_BRUSH_REGISTRY> {
+  try {
+    if (deps?.db && typeof deps.db.from === "function") {
+      // Supabase JS client path (forward-compat — not used today).
+      const { data, error } = await deps.db
+        .from("detail_brush_assets")
+        .select("*")
+        .eq("is_hidden", false)
+        .order("position", { ascending: true });
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return mapDetailBrushRows(data);
+      }
+    } else if (SUPABASE_URL) {
+      // Project-standard PostgREST path. Mirrors how characters.ts +
+      // public.ts read from Supabase: a plain fetch with supaHeaders().
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/detail_brush_assets?is_hidden=eq.false&order=position.asc`,
+        { headers: supaHeaders() }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return mapDetailBrushRows(data);
+        }
+      }
+      // res.status === 404 → table not yet migrated; fall through to registry.
+    }
+  } catch {
+    // Network error, table missing, malformed row — fall through.
+  }
+  return DETAIL_BRUSH_REGISTRY;
+}
+
+// Map a detail_brush_assets row to the DETAIL_BRUSH_REGISTRY shape so
+// downstream code (route handlers, brush-id lookups) keeps working
+// unchanged whether the catalog comes from DB or from code.
+function mapDetailBrushRows(
+  rows: Array<{
+    slug?: string;
+    label?: string;
+    category?: string | null;
+    prompt?: string;
+    params?: Record<string, any> | null;
+  }>
+): typeof DETAIL_BRUSH_REGISTRY {
+  const out: Record<string, DetailBrush> = {};
+  for (const row of rows) {
+    if (!row || !row.slug || !row.prompt) continue;
+    const params = (row.params || {}) as Record<string, any>;
+    const intensity =
+      params.intensity === "low" || params.intensity === "high" ? params.intensity : "medium";
+    const category =
+      row.category &&
+      ["Anatomy", "Fabric", "Lighting", "Hair", "Mood", "Removal"].includes(row.category)
+        ? (row.category as DetailBrush["category"])
+        : "Anatomy";
+    out[row.slug] = {
+      name: String(row.label ?? row.slug),
+      category,
+      description: typeof params.description === "string" ? params.description : "",
+      prompt: String(row.prompt),
+      brushSizePx:
+        typeof params.brush_size_px === "number" && params.brush_size_px > 0
+          ? params.brush_size_px
+          : 30,
+      intensity,
+      intensityLabel:
+        typeof params.intensity_label === "string"
+          ? params.intensity_label
+          : intensity === "low"
+          ? "Subtle"
+          : intensity === "high"
+          ? "Bold"
+          : "Medium",
+      dilatePct:
+        typeof params.dilate_pct === "number" && params.dilate_pct > 0
+          ? params.dilate_pct
+          : undefined,
+    };
+  }
+  return out as typeof DETAIL_BRUSH_REGISTRY;
+}
 
 const DARKROOM_SKIN_PROMPT_V1 = [
   "Enhance skin texture only.",
