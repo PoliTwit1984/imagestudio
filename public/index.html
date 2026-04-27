@@ -2454,8 +2454,11 @@ async function placeGarmentOverlay() {
     wireGarmentHandles();
     toast('Drag to position · corners/edges to resize · cyan dot to rotate · Stamp (direct) or Bake→Mask (AI)');
   } catch (err) {
+    console.error('garment-load', 'placeGarmentOverlay failed', err);
+    // Sticky banner inside the painter so the failure is visible — toast alone
+    // disappears too fast and the user thinks the click did nothing.
+    showPainterError('Could not load garment: ' + err.message);
     toast('Could not load garment image: ' + err.message);
-    console.error('placeGarmentOverlay', err);
   }
 }
 
@@ -2711,6 +2714,8 @@ async function handleGarmentUpload(input) {
       }
     }
   } catch (err) {
+    console.error('garment-load', 'upload failed', err);
+    showPainterError('Could not load garment: ' + err.message);
     toast('Garment upload failed: ' + err.message);
   }
   input.value = '';
@@ -2754,7 +2759,14 @@ async function removeGarmentBg(silent) {
     setGarmentUrl(data.image_url, rawUrl);
     if (!silent) toast('Background removed');
   } catch (err) {
+    console.error('garment-load', 'removeGarmentBg failed', err);
+    // Promote to a sticky banner inside the painter — silent only suppresses
+    // the toast, NOT the visible error surface. A failure here means the
+    // garment URL never loaded; user must see why.
+    showPainterError('Could not load garment: ' + err.message);
     if (!silent) toast('Remove BG failed: ' + err.message);
+    // Best-effort fallback: still set the raw URL so manual retry / Place Overlay can attempt it.
+    try { setGarmentUrl(rawUrl); } catch (_) {}
   } finally {
     btn.disabled = false; btn.textContent = orig;
   }
@@ -2771,10 +2783,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const url = inp.value.trim();
     if (!url || url === lastSeen) return;
     lastSeen = url;
-    if (document.getElementById('mask-auto-removebg').checked) {
-      await removeGarmentBg(true);
-    } else {
-      setGarmentUrl(url);
+    try {
+      if (document.getElementById('mask-auto-removebg').checked) {
+        // removeGarmentBg(silent=true) handles its own banner via showPainterError
+        // on failure, so we only need to forward unhandled exceptions here.
+        await removeGarmentBg(true);
+      } else {
+        // Auto-strip OFF — set the URL, then verify it actually decodes within ~3s.
+        // Without this probe, an expired Supabase URL or CORS block would silently
+        // leave a broken preview and a useless garmentRefs entry.
+        setGarmentUrl(url);
+        const probePromise = loadImageNoTaint(url);
+        const timeoutPromise = new Promise((_, rej) =>
+          setTimeout(() => rej(new Error('garment URL load timed out after 3s')), 3000)
+        );
+        try {
+          await Promise.race([probePromise, timeoutPromise]);
+        } catch (probeErr) {
+          console.error('garment-load', 'paste-probe failed', probeErr);
+          showPainterError('Could not load garment: ' + probeErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('garment-load', 'process() failed', err);
+      showPainterError('Could not load garment: ' + err.message);
     }
   };
   inp.addEventListener('paste', () => {
@@ -3416,7 +3448,18 @@ function teardownDetailBrushPainterMode() {
 }
 
 function showPainterError(msg) {
-  const banner = document.getElementById('detail-brush-banner');
+  // Banner auto-creates if missing — works for Detail Brush AND garment-load failures.
+  // Banner persists ("sticky") inside the painter modal so the user actually sees the error
+  // instead of a fleeting toast that disappears mid-blink.
+  const stage = document.getElementById('mask-stage');
+  let banner = document.getElementById('detail-brush-banner');
+  if (!banner && stage && stage.parentNode) {
+    banner = document.createElement('div');
+    banner.id = 'detail-brush-banner';
+    banner.className = 'garment-error-banner';
+    banner.style.cssText = 'border:1px solid #dc2626;padding:8px 14px;border-radius:8px;font-size:0.85rem;margin-bottom:10px;font-weight:600;';
+    stage.parentNode.insertBefore(banner, stage);
+  }
   if (!banner) return;
   banner.style.background = 'linear-gradient(135deg,#dc262633,#7c1d1d33)';
   banner.style.borderColor = '#dc2626';
