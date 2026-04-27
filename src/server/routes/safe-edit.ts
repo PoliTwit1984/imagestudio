@@ -222,6 +222,17 @@ export async function handleSafeEditRoutes(
   }
 
   // ---------------------------------------------------------------------------
+  // LUT apply — apply a Hald-CLUT PNG to a target image with trilinear
+  // interpolation and optional intensity blend (LUT-mapped vs original).
+  // Pure pixel math: no engine call, deterministic, ~100-200ms for a 1MP image.
+  // ---------------------------------------------------------------------------
+
+  if (url.pathname === "/api/lut/apply" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleLutApply(req);
+  }
+
+  // ---------------------------------------------------------------------------
   // Presets CRUD (engine_config | lut | chain) — see migration 0044 + 0049.
   // ---------------------------------------------------------------------------
 
@@ -4031,6 +4042,252 @@ async function applyLutNearest(
   return await sharp(out, { raw: { width: w, height: h, channels: 3 } })
     .png()
     .toBuffer();
+}
+
+// =============================================================================
+// /api/lut/apply — apply a Hald-CLUT PNG to a target image
+//
+// Body: { image_url, lut_url, intensity?, output_size? }
+//   - image_url: target image to grade
+//   - lut_url:   public URL of a 512x512 Hald-CLUT PNG (e.g., emitted by
+//                /api/lut/extract or any standard 33x33x33 cube renderer)
+//   - intensity: 0..1, default 1.0 — blend strength (1.0 = full LUT, 0.0 = original)
+//   - output_size: optional max-dim cap; default = source dimensions, no scale
+//
+// Algorithm: per-pixel trilinear interpolation across the 8 surrounding cube
+// cells. Cell index uses the same B-outer/G-mid/R-inner convention as
+// encodeHaldClut/decodeHaldClut in src/server/lut.ts. Alpha (if present) is
+// passed through untouched.
+//
+// Response: { ok, url, applied_lut, intensity, duration_ms }
+// Errors: 400 (missing url), 422 (fetch/decode failure), 500 (encode/upload).
+// =============================================================================
+
+async function handleLutApply(req: Request): Promise<Response> {
+  const startedAt = Date.now();
+  try {
+    const body = await req.json().catch(() => ({}));
+    const imageUrl = String(body.image_url || "");
+    const lutUrl = String(body.lut_url || "");
+    const rawIntensity = body.intensity === undefined ? 1 : Number(body.intensity);
+    const intensity = Number.isFinite(rawIntensity)
+      ? Math.max(0, Math.min(1, rawIntensity))
+      : 1;
+    const rawOutputSize = body.output_size === undefined ? 0 : Number(body.output_size);
+    const outputSize = Number.isFinite(rawOutputSize) && rawOutputSize > 0
+      ? Math.floor(rawOutputSize)
+      : 0;
+
+    if (!imageUrl) {
+      return Response.json({ error: "image_url required" }, { status: 400 });
+    }
+    if (!lutUrl) {
+      return Response.json({ error: "lut_url required" }, { status: 400 });
+    }
+
+    const sharp = (await import("sharp")).default;
+    const { uploadToStorage, buildUploadPath } = await import("../supabase");
+
+    // -------- Fetch target image + LUT PNG --------
+    let imgBuf: Buffer;
+    let lutBuf: Buffer;
+    try {
+      const [iRes, lRes] = await Promise.all([fetch(imageUrl), fetch(lutUrl)]);
+      if (!iRes.ok) throw new Error(`image fetch ${iRes.status}`);
+      if (!lRes.ok) throw new Error(`lut fetch ${lRes.status}`);
+      imgBuf = Buffer.from(await iRes.arrayBuffer());
+      lutBuf = Buffer.from(await lRes.arrayBuffer());
+    } catch (err: any) {
+      return Response.json(
+        { error: `fetch failed: ${err?.message || err}` },
+        { status: 422 }
+      );
+    }
+
+    // -------- Decode the Hald-CLUT into a Float32 cube --------
+    let cube: Float32Array;
+    try {
+      cube = await decodeHaldClut(lutBuf);
+    } catch (err: any) {
+      return Response.json(
+        { error: `lut decode failed: ${err?.message || err}` },
+        { status: 422 }
+      );
+    }
+    if (cube.length !== CUBE_FLOATS) {
+      return Response.json(
+        { error: `lut cube size mismatch: expected ${CUBE_FLOATS} floats, got ${cube.length}` },
+        { status: 422 }
+      );
+    }
+
+    // -------- Decode the target image to raw pixels --------
+    let srcData: Buffer;
+    let width: number;
+    let height: number;
+    let channels: number;
+    try {
+      let pipeline = sharp(imgBuf).toColorspace("srgb");
+      if (outputSize > 0) {
+        const meta = await sharp(imgBuf).metadata();
+        const srcMax = Math.max(meta.width || 0, meta.height || 0);
+        if (srcMax > outputSize) {
+          pipeline = pipeline.resize(outputSize, outputSize, {
+            fit: "inside",
+            withoutEnlargement: true,
+          });
+        }
+      }
+      const out = await pipeline.raw().toBuffer({ resolveWithObject: true });
+      srcData = out.data;
+      width = out.info.width;
+      height = out.info.height;
+      channels = out.info.channels;
+      if (channels !== 3 && channels !== 4) {
+        return Response.json(
+          { error: `unsupported channel count ${channels}; expected 3 or 4` },
+          { status: 422 }
+        );
+      }
+    } catch (err: any) {
+      return Response.json(
+        { error: `image decode failed: ${err?.message || err}` },
+        { status: 422 }
+      );
+    }
+
+    // -------- Apply LUT pixel-by-pixel with trilinear interpolation --------
+    // STEP = LUT_SIZE - 1 = 32. Walk in B-outer/G-mid/R-inner order so that
+    // cellIdx(R,G,B) = (B*S² + G*S + R) — matches encodeHaldClut.
+    const STEP = LUT_SIZE - 1;
+    const SIZE = LUT_SIZE;
+    const SS = SIZE * SIZE;
+    const out = Buffer.alloc(srcData.length);
+    const inv255 = 1 / 255;
+    const blendLut = intensity;
+    const blendSrc = 1 - intensity;
+    const numPixels = width * height;
+
+    for (let p = 0; p < numPixels; p++) {
+      const i = p * channels;
+      const sr = srcData[i] * inv255;
+      const sg = srcData[i + 1] * inv255;
+      const sb = srcData[i + 2] * inv255;
+
+      // Cube coordinates in [0, STEP]
+      const fr = sr * STEP;
+      const fg = sg * STEP;
+      const fb = sb * STEP;
+
+      let r0 = Math.floor(fr); if (r0 < 0) r0 = 0; else if (r0 > STEP) r0 = STEP;
+      let g0 = Math.floor(fg); if (g0 < 0) g0 = 0; else if (g0 > STEP) g0 = STEP;
+      let b0 = Math.floor(fb); if (b0 < 0) b0 = 0; else if (b0 > STEP) b0 = STEP;
+      const r1 = r0 < STEP ? r0 + 1 : STEP;
+      const g1 = g0 < STEP ? g0 + 1 : STEP;
+      const b1 = b0 < STEP ? b0 + 1 : STEP;
+
+      const dr = fr - r0;
+      const dg = fg - g0;
+      const db = fb - b0;
+      const idr = 1 - dr;
+      const idg = 1 - dg;
+      const idb = 1 - db;
+
+      // Eight corner byte-offsets (cellIdx * 3) into the cube.
+      const o000 = (b0 * SS + g0 * SIZE + r0) * 3;
+      const o100 = (b0 * SS + g0 * SIZE + r1) * 3;
+      const o010 = (b0 * SS + g1 * SIZE + r0) * 3;
+      const o110 = (b0 * SS + g1 * SIZE + r1) * 3;
+      const o001 = (b1 * SS + g0 * SIZE + r0) * 3;
+      const o101 = (b1 * SS + g0 * SIZE + r1) * 3;
+      const o011 = (b1 * SS + g1 * SIZE + r0) * 3;
+      const o111 = (b1 * SS + g1 * SIZE + r1) * 3;
+
+      // Trilinear weights — eight corners summed once per channel.
+      const w000 = idr * idg * idb;
+      const w100 = dr  * idg * idb;
+      const w010 = idr * dg  * idb;
+      const w110 = dr  * dg  * idb;
+      const w001 = idr * idg * db;
+      const w101 = dr  * idg * db;
+      const w011 = idr * dg  * db;
+      const w111 = dr  * dg  * db;
+
+      const lr =
+        cube[o000]     * w000 + cube[o100]     * w100 +
+        cube[o010]     * w010 + cube[o110]     * w110 +
+        cube[o001]     * w001 + cube[o101]     * w101 +
+        cube[o011]     * w011 + cube[o111]     * w111;
+      const lg =
+        cube[o000 + 1] * w000 + cube[o100 + 1] * w100 +
+        cube[o010 + 1] * w010 + cube[o110 + 1] * w110 +
+        cube[o001 + 1] * w001 + cube[o101 + 1] * w101 +
+        cube[o011 + 1] * w011 + cube[o111 + 1] * w111;
+      const lb =
+        cube[o000 + 2] * w000 + cube[o100 + 2] * w100 +
+        cube[o010 + 2] * w010 + cube[o110 + 2] * w110 +
+        cube[o001 + 2] * w001 + cube[o101 + 2] * w101 +
+        cube[o011 + 2] * w011 + cube[o111 + 2] * w111;
+
+      // Blend LUT-mapped vs original pixel via intensity (1.0 = full LUT).
+      let or = (sr * blendSrc + lr * blendLut) * 255;
+      let og = (sg * blendSrc + lg * blendLut) * 255;
+      let ob = (sb * blendSrc + lb * blendLut) * 255;
+      if (or < 0) or = 0; else if (or > 255) or = 255;
+      if (og < 0) og = 0; else if (og > 255) og = 255;
+      if (ob < 0) ob = 0; else if (ob > 255) ob = 255;
+      out[i]     = Math.round(or);
+      out[i + 1] = Math.round(og);
+      out[i + 2] = Math.round(ob);
+      if (channels === 4) out[i + 3] = srcData[i + 3];
+    }
+
+    // -------- Re-encode + upload --------
+    let outPng: Buffer;
+    try {
+      outPng = await sharp(out, {
+        raw: { width, height, channels: channels as 3 | 4 },
+      })
+        .png()
+        .toBuffer();
+    } catch (err: any) {
+      return Response.json(
+        { error: `image encode failed: ${err?.message || err}` },
+        { status: 500 }
+      );
+    }
+
+    let resultUrl: string;
+    try {
+      const filename = `apply-${Date.now().toString(36)}-${Math.random()
+        .toString(16)
+        .slice(2, 8)}.png`;
+      const path = buildUploadPath("luts-applied", filename, "image/png");
+      resultUrl = await uploadToStorage(
+        path,
+        outPng.buffer.slice(outPng.byteOffset, outPng.byteOffset + outPng.byteLength),
+        "image/png"
+      );
+    } catch (err: any) {
+      return Response.json(
+        { error: `upload failed: ${err?.message || err}` },
+        { status: 500 }
+      );
+    }
+
+    return Response.json({
+      ok: true,
+      url: resultUrl,
+      applied_lut: lutUrl,
+      intensity,
+      duration_ms: Date.now() - startedAt,
+    });
+  } catch (err: any) {
+    return Response.json(
+      { error: err?.message || "lut apply failed" },
+      { status: 500 }
+    );
+  }
 }
 
 async function handlePresetsSoftDelete(id: string): Promise<Response> {
