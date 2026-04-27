@@ -1,6 +1,7 @@
 import { checkAuth } from "../auth";
 import { env } from "../config";
 import { buildUploadPath, uploadToStorage } from "../supabase";
+import { spawnJob } from "./safe-edit";
 import type { RouteDeps } from "./types";
 
 // Identity anchor: prepended server-side to single-image edit prompts so the
@@ -578,6 +579,200 @@ RULES:
       return Response.json({ ok: true, prompt });
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // /api/develop/async — POC for spawnJob() pattern. Wraps the Topaz Bloom
+  // Realism upscale (the existing sync /api/topaz takes 30-60s) into a
+  // fire-and-forget job that returns { job_id } immediately.
+  //
+  // Body: { image_url, model?, user_id?, input_asset_id? }
+  //   - model defaults to "Bloom Realism" (the standard Develop preset).
+  //   - input_asset_id (optional) wires the job row to its source asset.
+  //
+  // Response: { ok: true, job_id }. Client polls GET /api/jobs/:id until
+  // status === 'completed' (then output_asset_id points at the new asset)
+  // or 'failed' (error_class + error_detail explain).
+  //
+  // Worker pattern: every long-running engine route should follow this
+  // shape — call updateProgress() between vendor stages, return
+  // { output_url, output_asset_id } on success or { error, error_class }
+  // on failure. NEVER throw out of the worker; the spawnJob outer-catch
+  // is a safety net, not the primary error path.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/develop/async" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    try {
+      const body = await req.json();
+      const imageUrl = String(body.image_url || "");
+      if (!imageUrl) {
+        return Response.json({ error: "image_url required" }, { status: 400 });
+      }
+      const topazModel = String(body.model || "Bloom Realism");
+      const userId = body.user_id ?? null;
+      const inputAssetId = body.input_asset_id ?? null;
+
+      const { job_id } = await spawnJob(deps, {
+        engine: "develop",
+        job_type: "upscale",
+        input_asset_id: inputAssetId,
+        user_id: userId,
+        params: { image_url: imageUrl, model: topazModel },
+        worker: async (jobId, updateProgress) => {
+          try {
+            await updateProgress(0.05, "fetching source");
+            const imgResp = await fetch(imageUrl);
+            if (!imgResp.ok) {
+              return {
+                error: `source fetch ${imgResp.status}`,
+                error_class: "invalid_input",
+              };
+            }
+            const imgBuf = Buffer.from(await imgResp.arrayBuffer());
+
+            // Topaz routes "Bloom"/"Wonder"/"Redefine" through enhance-gen,
+            // everything else through enhance — same logic as /api/topaz.
+            const isGenerative =
+              topazModel.startsWith("Bloom") ||
+              topazModel === "Redefine" ||
+              topazModel.startsWith("Wonder");
+            const endpoint = isGenerative ? "enhance-gen" : "enhance";
+
+            const formData = new FormData();
+            formData.append("model", topazModel);
+            formData.append(
+              "image",
+              new Blob([imgBuf], { type: "image/jpeg" }),
+              "input.jpg",
+            );
+            formData.append("output_width", "1536");
+            formData.append("output_height", "2048");
+            if (isGenerative) {
+              formData.append("creativity", "2");
+              formData.append("texture", "3");
+              formData.append("autoprompt", "true");
+            }
+
+            await updateProgress(0.15, "submitting to Topaz");
+            const submitRes = await fetch(
+              `https://api.topazlabs.com/image/v1/${endpoint}/async`,
+              {
+                method: "POST",
+                headers: { "X-API-Key": env("TOPAZ_API_KEY") },
+                body: formData,
+              },
+            );
+            if (!submitRes.ok) {
+              const errText = await submitRes.text();
+              const klass =
+                submitRes.status === 401 || submitRes.status === 403
+                  ? "auth"
+                  : submitRes.status === 429
+                  ? "rate_limit"
+                  : "service";
+              return {
+                error: `Topaz submit ${submitRes.status}: ${errText.slice(0, 200)}`,
+                error_class: klass,
+              };
+            }
+            const submitData = await submitRes.json();
+            const processId = submitData.process_id;
+
+            // Poll Topaz. Max 120s wall clock = 24 polls at 5s. Update
+            // progress between polls so the UI moves between 0.15 and 0.80.
+            const pollStart = Date.now();
+            const maxWait = 120_000;
+            let resultUrl: string | null = null;
+            let pollCount = 0;
+            while (Date.now() - pollStart < maxWait) {
+              await new Promise((r) => setTimeout(r, 5000));
+              pollCount += 1;
+              const statusRes = await fetch(
+                `https://api.topazlabs.com/image/v1/status/${processId}`,
+                { headers: { "X-API-Key": env("TOPAZ_API_KEY") } },
+              );
+              const statusData = await statusRes.json();
+              if (statusData.status === "Completed") {
+                const dlRes = await fetch(
+                  `https://api.topazlabs.com/image/v1/download/${processId}`,
+                  { headers: { "X-API-Key": env("TOPAZ_API_KEY") } },
+                );
+                const dlData = await dlRes.json();
+                resultUrl = dlData.download_url || null;
+                break;
+              }
+              if (statusData.status === "Failed") {
+                return {
+                  error: "Topaz reported Failed",
+                  error_class: "service",
+                };
+              }
+              // Glide progress from 0.15 → 0.75 across polls.
+              const ramp = Math.min(0.75, 0.15 + pollCount * 0.05);
+              await updateProgress(ramp, `polling Topaz (attempt ${pollCount})`);
+            }
+            if (!resultUrl) {
+              return {
+                error: "Topaz timed out after 120s",
+                error_class: "timeout",
+              };
+            }
+
+            await updateProgress(0.85, "rehosting to Supabase");
+            const rehosted = await rehostToStorage(resultUrl, {
+              filename_prefix: "develop-async",
+            });
+
+            await updateProgress(0.95, "saving asset row");
+            // saveAsset is wired into the deps bag in index.ts — reach via
+            // the loose-typed `as any` pattern shared by the rest of the
+            // codebase. parent_id resolves from the source URL when the
+            // dual-write catalog has a row for it.
+            let outputAssetId: string | null = null;
+            try {
+              const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+              outputAssetId = await (deps as any).saveAsset?.({
+                asset_type: "edit",
+                source_url: rehosted,
+                engine: "topaz",
+                edit_action: "upscale",
+                prompt: "[topaz-bloom-realism]",
+                parent_id: parentId || null,
+                metadata: {
+                  topaz_model: topazModel,
+                  job_id: jobId,
+                  source_url: imageUrl,
+                },
+                tags: ["topaz", "develop", "async"],
+                user_id: userId,
+              });
+            } catch (e) {
+              // saveAsset failure is non-fatal — the job still completed,
+              // we just couldn't catalog it. Surface the URL anyway.
+              console.error(
+                `[develop/async] saveAsset failed (non-fatal):`,
+                e,
+              );
+            }
+
+            return {
+              output_url: rehosted,
+              output_asset_id: outputAssetId || undefined,
+            };
+          } catch (e: any) {
+            // Anything we didn't classify above falls into 'service'.
+            return {
+              error: String(e?.message || e),
+              error_class: "service",
+            };
+          }
+        },
+      });
+
+      return Response.json({ ok: true, job_id });
+    } catch (err: any) {
+      return Response.json({ error: err?.message || String(err) }, { status: 500 });
     }
   }
 

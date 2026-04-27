@@ -439,6 +439,46 @@ export async function handleSafeEditRoutes(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Async jobs — read + cancel surface for the spawnJob() helper below.
+  //
+  //   GET    /api/jobs/:id          → row from `jobs` table or 404
+  //   GET    /api/jobs?status=...&user_id=...&limit=
+  //                                 → list of recent jobs (default order:
+  //                                   created_at DESC). Both filters
+  //                                   optional; missing filters return
+  //                                   everything.
+  //   DELETE /api/jobs/:id          → mark status='cancelled'. Best-effort:
+  //                                   the in-flight worker promise can't
+  //                                   be killed (we have no signal handles
+  //                                   in v1), so the cancellation just
+  //                                   instructs the final-state writer to
+  //                                   skip overwriting the cancelled flag.
+  //
+  // The list filter for ?status= accepts any of the CHECK values from
+  // migration 0050: queued, running, completed, failed, cancelled, expired.
+  // Garbage values fall through to PostgREST and the client sees the
+  // upstream error — no client-side validation here on purpose (keeps the
+  // route thin; the DB is the canonical source of truth on valid states).
+  // ---------------------------------------------------------------------------
+  {
+    const jobIdMatch = url.pathname.match(/^\/api\/jobs\/([0-9a-fA-F-]{36})$/);
+    if (jobIdMatch) {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      const jobId = jobIdMatch[1];
+      if (req.method === "GET") return handleJobsGet(jobId);
+      if (req.method === "DELETE") return handleJobsCancel(jobId);
+      return Response.json(
+        { error: "method_not_allowed", method: req.method, path: url.pathname },
+        { status: 405 }
+      );
+    }
+  }
+  if (url.pathname === "/api/jobs" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleJobsList(url);
+  }
+
   return null;
 }
 
@@ -7486,6 +7526,352 @@ async function handleDetailSubmissions(url: URL): Promise<Response> {
     return Response.json(
       { error: "detail_submissions_error", detail: err?.message || String(err) },
       { status: 500 }
+    );
+  }
+}
+
+// =============================================================================
+// Async job-spawn pattern — spawnJob() helper + GET / DELETE /api/jobs surface.
+//
+// Long-running engine work in Darkroom (Topaz upscales = 30-60s, Magnific
+// reveals, video gen, multi-pass chains) blocks the request thread for the
+// duration of the vendor call. spawnJob() flips the model: write a row into
+// the `jobs` table (created in migration 0050), kick the actual work off as a
+// fire-and-forget promise, and return { job_id } synchronously. The UI polls
+// GET /api/jobs/:id for status + progress.
+//
+// Lifecycle inside the worker promise:
+//   queued  → INSERT (synchronous before return)
+//   running → first PATCH (synchronous before return)
+//             worker callback runs; calls updateProgress() to push fractions
+//   completed | failed | cancelled → final PATCH from inside the worker
+//
+// Cancellation (DELETE /api/jobs/:id) is BEST-EFFORT in v1: we have no signal
+// handle on the in-flight promise, so the vendor work keeps running. The
+// final-state PATCH guards against overwriting a 'cancelled' row — if a user
+// cancelled mid-flight, the result is dropped on the floor when it lands.
+//
+// Errors NEVER propagate out of the worker promise — they're caught,
+// classified into params.error_class (defaulting to 'service'), and stored
+// alongside .error_detail. The fire-and-forget `.catch(...)` chain at the
+// spawn site is a belt-and-suspenders safety net for bugs in the worker
+// wrapper itself.
+// =============================================================================
+
+export interface SpawnJobParams {
+  /** Which Darkroom engine owns this job ('develop', 'reveal', 'lock', etc.). */
+  engine: string;
+  /** Job-type label ('upscale', 'face-swap', 'video-gen', 'chain-run', ...). */
+  job_type: string;
+  /** Optional source asset uuid — flows into jobs.input_asset_id for audit. */
+  input_asset_id?: string | null;
+  /** Optional ownership tag — flows into jobs.user_id. */
+  user_id?: string | null;
+  /** Engine-specific request bag (model, lora, etc.). Stored as jsonb. */
+  params: Record<string, any>;
+  /**
+   * The actual work. Receives the job_id (so it can fan out to vendor APIs
+   * with our id stamped on it) and an updateProgress callback (closure over
+   * the row so it patches the right one). Returns the success/failure shape
+   * that spawnJob unpacks into the final PATCH.
+   *
+   * The worker should NEVER throw — catch internally and return
+   * { error, error_class }. spawnJob's outer .catch() exists only to swallow
+   * bugs in the worker wrapper itself; well-behaved workers route their
+   * failures through the return-value channel for cleaner classification.
+   */
+  worker: (
+    jobId: string,
+    updateProgress: (frac: number, msg?: string) => Promise<void>,
+  ) => Promise<{
+    output_url?: string;
+    output_asset_id?: string;
+    error?: string;
+    error_class?: string;
+  }>;
+}
+
+/**
+ * Spawn an async engine job. Inserts a row in `jobs`, transitions it to
+ * 'running', then fires the worker as a detached promise. Returns the
+ * job_id immediately — callers (typically a route handler) Response.json()
+ * the id back to the client without awaiting the worker.
+ *
+ * The deps bag is passed through unchanged from the calling route handler.
+ * spawnJob doesn't currently read anything from deps directly — it talks
+ * to PostgREST via supaHeaders() — but the param is here so engine workers
+ * can reach saveAsset/lookupAssetIdByUrl without re-importing.
+ */
+export async function spawnJob(
+  _deps: any,
+  params: SpawnJobParams,
+): Promise<{ job_id: string }> {
+  if (!SUPABASE_URL) {
+    // No DB → no async tracking is possible. Surface as a synthetic error
+    // so the caller can fall back to the synchronous path. Throwing keeps
+    // the contract honest: a missing DB is a deployment misconfig, not a
+    // user-facing fault.
+    throw new Error("spawnJob: SUPABASE_URL not configured");
+  }
+
+  // 1. Insert the queued row, get the id back via Prefer: return=representation.
+  const insertPayload = {
+    status: "queued" as const,
+    engine: params.engine,
+    job_type: params.job_type,
+    input_asset_id: params.input_asset_id ?? null,
+    user_id: params.user_id ?? null,
+    params: params.params || {},
+    progress: 0,
+  };
+  const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/jobs`, {
+    method: "POST",
+    headers: { ...supaHeaders(), Prefer: "return=representation" },
+    body: JSON.stringify(insertPayload),
+  });
+  if (!insertRes.ok) {
+    const t = await insertRes.text();
+    throw new Error(`spawnJob: insert failed ${insertRes.status}: ${t.slice(0, 200)}`);
+  }
+  const insertData = await insertRes.json();
+  const jobId = insertData?.[0]?.id as string | undefined;
+  if (!jobId) {
+    throw new Error("spawnJob: insert returned no id");
+  }
+
+  // 2. Flip to 'running' synchronously so the UI sees the transition before
+  //    we hand control back to the request thread. started_at lands here.
+  await patchJob(jobId, {
+    status: "running",
+    started_at: new Date().toISOString(),
+    attempts: 1,
+  });
+
+  // 3. updateProgress closure — wraps PATCH in try/catch so a transient
+  //    network blip on a progress write doesn't kill the actual work.
+  const updateProgress = async (frac: number, msg?: string) => {
+    const clamped = Math.max(0, Math.min(1, Number(frac) || 0));
+    try {
+      await patchJob(jobId, {
+        progress: clamped,
+        ...(msg !== undefined ? { progress_message: msg } : {}),
+      });
+    } catch (e) {
+      console.error(`[spawnJob:${jobId}] progress patch failed (non-fatal):`, e);
+    }
+  };
+
+  // 4. Fire and forget. Promise lives on its own; outer .catch() is a
+  //    safety net for the worker-wrapper itself, not the worker body
+  //    (which is expected to handle its own errors and return { error }).
+  void (async () => {
+    let result: Awaited<ReturnType<typeof params.worker>>;
+    try {
+      result = await params.worker(jobId, updateProgress);
+    } catch (e: any) {
+      // Worker threw despite the contract. Classify as 'service' and store.
+      result = {
+        error: String(e?.message || e),
+        error_class: "service",
+      };
+    }
+
+    // Re-read status before final write so a DELETE /api/jobs/:id
+    // (cancellation) isn't clobbered by a late-arriving completed PATCH.
+    const current = await readJobStatus(jobId);
+    if (current === "cancelled") {
+      // Cancelled mid-flight — drop the result on the floor. The row already
+      // says cancelled; nothing to update.
+      return;
+    }
+
+    if (result.error) {
+      await patchJob(jobId, {
+        status: "failed",
+        error_class: result.error_class || "service",
+        error_detail: result.error,
+        completed_at: new Date().toISOString(),
+      }).catch((e) => {
+        console.error(`[spawnJob:${jobId}] final-failed PATCH failed:`, e);
+      });
+      return;
+    }
+
+    await patchJob(jobId, {
+      status: "completed",
+      progress: 1,
+      output_asset_id: result.output_asset_id ?? null,
+      completed_at: new Date().toISOString(),
+    }).catch((e) => {
+      console.error(`[spawnJob:${jobId}] final-completed PATCH failed:`, e);
+    });
+  })().catch((e) => {
+    // Should be unreachable — the IIFE above catches its own throws — but
+    // the chain catch keeps the process alive if the wrapper itself blows.
+    console.error(`[spawnJob:${jobId}] worker wrapper crashed:`, e);
+  });
+
+  return { job_id: jobId };
+}
+
+// PATCH a single jobs row by id. Caller passes whatever subset of columns
+// they want to update; we wrap the network round-trip and surface non-2xx
+// as a thrown Error so the spawnJob caller can decide whether to retry.
+async function patchJob(id: string, fields: Record<string, any>): Promise<void> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/jobs?id=eq.${encodeFilterValue(id)}`,
+    {
+      method: "PATCH",
+      headers: supaHeaders(),
+      body: JSON.stringify(fields),
+    },
+  );
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`patchJob ${id} ${res.status}: ${t.slice(0, 200)}`);
+  }
+}
+
+// Read just the status column for cancellation-check before the final
+// PATCH. Returns null if the row doesn't exist (deleted out from under us)
+// or on any error — caller treats null as "proceed with the final write."
+async function readJobStatus(id: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/jobs?id=eq.${encodeFilterValue(id)}&select=status&limit=1`,
+      { headers: supaHeaders() },
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows?.[0]?.status ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// GET /api/jobs/:id — return the row, 404 if missing.
+async function handleJobsGet(jobId: string): Promise<Response> {
+  if (!SUPABASE_URL) {
+    return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+  }
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/jobs?id=eq.${encodeFilterValue(jobId)}&limit=1`,
+      { headers: supaHeaders() },
+    );
+    if (!res.ok) {
+      const t = await res.text();
+      return Response.json(
+        { error: "jobs_get_failed", detail: t.slice(0, 300) },
+        { status: 500 },
+      );
+    }
+    const rows = await res.json();
+    const job = Array.isArray(rows) ? rows[0] : null;
+    if (!job) {
+      return Response.json({ error: "not_found", job_id: jobId }, { status: 404 });
+    }
+    return Response.json({ ok: true, job });
+  } catch (e: any) {
+    return Response.json(
+      { error: "jobs_get_error", detail: e?.message || String(e) },
+      { status: 500 },
+    );
+  }
+}
+
+// GET /api/jobs?status=&user_id=&limit= — paginated list of jobs.
+//
+// Both filters optional. status filter is passed through verbatim to
+// PostgREST as eq.<value>; PostgREST will reject anything not in the
+// CHECK list with 400, which is fine — we don't bother re-validating.
+// limit defaults to 50 and is capped at 200 to prevent runaway scans.
+async function handleJobsList(url: URL): Promise<Response> {
+  if (!SUPABASE_URL) {
+    return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+  }
+  try {
+    const status = url.searchParams.get("status");
+    const userId = url.searchParams.get("user_id");
+    const limitRaw = parseInt(url.searchParams.get("limit") || "50", 10);
+    const limit = Math.min(200, Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 50));
+
+    const qs = new URLSearchParams();
+    qs.set("order", "created_at.desc");
+    qs.set("limit", String(limit));
+    if (status) qs.set("status", `eq.${status}`);
+    if (userId) qs.set("user_id", `eq.${userId}`);
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/jobs?${qs.toString()}`, {
+      headers: { ...supaHeaders(), Prefer: "count=exact" },
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      return Response.json(
+        { error: "jobs_list_failed", detail: t.slice(0, 300) },
+        { status: 500 },
+      );
+    }
+    const items = await res.json();
+    let count = Array.isArray(items) ? items.length : 0;
+    const cr = res.headers.get("Content-Range");
+    if (cr) {
+      const slash = cr.indexOf("/");
+      if (slash >= 0) {
+        const totalStr = cr.slice(slash + 1).trim();
+        const total = parseInt(totalStr, 10);
+        if (Number.isFinite(total)) count = total;
+      }
+    }
+    return Response.json({ items: Array.isArray(items) ? items : [], count });
+  } catch (e: any) {
+    return Response.json(
+      { error: "jobs_list_error", detail: e?.message || String(e) },
+      { status: 500 },
+    );
+  }
+}
+
+// DELETE /api/jobs/:id — flip status='cancelled'. The in-flight worker
+// can't be killed (no signal handles in v1), so when its result lands the
+// final-state PATCH will see status='cancelled' via readJobStatus() and
+// skip the overwrite. Effectively: the user's cancellation wins, the
+// vendor work runs to completion in the background and is dropped.
+//
+// Returns 404 if the row doesn't exist, 200 with the updated row otherwise.
+async function handleJobsCancel(jobId: string): Promise<Response> {
+  if (!SUPABASE_URL) {
+    return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+  }
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/jobs?id=eq.${encodeFilterValue(jobId)}`,
+      {
+        method: "PATCH",
+        headers: { ...supaHeaders(), Prefer: "return=representation" },
+        body: JSON.stringify({
+          status: "cancelled",
+          completed_at: new Date().toISOString(),
+        }),
+      },
+    );
+    if (!res.ok) {
+      const t = await res.text();
+      return Response.json(
+        { error: "jobs_cancel_failed", detail: t.slice(0, 300) },
+        { status: 500 },
+      );
+    }
+    const rows = await res.json();
+    const job = Array.isArray(rows) ? rows[0] : null;
+    if (!job) {
+      return Response.json({ error: "not_found", job_id: jobId }, { status: 404 });
+    }
+    return Response.json({ ok: true, job });
+  } catch (e: any) {
+    return Response.json(
+      { error: "jobs_cancel_error", detail: e?.message || String(e) },
+      { status: 500 },
     );
   }
 }
