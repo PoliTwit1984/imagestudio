@@ -748,7 +748,6 @@
         <button class="action-btn" id="btn-darkroom-skin" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
         <button class="action-btn" id="btn-detail-brush" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
-        <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;" title="VEED Fabric 1.0 — turn this image into a talking head video. Type text → ElevenLabs voice → lip-synced video. ~2-3 min processing.">Fabric Video</button>
         <button class="action-btn" id="btn-kling" onclick="openKling()" style="border-color:#e879f9;color:#e879f9;" title="Kling Pro — image to video with motion. 5s or 10s. High quality cinematic motion.">Kling Video</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
@@ -760,43 +759,6 @@
         <button class="action-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
         <input type="file" id="upload-input" accept="image/*" style="display:none;" onchange="handleUpload(this)">
       </div>
-      <!-- Fabric video panel -->
-      <div class="faceswap-panel" id="fabric-panel" style="display:none;border-color:#ff6b6b33;">
-        <div class="edit-label" style="color:#ff6b6b;">Fabric Video <span style="font-weight:400;color:#888;">— make her talk</span></div>
-
-        <!-- Option 1: Type text → ElevenLabs TTS -->
-        <div style="margin-bottom:12px;">
-          <div style="color:#ff6b6b;font-size:0.75rem;font-weight:600;margin-bottom:4px;">Option 1: Type what she says</div>
-          <textarea id="fabric-text" class="edit-input" rows="2" style="font-size:0.85rem;min-height:50px;" placeholder="Hey baby, I've been thinking about you all day..."></textarea>
-          <button class="action-btn" onclick="generateTTS()" id="tts-btn" style="margin-top:6px;border-color:#ff6b6b;color:#ff6b6b;font-size:0.75rem;">Generate Voice</button>
-          <span id="tts-status" style="font-size:0.72rem;color:#555;margin-left:8px;"></span>
-        </div>
-
-        <div style="color:#555;font-size:0.7rem;text-align:center;margin-bottom:8px;">— or —</div>
-
-        <!-- Option 2: Upload audio -->
-        <div style="margin-bottom:8px;">
-          <div style="color:#888;font-size:0.75rem;">Option 2: Upload audio (mp3/wav):</div>
-          <input type="file" id="fabric-audio-upload" accept="audio/*" style="font-size:0.8rem;color:#888;margin-top:4px;">
-        </div>
-        <div style="margin-bottom:8px;">
-          <div style="color:#555;font-size:0.72rem;">Or paste audio URL:</div>
-          <input type="text" id="fabric-audio-url" class="edit-input" placeholder="https://..." style="margin-top:4px;font-size:0.8rem;">
-        </div>
-
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-          <div style="color:#888;font-size:0.75rem;">Resolution:</div>
-          <select id="fabric-resolution" style="background:#1a1a1a;border:1px solid #333;color:#ccc;padding:6px 10px;border-radius:6px;font-size:0.8rem;">
-            <option value="720p">720p</option>
-            <option value="1080p">1080p</option>
-          </select>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:10px;">
-          <button class="edit-btn" id="fabric-go" onclick="runFabric()" style="background:linear-gradient(135deg,#ff6b6b,#ee5a24);">Generate Video</button>
-          <button class="action-btn" onclick="closeFabric()">Cancel</button>
-        </div>
-      </div>
-
       <!-- Kling Video panel -->
       <div class="faceswap-panel" id="kling-panel" style="display:none;border-color:#e879f933;">
         <div class="edit-label" style="color:#e879f9;">Kling Pro Video <span style="font-weight:400;color:#888;">— image to video with motion</span></div>
@@ -4047,49 +4009,6 @@ async function runPoseGenerate() {
   }
 }
 
-// --- Fabric Video ---
-
-async function generateTTS() {
-  const text = document.getElementById('fabric-text').value.trim();
-  if (!text) { toast('Type something for her to say'); return; }
-
-  const btn = document.getElementById('tts-btn');
-  const status = document.getElementById('tts-status');
-  btn.disabled = true; btn.textContent = 'Generating...';
-  status.textContent = 'Creating voice...';
-
-  try {
-    const res = await fetch('/api/tts', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({ text })
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'TTS failed');
-
-    // Set the audio URL in the URL field
-    document.getElementById('fabric-audio-url').value = data.url;
-    status.textContent = 'Voice ready — hit Generate Video';
-    status.style.color = '#50c878';
-    toast('Voice generated');
-  } catch (err) {
-    status.textContent = 'Failed: ' + err.message;
-    status.style.color = '#e08080';
-  } finally {
-    btn.disabled = false; btn.textContent = 'Generate Voice';
-  }
-}
-
-function openFabric() {
-  if (!currentUrl) { toast('Generate an image first'); return; }
-  document.getElementById('fabric-panel').style.display = 'block';
-  document.getElementById('fabric-audio-upload').value = '';
-  document.getElementById('fabric-audio-url').value = '';
-}
-
-function closeFabric() {
-  document.getElementById('fabric-panel').style.display = 'none';
-}
-
 // --- Kling Video ---
 function openKling() {
   toast('Kling video is not wired up on the server yet');
@@ -4101,68 +4020,6 @@ function closeKling() {
 
 async function runKling() {
   toast('Kling video is not available yet');
-}
-
-async function runFabric() {
-  const fileInput = document.getElementById('fabric-audio-upload');
-  let audioUrl = document.getElementById('fabric-audio-url').value.trim();
-  const resolution = document.getElementById('fabric-resolution').value;
-
-  // Upload audio file to Supabase if provided (file takes priority over URL)
-  if (fileInput.files[0]) {
-    const file = fileInput.files[0];
-    try {
-      const upload = await uploadAsset(file, { folder: 'audio' });
-      audioUrl = upload.url;
-    } catch (err) {
-      toast('Audio upload error: ' + err.message);
-      return;
-    }
-  }
-
-  if (!audioUrl) { toast('Upload audio or paste a URL'); return; }
-
-  const btn = document.getElementById('fabric-go');
-  btn.disabled = true; btn.textContent = 'Generating video...';
-  showImgOverlay('Fabric generating talking video (~2-3 min)...');
-  showEditStatus('VEED Fabric processing — this takes 2-3 minutes...', 'loading');
-
-  try {
-    const res = await fetch('/api/fabric', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({ image_url: currentUrl, audio_url: audioUrl, resolution, character: selectedChar })
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Fabric failed');
-
-    // Show video instead of image
-    const resultArea = document.getElementById('result');
-    const img = document.getElementById('result-img');
-    img.style.display = 'none';
-    let vid = document.getElementById('result-video');
-    if (!vid) {
-      vid = document.createElement('video');
-      vid.id = 'result-video';
-      vid.controls = true;
-      vid.autoplay = true;
-      vid.style.cssText = 'width:100%;border-radius:12px;margin-bottom:12px;';
-      img.parentNode.insertBefore(vid, img);
-    }
-    vid.src = data.url;
-    vid.style.display = 'block';
-
-    pushVersion(data.url, 'fabric video');
-    resetSendBtns();
-    loadHistory();
-    hideImgOverlay();
-    closeFabric();
-    showEditStatus('Fabric video generated', 'success');
-  } catch (err) {
-    hideImgOverlay();
-    showEditStatus('Fabric failed: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Generate Video';
-  }
 }
 
 // --- Face Swap ---
