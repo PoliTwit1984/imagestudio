@@ -105,6 +105,16 @@
   .model-toggle.pro { border-color: #c850c0; color: #c850c0; }
   .model-toggle.basic { border-color: #50c878; color: #50c878; }
 
+  /* Darkroom Polish toggle — engine-conditional realism stanza */
+  .darkroom-polish {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #1a1a1a; border: 1px solid #333; color: #aaa;
+    padding: 8px 12px; border-radius: 10px; font-size: 0.78rem;
+    cursor: pointer; white-space: nowrap; user-select: none;
+  }
+  .darkroom-polish input[type="checkbox"] { margin: 0; cursor: pointer; accent-color: #c850c0; }
+  .darkroom-polish:has(input:checked) { border-color: #c850c0; color: #c850c0; }
+
   /* Loading */
   .loading { text-align: center; padding: 60px 0; display: none; }
   .loading.active { display: block; }
@@ -654,6 +664,10 @@
         <option value="1:1">1:1 Square</option>
         <option value="16:9">16:9 Landscape</option>
       </select>
+      <label class="darkroom-polish" title="Append realism polish to Lens / Glance / Brush prompts. Strip stays raw.">
+        <input type="checkbox" id="polish-toggle" onchange="onPolishToggle(this)">
+        Darkroom Polish
+      </label>
     </div>
 
     <!-- Pinterest search panel -->
@@ -1172,6 +1186,20 @@ let characters = [];
 let loras = [];
 let versionStack = []; // [{url, label}]
 let versionIndex = -1;
+// Darkroom Polish — engine-conditional realism stanza. Default ON; stored in
+// localStorage as '0' / '1'. Read via getPolish() and threaded into request
+// bodies so the server can apply applyDarkroomPolish() on the prompt path.
+let currentPolish = (localStorage.getItem('darkroom-polish') ?? '1') !== '0';
+function getPolish() { return currentPolish; }
+function onPolishToggle(el) {
+  currentPolish = !!el.checked;
+  localStorage.setItem('darkroom-polish', currentPolish ? '1' : '0');
+}
+function initPolishToggle() {
+  const cb = document.getElementById('polish-toggle');
+  if (!cb) return;
+  cb.checked = currentPolish;
+}
 
 localStorage.removeItem('studio-token');
 // On first load, check if auth is even required. If not, skip the gate entirely.
@@ -1232,6 +1260,7 @@ document.getElementById('token-input').addEventListener('keydown', e => {
 async function showApp() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
+  initPolishToggle();
   await loadCharacters();
   await loadLoras();
   loadHistory();
@@ -1593,7 +1622,7 @@ async function generate() {
   try {
     const res = await fetch('/api/generate', {
       method: 'POST', headers: headers(),
-      body: JSON.stringify({ character: selectedChar, scene, model: currentModel, engine: currentEngine, lora: currentLora, aspect_ratio: document.getElementById('aspect-select').value })
+      body: JSON.stringify({ character: selectedChar, scene, model: currentModel, engine: currentEngine, lora: currentLora, aspect_ratio: document.getElementById('aspect-select').value, polish: getPolish() })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Failed');
@@ -1801,6 +1830,7 @@ async function editImage() {
         body: JSON.stringify({
           image_url: currentUrl,
           prompt: editPrompt,
+          polish: getPolish(),
         })
       });
     } else if (isSmartEdit) {
@@ -1814,7 +1844,8 @@ async function editImage() {
           prompt: editPrompt,
           prefer_model: preferModel,
           character: selectedChar,
-          scene: editPrompt
+          scene: editPrompt,
+          polish: getPolish(),
         })
       });
     } else {
@@ -1826,7 +1857,8 @@ async function editImage() {
           model: currentModel,
           engine: editEngine,
           lora: currentLora,
-          character: selectedChar
+          character: selectedChar,
+          polish: getPolish(),
         })
       });
     }
@@ -2973,6 +3005,7 @@ async function runInpaint() {
         upscaler,
         garment_urls: refs.length ? refs : undefined,
         garment_strength: refs.length ? garmentStrength : undefined,
+        polish: getPolish(),
       })
     });
     const data = await res.json();

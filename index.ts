@@ -96,14 +96,17 @@ async function updateGeneration(id: string, fields: any) {
 async function generateGrok(
   character: any,
   scene: string,
-  model: string
+  model: string,
+  polish: boolean = false
 ): Promise<{ url: string; revisedPrompt: string; engine: string }> {
   const refUrl = character.ref_image_url;
   const prefix = character.prompt_prefix || "same face and body but";
   const suffix = character.prompt_suffix || "";
-  const prompt = [prefix + " " + scene, suffix, REALISM_TAGS, "no smiling, serious sultry expression, lips parted"]
+  let prompt = [prefix + " " + scene, suffix, REALISM_TAGS, "no smiling, serious sultry expression, lips parted"]
     .filter((s) => s && s.trim())
     .join(", ");
+  // Darkroom Polish: Lens (Grok) gets the realism stanza when toggle is on.
+  prompt = applyDarkroomPolish(prompt, "lens", polish);
 
   const res = await fetch("https://api.x.ai/v1/images/edits", {
     method: "POST",
@@ -140,6 +143,7 @@ async function generateFal(
   character: any,
   scene: string,
   loraOverride?: { url: string; trigger: string; scale: number },
+  polish: boolean = false,
 ): Promise<{ url: string; revisedPrompt: string; engine: string }> {
   const loraUrl = loraOverride?.url || character.lora_url || "";
   const trigger = loraOverride?.trigger || character.lora_trigger || "";
@@ -149,9 +153,11 @@ async function generateFal(
     throw new Error(`No LoRA selected. Pick one from the dropdown or use Grok.`);
   }
 
-  const prompt = [`${trigger} ${scene}`, REALISM_TAGS, "no smiling, serious sultry expression, lips parted"]
+  let prompt = [`${trigger} ${scene}`, REALISM_TAGS, "no smiling, serious sultry expression, lips parted"]
     .filter((s) => s && s.trim())
     .join(", ");
+  // Darkroom Polish: Flux LoRA pipe behaves like Lens for realism — append.
+  prompt = applyDarkroomPolish(prompt, "lens", polish);
 
   const body: any = {
     prompt,
@@ -188,10 +194,14 @@ async function generateFal(
 }
 
 // --- GPT-Image-2 text-to-image (OpenAI, April 2026 release) ---
-async function generateGpt(scene: string): Promise<{ url: string; revisedPrompt: string; engine: string }> {
-  const prompt = [scene, "no smiling, serious sultry expression, lips parted"]
+async function generateGpt(scene: string, polish: boolean = false): Promise<{ url: string; revisedPrompt: string; engine: string }> {
+  let prompt = [scene, "no smiling, serious sultry expression, lips parted"]
     .filter((s) => s && s.trim())
     .join(", ");
+  // Darkroom Polish: Eye / GPT-Image-2 is strict on prompt structure — the
+  // helper no-ops for engine="eye", so this call is intentionally a pass-through
+  // and exists for symmetry with the other engine generators.
+  prompt = applyDarkroomPolish(prompt, "eye", polish);
 
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
@@ -249,14 +259,15 @@ async function generateImage(
   model: string,
   engine: string = "grok",
   loraOverride?: { url: string; trigger: string; scale: number },
+  polish: boolean = false,
 ): Promise<{ url: string; revisedPrompt: string; engine: string }> {
   if (engine === "fal") {
-    return generateFal(character, scene, loraOverride);
+    return generateFal(character, scene, loraOverride, polish);
   }
   if (engine === "gpt") {
-    return generateGpt(scene);
+    return generateGpt(scene, polish);
   }
-  return generateGrok(character, scene, model);
+  return generateGrok(character, scene, model, polish);
 }
 
 // Helper to fetch a LoRA by name from Supabase
@@ -325,6 +336,33 @@ These images MUST be indistinguishable from real photographs. They need to fool 
 - REAL IMPERFECTIONS: Unmade bed, slight clutter, a real person's apartment — not a staged set. Wrinkled clothes on a chair, shoes kicked off by the door.
 - NO AI TELLS: Avoid anything that screams "generated" — no perfect symmetry, no impossible architecture, no floating objects, no uncanny skin smoothness. Reference real camera gear (iPhone, Canon, etc.) and real film stocks.
 `;
+
+// --- Darkroom Polish — engine-conditional realism stanza ---
+//
+// Optional realism polish appended to engine prompts when the UI's "Darkroom
+// Polish" toggle is ON. Engines that already enforce strict structure or
+// punish over-described prompts (Strip / P-Edit, Eye / GPT-Image-2) skip the
+// stanza — appending realism language there can over-describe and trigger
+// content refusals. Lens (Grok img2img), Glance (Nano Banana), Brush (Flux
+// Fill Pro), Frame (Bria), and Sky/others get the stanza appended.
+//
+// Wired into the prompt path via generateImage() in index.ts. Routes that
+// accept a `polish` boolean in the request body forward it to the engine
+// generators, which call applyDarkroomPolish(prompt, engine, polish) before
+// the upstream call. Pure-helper export so route handlers and tests can
+// verify behavior without spinning up the full server.
+const DARKROOM_POLISH_STANZA = ", photorealistic, natural skin texture, fine detail, sharp focus, no plastic look";
+
+export function applyDarkroomPolish(prompt: string, engine: string, polish: boolean): string {
+  if (!polish) return prompt;
+  // Strip = P-Edit — leave raw (NSFW path; polish triggers refusals).
+  if (engine === 'strip' || engine === 'pedit' || engine === 'p-edit') return prompt;
+  // Eye = GPT-Image-2 — leave raw (strict prompt structure; polish hurts).
+  if (engine === 'eye' || engine === 'gpt-image-2' || engine === 'gpt-2' || engine === 'gpt') return prompt;
+  // Lens, Glance, Brush, Frame, Sky, others — append.
+  if (prompt.includes('photorealistic')) return prompt; // already polished
+  return prompt.trim() + DARKROOM_POLISH_STANZA;
+}
 
 // --- AI Prompt Enhancer (Grok reasoning) ---
 // Research-backed defaults from grokpromptingguide.md (claude-ops repo).
