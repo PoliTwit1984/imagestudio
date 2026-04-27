@@ -335,6 +335,125 @@ export async function handleSafeEditRoutes(
   }
 
   // ---------------------------------------------------------------------------
+  // POST /api/replay-chain — re-execute a saved edit chain on a new source.
+  //
+  //   Body: { chain_root_asset_id, new_source_url }
+  //   Response: { ok: true, job_id, step_count }
+  //
+  // Walks the chain anchored at `chain_root_asset_id` (BFS down via
+  // parent_id), picks ROOT → most-recent leaf as the canonical edit path,
+  // then dispatches a spawnJob() that re-applies each step's
+  // (engine + prompt + params) on top of `new_source_url` in sequence,
+  // chaining intermediate URLs. The final result lands as a new asset row
+  // whose parent_id is the asset for new_source_url (when one exists),
+  // so the replayed chain shows up as a sibling branch in the history
+  // graph the next time the user opens it.
+  //
+  // Async by design — chains can be 5-15 edits deep and each step is a
+  // 5-30s vendor call. UI polls /api/jobs/:id (already wired into the
+  // Active Jobs panel) for status / progress / final output_asset_id.
+  //
+  // See darkroom.catalog.replay-edit-chain.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/replay-chain" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+    try {
+      let body: any = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "invalid_json_body" }, { status: 400 });
+      }
+      const chainRootId = String(body.chain_root_asset_id || "").trim();
+      const newSourceUrl = String(body.new_source_url || "").trim();
+      if (!chainRootId || !newSourceUrl) {
+        return Response.json(
+          { error: "chain_root_asset_id and new_source_url required" },
+          { status: 400 },
+        );
+      }
+
+      // Resolve the chain to a flat edit sequence BEFORE spawning the job —
+      // a missing/empty chain should surface as a 4xx synchronously, not
+      // get buried in a job-row failure that the user has to poll for.
+      const sequence = await buildEditSequenceFromChain(chainRootId);
+      if (!sequence.length) {
+        return Response.json(
+          { error: "chain has no edit steps (only root)", chain_root_asset_id: chainRootId },
+          { status: 400 },
+        );
+      }
+
+      const { job_id } = await spawnJob(deps, {
+        engine: "replay",
+        job_type: "chain-run",
+        params: {
+          chain_root_asset_id: chainRootId,
+          new_source_url: newSourceUrl,
+          step_count: sequence.length,
+        },
+        worker: async (jobId, updateProgress) => {
+          try {
+            const result = await executeEditSequence(
+              newSourceUrl,
+              sequence,
+              updateProgress,
+            );
+
+            // Cradle the final result into the assets table as a new edit
+            // row whose parent_id chains back to whatever asset was at
+            // new_source_url (so the replayed chain renders as a branch
+            // in the history graph rooted at the new source). Failure to
+            // catalog is non-fatal — the job still completed.
+            let outputAssetId: string | null = null;
+            try {
+              const parentId = await (deps as any).lookupAssetIdByUrl?.(newSourceUrl);
+              outputAssetId = await (deps as any).saveAsset?.({
+                asset_type: "edit",
+                source_url: result.final_url,
+                engine: "replay",
+                edit_action: "replay-chain",
+                prompt: `Replay of chain ${chainRootId}`,
+                parent_id: parentId || null,
+                metadata: {
+                  replay_chain_root: chainRootId,
+                  replay_steps: sequence.length,
+                  replay_steps_applied: result.steps_applied,
+                  replay_steps_skipped: result.steps_skipped,
+                  intermediate_urls: result.intermediate_urls,
+                  new_source_url: newSourceUrl,
+                  job_id: jobId,
+                },
+                tags: ["replay", "chain"],
+              });
+            } catch (e) {
+              console.error("[replay-chain] saveAsset failed (non-fatal):", e);
+            }
+
+            return {
+              output_url: result.final_url,
+              output_asset_id: outputAssetId || undefined,
+            };
+          } catch (e: any) {
+            // Cancellation rebubbles to spawnJob to skip the failed-state
+            // PATCH; everything else gets classified as a service failure.
+            if (e instanceof CancellationError) throw e;
+            return {
+              error: String(e?.message || e),
+              error_class: "service",
+            };
+          }
+        },
+      });
+
+      return Response.json({ ok: true, job_id, step_count: sequence.length });
+    } catch (e: any) {
+      return Response.json({ error: e?.message || "replay-chain failed" }, { status: 500 });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Asset metadata mutate — star / archive / tag a row in `assets`.
   //
   //   PATCH /api/assets/:id   body { starred?, archived?, tags? }
@@ -8145,4 +8264,248 @@ async function handleJobsCancel(jobId: string): Promise<Response> {
       { status: 500 },
     );
   }
+}
+
+// =============================================================================
+// /api/replay-chain helpers — build the edit sequence + execute it on a new
+// source. Wired by the route handler near /api/asset-chain above; kept down
+// here so the route handler reads top-down without dragging the whole
+// implementation inline.
+//
+// Algorithm (matches the spec for darkroom.catalog.replay-edit-chain):
+//   1. buildEditSequenceFromChain — fetch the chain's nodes via PostgREST
+//      (same shape as /api/asset-chain), pick the root → most-recent-leaf
+//      path, return that as a flat list of (engine, prompt, params, action)
+//      steps with the root excluded (the root is the SOURCE, not an edit).
+//   2. executeEditSequence — start from the new source URL, apply each
+//      step in order via callEngineByName(), rehosting intermediate
+//      results so URLs survive vendor expiry. Unknown / non-trivial
+//      engines (replay, topaz, magnific, p-image-edit, preset:*, etc.)
+//      are skipped with a console warning so a partial/best-effort replay
+//      still produces something the user can review.
+// =============================================================================
+
+type ReplayEditStep = {
+  engine: string;
+  prompt: string;
+  params: Record<string, any>;
+  edit_action: string | null;
+  asset_type: string | null;
+  source_url: string | null;
+  node_id: string | null;
+};
+
+async function buildEditSequenceFromChain(
+  chainRootId: string,
+): Promise<ReplayEditStep[]> {
+  if (!SUPABASE_URL) throw new Error("supabase not configured");
+  const headers = supaHeaders();
+
+  // 1. Fetch the root row (= the seed of the chain to replay).
+  const rootResp = await fetch(
+    `${SUPABASE_URL}/rest/v1/assets?id=eq.${encodeFilterValue(chainRootId)}&select=*&limit=1`,
+    { headers },
+  );
+  if (!rootResp.ok) throw new Error(`chain root lookup ${rootResp.status}`);
+  const rootRows = await rootResp.json();
+  const root = Array.isArray(rootRows) ? rootRows[0] : null;
+  if (!root) throw new Error("chain root not found");
+
+  // 2. BFS down through parent_id links to collect every descendant. Bound
+  //    the depth (10) and per-frontier fanout (200) so a degenerate chain
+  //    can't sink the request thread.
+  const allNodes: any[] = [root];
+  const seen = new Set<string>([root.id]);
+  let frontier: string[] = [root.id];
+  let depth = 0;
+  while (frontier.length && depth < 10) {
+    const inList = frontier.map((x) => `"${x}"`).join(",");
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/assets?parent_id=in.(${encodeURIComponent(inList)})&select=*&limit=200`,
+      { headers },
+    );
+    if (!r.ok) break;
+    const rows = await r.json();
+    const fresh = (Array.isArray(rows) ? rows : []).filter(
+      (n: any) => n && n.id && !seen.has(n.id),
+    );
+    if (!fresh.length) break;
+    for (const n of fresh) {
+      allNodes.push(n);
+      seen.add(n.id);
+    }
+    frontier = fresh.map((n: any) => n.id);
+    depth++;
+  }
+
+  // 3. Pick the canonical replay path: ROOT → most-recent leaf (highest
+  //    created_at among nodes with no children in the collected set).
+  //    For a non-branched chain this is just the linear sequence root → tip.
+  const childIdsByParent = new Map<string, string[]>();
+  for (const n of allNodes) {
+    if (n.parent_id) {
+      const arr = childIdsByParent.get(n.parent_id) || [];
+      arr.push(n.id);
+      childIdsByParent.set(n.parent_id, arr);
+    }
+  }
+  const leaves = allNodes.filter((n) => !childIdsByParent.has(n.id));
+  if (!leaves.length) return []; // root is the only node — nothing to replay
+  leaves.sort((a, b) =>
+    String(b.created_at || "").localeCompare(String(a.created_at || "")),
+  );
+  const leaf = leaves[0];
+
+  // 4. Walk leaf → root via parent_id, then reverse to get root → leaf.
+  const byId = new Map<string, any>(allNodes.map((n) => [n.id, n]));
+  const path: any[] = [leaf];
+  let cur: any = leaf;
+  let walkGuard = 0;
+  while (cur?.parent_id && byId.has(cur.parent_id) && walkGuard < 64) {
+    cur = byId.get(cur.parent_id);
+    path.unshift(cur);
+    if (cur.id === root.id) break;
+    walkGuard++;
+  }
+
+  // 5. Convert nodes → edit steps. Skip the first element (the root —
+  //    that's the SOURCE for the original chain, not an edit step). Pull
+  //    engine-specific params out of metadata.params if present, falling
+  //    back to {} so callEngineByName never trips on undefined.
+  return path.slice(1).map((n) => {
+    const md = (n && n.metadata && typeof n.metadata === "object") ? n.metadata : {};
+    const params = (md.params && typeof md.params === "object") ? md.params : {};
+    return {
+      engine: String(n.engine || "lens"),
+      prompt: String(n.prompt || ""),
+      params,
+      edit_action: n.edit_action ?? null,
+      asset_type: n.asset_type ?? null,
+      source_url: n.source_url ?? null,
+      node_id: n.id ?? null,
+    } as ReplayEditStep;
+  });
+}
+
+async function executeEditSequence(
+  initialUrl: string,
+  sequence: ReplayEditStep[],
+  updateProgress: (frac: number, msg?: string) => Promise<void>,
+): Promise<{
+  final_url: string;
+  intermediate_urls: string[];
+  steps_applied: number;
+  steps_skipped: number;
+}> {
+  const { uploadToStorage, buildUploadPath } = await import("../supabase");
+  // Local rehost helper — mirrors the one in generation.ts but inlined here
+  // so we don't widen this file's import surface. Falls back to the vendor
+  // URL on any failure so a flaky storage hop doesn't kill the chain.
+  const rehost = async (vendorUrl: string): Promise<string> => {
+    if (!vendorUrl) return vendorUrl;
+    try {
+      const resp = await fetch(vendorUrl);
+      if (!resp.ok) return vendorUrl;
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const ct = resp.headers.get("content-type") || "image/png";
+      return await uploadBufferToStorage(
+        buf,
+        ct,
+        buildUploadPath,
+        uploadToStorage,
+        "replay-chain",
+      );
+    } catch (e) {
+      console.error("[replay-chain] rehost failed, using vendor URL:", e);
+      return vendorUrl;
+    }
+  };
+
+  let currentUrl = initialUrl;
+  const intermediates: string[] = [];
+  let stepsApplied = 0;
+  let stepsSkipped = 0;
+
+  for (let i = 0; i < sequence.length; i++) {
+    const step = sequence[i];
+    const frac = sequence.length === 0 ? 1 : i / sequence.length;
+    await updateProgress(
+      frac,
+      `Step ${i + 1}/${sequence.length}: ${step.engine}${step.edit_action ? ` (${step.edit_action})` : ""}`,
+    );
+
+    // Engine dispatch. callEngineByName covers lens / glance / strip / eye
+    // — the four "free-form prompt + image" engines we have inner helpers
+    // for. Anything else (replay, topaz, magnific, p-image-edit, preset:*,
+    // brush without a mask, etc.) is skipped with a console warning so
+    // partial replays still produce something usable. Brush specifically
+    // requires a mask we don't have on the new source, so it stays skipped
+    // until we can resolve the mask question.
+    const engineKey = String(step.engine || "").toLowerCase().trim();
+    const replayable = engineKey === "lens"
+      || engineKey === "grok"
+      || engineKey === "glance"
+      || engineKey === "nano"
+      || engineKey === "strip"
+      || engineKey === "pedit"
+      || engineKey === "p-edit"
+      || engineKey === "eye"
+      || engineKey === "gpt-image-2";
+    if (!replayable) {
+      console.warn(
+        `[replay-chain] skipping step ${i + 1} with non-replayable engine: ${step.engine}`,
+      );
+      stepsSkipped++;
+      continue;
+    }
+
+    // Normalize aliases callEngineByName doesn't know about.
+    const dispatchEngine =
+      engineKey === "grok" ? "lens"
+      : engineKey === "nano" ? "glance"
+      : engineKey === "pedit" || engineKey === "p-edit" ? "strip"
+      : engineKey === "gpt-image-2" ? "eye"
+      : engineKey;
+
+    if (!step.prompt) {
+      // Some preset/template flows leave prompt empty — without the prompt
+      // the replay step has nothing to drive it, so skip it the same way
+      // we skip an unknown engine.
+      console.warn(
+        `[replay-chain] skipping step ${i + 1} (${step.engine}): no prompt`,
+      );
+      stepsSkipped++;
+      continue;
+    }
+
+    let resultUrl: string;
+    try {
+      resultUrl = await callEngineByName(dispatchEngine, {
+        imageUrl: currentUrl,
+        prompt: step.prompt,
+      });
+    } catch (e: any) {
+      throw new Error(
+        `Step ${i + 1}/${sequence.length} (${step.engine}) failed: ${String(e?.message || e).slice(0, 200)}`,
+      );
+    }
+    if (!resultUrl) {
+      throw new Error(`Step ${i + 1}/${sequence.length} (${step.engine}) returned no URL`);
+    }
+
+    // Rehost so the replayed chain's intermediates survive vendor expiry.
+    const stable = await rehost(resultUrl);
+    intermediates.push(stable);
+    currentUrl = stable;
+    stepsApplied++;
+  }
+
+  await updateProgress(1, `Replay complete: ${stepsApplied} applied, ${stepsSkipped} skipped`);
+
+  return {
+    final_url: currentUrl,
+    intermediate_urls: intermediates,
+    steps_applied: stepsApplied,
+    steps_skipped: stepsSkipped,
+  };
 }

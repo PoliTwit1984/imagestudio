@@ -1408,6 +1408,20 @@
             oninput="filterHistoryGraph(event.target.value)">
           <span id="history-graph-search-status" style="color:#666;font-size:0.7rem;font-style:italic;"></span>
         </div>
+        <!-- Replay-chain button — re-execute the current chain (root → most-
+             recent leaf) on a different source image. Posts to
+             /api/replay-chain which spawns an async job; the user follows
+             progress via the Active Jobs panel below. See
+             darkroom.catalog.replay-edit-chain. -->
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px 0 8px;">
+          <button id="history-graph-replay-btn"
+            type="button"
+            disabled
+            onclick="openReplayChainDialog()"
+            style="background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;border:0;border-radius:6px;padding:5px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;opacity:0.5;"
+            title="Re-run this entire chain of edits on a different source image">▶ Replay this chain on…</button>
+          <span id="history-graph-replay-status" style="color:#666;font-size:0.7rem;font-style:italic;"></span>
+        </div>
         <div id="history-graph-container" class="history-graph">
           <div class="history-graph-empty">No image loaded yet.</div>
         </div>
@@ -2413,6 +2427,12 @@ setInterval(() => {
 // duplicate fetches for the same URL. Touches public/index.html only.
 let _historyGraphLoadInflight = null;
 let _historyGraphCacheUrl = null;
+// Chain root id captured when /api/asset-chain returns — feeds the
+// "Replay this chain on…" button so it knows which chain to re-execute.
+let _historyGraphChainRootId = null;
+// Cached node count so the replay button can stay disabled when the chain
+// is just a single root with no edits to replay.
+let _historyGraphNodeCount = 0;
 
 async function loadHistoryGraph(sourceUrl) {
   if (!sourceUrl) return;
@@ -2422,6 +2442,10 @@ async function loadHistoryGraph(sourceUrl) {
   const container = document.getElementById('history-graph-container');
   if (!container) return;
   container.innerHTML = '<div class="history-graph-empty">Loading chain...</div>';
+  // Disable the replay button until we have a root id + at least one edit.
+  _historyGraphChainRootId = null;
+  _historyGraphNodeCount = 0;
+  _refreshReplayChainButton();
 
   try {
     const resp = await fetch(
@@ -2442,6 +2466,12 @@ async function loadHistoryGraph(sourceUrl) {
       container.innerHTML = '<div class="history-graph-empty">No chain data.</div>';
       return;
     }
+    // Capture the chain root id + node count so the replay button can wire
+    // its onclick to the correct chain. Only enable when there's at least
+    // one descendant — a lone root has no edits to replay.
+    _historyGraphChainRootId = data.root && data.root.id ? data.root.id : null;
+    _historyGraphNodeCount = Array.isArray(data.nodes) ? data.nodes.length : 0;
+    _refreshReplayChainButton();
 
     // Build tree: index nodes by id, attach children arrays.
     const byId = new Map((data.nodes || []).map(n => [n.id, { ...n, children: [] }]));
@@ -2530,6 +2560,88 @@ function renderHistoryGraphNode(node, activeId) {
 }
 
 window.loadHistoryGraph = loadHistoryGraph;
+
+// Replay-chain wiring — the button is enabled when /api/asset-chain has
+// returned a root id AND there's at least one descendant in the chain.
+// Clicking opens a prompt() for the new source URL, posts to
+// /api/replay-chain, and surfaces the resulting job_id via toast. The user
+// then watches the Active Jobs panel for progress (the panel polls
+// /api/jobs already, so the replay job lights up for free).
+function _refreshReplayChainButton() {
+  const btn = document.getElementById('history-graph-replay-btn');
+  if (!btn) return;
+  // Need a root id + at least 2 nodes (root + 1 edit) for there to be
+  // anything worth replaying. Lone-root chains stay disabled.
+  const enabled = !!_historyGraphChainRootId && _historyGraphNodeCount >= 2;
+  btn.disabled = !enabled;
+  btn.style.opacity = enabled ? '1' : '0.5';
+  btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+  const status = document.getElementById('history-graph-replay-status');
+  if (status) {
+    if (!_historyGraphChainRootId) {
+      status.textContent = '';
+    } else if (_historyGraphNodeCount < 2) {
+      status.textContent = 'no edits to replay';
+    } else {
+      status.textContent = `${_historyGraphNodeCount - 1} edit${_historyGraphNodeCount - 1 === 1 ? '' : 's'} in chain`;
+    }
+  }
+}
+
+async function openReplayChainDialog() {
+  if (!_historyGraphChainRootId) {
+    if (typeof toast === 'function') toast('No chain loaded — open an image with edit history first.');
+    return;
+  }
+  // Default to the current image so the user can also replay-on-self
+  // (regenerate the same chain end-to-end) without retyping anything.
+  // The server happily accepts the same URL — it just produces a fresh
+  // sibling branch in the history graph.
+  const defaultUrl = (typeof currentUrl !== 'undefined' && currentUrl) ? currentUrl : '';
+  const newSourceUrl = window.prompt(
+    'Replay this chain on a new source image. Paste a URL:',
+    defaultUrl,
+  );
+  if (!newSourceUrl || !newSourceUrl.trim()) return;
+  const trimmed = newSourceUrl.trim();
+
+  const status = document.getElementById('history-graph-replay-status');
+  if (status) status.textContent = 'queueing replay...';
+  try {
+    const resp = await fetch('/api/replay-chain', {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chain_root_asset_id: _historyGraphChainRootId,
+        new_source_url: trimmed,
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      const msg = (data && data.error) ? data.error : resp.statusText;
+      if (status) status.textContent = `error: ${msg}`;
+      if (typeof toast === 'function') toast(`Replay failed: ${msg}`);
+      return;
+    }
+    const shortId = String(data.job_id || '').slice(0, 8);
+    const stepCount = Number(data.step_count || 0);
+    if (status) status.textContent = `queued (${stepCount} steps): ${shortId}`;
+    if (typeof toast === 'function') {
+      toast(`Replay queued — ${stepCount} step${stepCount === 1 ? '' : 's'}, job ${shortId}. Watch Active Jobs.`);
+    }
+    // Force the Active Jobs panel to refresh on its next tick by clearing
+    // its cache if available (best-effort — the panel polls anyway).
+    if (typeof refreshActiveJobs === 'function') {
+      try { refreshActiveJobs(); } catch (_) { /* never throw */ }
+    }
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    if (status) status.textContent = `error: ${msg}`;
+    if (typeof toast === 'function') toast(`Replay failed: ${msg}`);
+  }
+}
+
+window.openReplayChainDialog = openReplayChainDialog;
 
 // --- Edit-history drawer (darkroom.catalog.edit-history-drawer) -------------
 // Slide-in drawer listing recent assets in the current session. Sources:
