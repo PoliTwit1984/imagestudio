@@ -657,6 +657,71 @@
   .modal-actions button { padding: 10px 20px; border-radius: 8px; font-size: 0.9rem; cursor: pointer; border: 1px solid #333; }
   .modal-actions .btn-cancel { background: #1a1a1a; color: #aaa; }
   .modal-actions .btn-save { background: linear-gradient(135deg, #c850c0, #4158d0); border: none; color: white; font-weight: 600; }
+
+  /* History Graph — tree view of an asset's edit chain.
+     Renders root generation → edits → branched edits via /api/asset-chain.
+     Click a node to navigate to that version. */
+  .history-graph-panel { margin: 12px 0; }
+  .history-graph-panel > summary {
+    padding: 8px 12px; background: #1a1a1a; border-radius: 6px;
+    color: #a78bfa; font-weight: 600; cursor: pointer;
+  }
+  .history-graph {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    max-height: 600px;
+    overflow-y: auto;
+    font-size: 12px;
+  }
+  .history-graph-empty {
+    color: #888;
+    font-style: italic;
+    padding: 8px;
+  }
+  .history-graph-node {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .history-graph-node:hover { border-color: #a78bfa; }
+  .history-graph-node.active { border-color: #a78bfa; background: #2a1a3a; }
+  .history-graph-node img {
+    width: 40px; height: 40px;
+    object-fit: cover;
+    border-radius: 3px;
+    background: #0a0a0a;
+  }
+  .history-graph-node-meta {
+    flex: 1;
+    min-width: 0;
+  }
+  .history-graph-node-engine {
+    color: #a78bfa;
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .history-graph-node-prompt {
+    color: #888;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .history-graph-children {
+    margin-left: 28px;
+    border-left: 2px solid #2a2a2a;
+    padding-left: 8px;
+    margin-top: 4px;
+  }
 </style>
 </head>
 <body>
@@ -1034,6 +1099,18 @@
             title="Submit a custom detail brush (nipple/areola/cameltoe/etc) for operator approval">+ Detail</button>
         </div>
         <div id="wardrobe-grid" class="wardrobe-grid"></div>
+      </details>
+
+      <!-- History Graph panel — tree view of the current asset's edit chain.
+           Hits GET /api/asset-chain when currentUrl changes (polled, like
+           the analyzeCurrentImage hook). Click a node to navigate to that
+           version. Falls back gracefully when the asset isn't in the
+           assets table (no chain data) or the network errors. -->
+      <details class="history-graph-panel">
+        <summary style="cursor:pointer;font-weight:600;color:#a78bfa;">History Graph <span style="font-weight:400;color:#888;font-size:0.78rem;">— edit-tree / chain-graph for this image</span></summary>
+        <div id="history-graph-container" class="history-graph">
+          <div class="history-graph-empty">No image loaded yet.</div>
+        </div>
       </details>
 
       <!-- Face swap panel -->
@@ -1994,6 +2071,141 @@ setInterval(() => {
 setInterval(() => {
   try { updateRecommendedEngineBadge(); } catch (_) { /* never throw */ }
 }, 1500);
+
+// --- History Graph -----------------------------------------------------------
+// Renders a tree-graph view of the current asset's edit chain — root
+// generation → edits → branched edits — using GET /api/asset-chain.
+// Click any node to navigate. Hooked via a 1500ms poll on currentUrl
+// changes (same pattern as the wave 11 compat-row poller); cache prevents
+// duplicate fetches for the same URL. Touches public/index.html only.
+let _historyGraphLoadInflight = null;
+let _historyGraphCacheUrl = null;
+
+async function loadHistoryGraph(sourceUrl) {
+  if (!sourceUrl) return;
+  if (_historyGraphCacheUrl === sourceUrl) return;  // dedupe
+  _historyGraphCacheUrl = sourceUrl;
+
+  const container = document.getElementById('history-graph-container');
+  if (!container) return;
+  container.innerHTML = '<div class="history-graph-empty">Loading chain...</div>';
+
+  try {
+    const resp = await fetch(
+      `/api/asset-chain?source_url=${encodeURIComponent(sourceUrl)}`,
+      { headers: headers() }
+    );
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      if (resp.status === 404) {
+        container.innerHTML = '<div class="history-graph-empty">No chain data yet — image not in assets table.</div>';
+      } else {
+        container.innerHTML = `<div class="history-graph-empty">Error: ${data.error || resp.statusText}</div>`;
+      }
+      return;
+    }
+    const data = await resp.json();
+    if (!data.ok || !data.root) {
+      container.innerHTML = '<div class="history-graph-empty">No chain data.</div>';
+      return;
+    }
+
+    // Build tree: index nodes by id, attach children arrays.
+    const byId = new Map((data.nodes || []).map(n => [n.id, { ...n, children: [] }]));
+    for (const n of byId.values()) {
+      if (n.parent_id && byId.has(n.parent_id)) {
+        byId.get(n.parent_id).children.push(n);
+      }
+    }
+    const rootNode = byId.get(data.root.id);
+    if (!rootNode) {
+      container.innerHTML = '<div class="history-graph-empty">No chain data.</div>';
+      return;
+    }
+
+    // The "active" node is the seed (the asset whose URL we asked about),
+    // not necessarily the root — the user is looking at the seed.
+    container.innerHTML = renderHistoryGraphNode(rootNode, data.seed_id);
+
+    container.querySelectorAll('.history-graph-node').forEach(n => {
+      n.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const url = n.dataset.sourceUrl;
+        if (!url) return;
+        if (typeof setCurrentUrl === 'function') {
+          setCurrentUrl(url);
+        } else if (typeof goToVersion === 'function' && Array.isArray(window.versionStack)) {
+          // Find this URL in the version stack and time-travel to it.
+          const idx = window.versionStack.findIndex(v => v.url === url);
+          if (idx >= 0) {
+            goToVersion(idx);
+          } else if (typeof pushVersion === 'function') {
+            // Not in stack — push so the version strip stays consistent
+            // and goToVersion can navigate to the new tail.
+            pushVersion(url, 'history-graph');
+          } else {
+            // Last-resort: just swap the visible image.
+            currentUrl = url;
+            const img = document.getElementById('result-img');
+            if (img) img.src = url;
+          }
+        } else {
+          // Last-resort: dispatch a custom event other code can listen for.
+          window.dispatchEvent(new CustomEvent('history-graph-navigate', { detail: { url } }));
+        }
+      });
+    });
+  } catch (e) {
+    container.innerHTML = `<div class="history-graph-empty">Error: ${(e && e.message) || 'unknown'}</div>`;
+  }
+}
+
+function _historyGraphEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderHistoryGraphNode(node, activeId) {
+  if (!node) return '';
+  const isActive = node.id === activeId;
+  const engineLabel = _historyGraphEscape(node.engine || node.asset_type || '?');
+  const promptText = _historyGraphEscape((node.prompt || '').slice(0, 60));
+  const safeUrl = _historyGraphEscape(node.source_url || '');
+  const safeId = _historyGraphEscape(node.id || '');
+  const childrenHtml = (node.children && node.children.length)
+    ? `<div class="history-graph-children">${node.children.map(c => renderHistoryGraphNode(c, activeId)).join('')}</div>`
+    : '';
+  return `
+    <div class="history-graph-node${isActive ? ' active' : ''}" data-asset-id="${safeId}" data-source-url="${safeUrl}">
+      <img src="${safeUrl}" alt="" loading="lazy" />
+      <div class="history-graph-node-meta">
+        <div class="history-graph-node-engine">${engineLabel}</div>
+        ${promptText ? `<div class="history-graph-node-prompt">${promptText}</div>` : ''}
+      </div>
+    </div>
+    ${childrenHtml}
+  `;
+}
+
+window.loadHistoryGraph = loadHistoryGraph;
+
+// Poll for currentUrl changes — when the visible image flips, refresh the
+// chain graph. Same cadence as the wave 11 compat-row poller.
+let _lastCheckedHistoryUrl = null;
+setInterval(() => {
+  const url = (typeof currentUrl !== 'undefined' ? currentUrl : null);
+  if (url && url !== _lastCheckedHistoryUrl) {
+    _lastCheckedHistoryUrl = url;
+    if (typeof loadHistoryGraph === 'function') {
+      loadHistoryGraph(url).catch(() => { /* never throw out of poll */ });
+    }
+  }
+}, 1500);
+// --- /History Graph ----------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
   const editInput = document.getElementById('edit-input');
