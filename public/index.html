@@ -146,6 +146,33 @@
 
   .result-img-wrap { position: relative; margin-bottom: 12px; }
   .result-img-wrap img { width: 100%; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); display: block; }
+
+  /* Face-lock drift badge — shown on edits where the face moved away from the
+     prior version's identity. UI feedback for the /api/face-lock/drift-check
+     endpoint. Only moderate / significant / face_count_mismatch are visible;
+     identical / minor / no_face are hidden so the user only sees real warnings. */
+  .drift-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #f59e0b;
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    cursor: help;
+    z-index: 5;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    pointer-events: auto;
+    user-select: none;
+  }
+  .drift-badge[data-drift="significant"] { background: #ef4444; }
+  .drift-badge[data-drift="face_count_mismatch"] { background: #dc2626; }
+  .drift-badge[data-drift="minor"],
+  .drift-badge[data-drift="identical"],
+  .drift-badge[data-drift="no_face"],
+  .drift-badge[data-drift="pending"] { display: none; }
   .img-overlay {
     display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.7); border-radius: 12px;
@@ -2245,9 +2272,84 @@ function pushVersion(url, label) {
   if (versionIndex < versionStack.length - 1) {
     versionStack = versionStack.slice(0, versionIndex + 1);
   }
+  // Capture the prior version's URL BEFORE the push so we can run a one-shot
+  // face-lock drift check against the new result. We only do this when there
+  // IS a prior version (i.e., this push is an edit, not the first generation),
+  // and when the URLs differ. The check is best-effort — it must not block
+  // the edit flow, must not retry, and runs at most once per pushVersion call.
+  const beforeUrl = versionStack.length > 0 ? versionStack[versionStack.length - 1].url : null;
+
   versionStack.push({ url, label });
   versionIndex = versionStack.length - 1;
   renderVersionStrip();
+
+  if (beforeUrl && beforeUrl !== url) {
+    // Pre-set a "pending" badge container so subsequent renders are stable.
+    setDriftBadge('pending', null, '');
+    // Fire-and-forget: never await, never propagate errors.
+    checkDriftAndBadge(beforeUrl, url).catch((e) => console.warn('drift check failed', e));
+  } else {
+    clearDriftBadge();
+  }
+}
+
+// --- Face-lock drift badge ---
+// One badge per result image. The badge sits inside .result-img-wrap and is
+// updated in place when checkDriftAndBadge resolves. Hidden via CSS for
+// drift levels we don't want to surface (identical / minor / no_face).
+
+function clearDriftBadge() {
+  const wrap = document.querySelector('#result .result-img-wrap');
+  if (!wrap) return;
+  const badge = wrap.querySelector('.drift-badge');
+  if (badge && badge.parentNode) badge.parentNode.removeChild(badge);
+}
+
+function setDriftBadge(driftLevel, similarity, notableDifferences) {
+  const wrap = document.querySelector('#result .result-img-wrap');
+  if (!wrap) return;
+  let badge = wrap.querySelector('.drift-badge');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.className = 'drift-badge';
+    wrap.appendChild(badge);
+  }
+  badge.dataset.drift = driftLevel;
+  if (similarity !== null && similarity !== undefined) {
+    badge.dataset.similarity = String(similarity);
+    const pct = Math.round(Number(similarity) * 100);
+    const diff = notableDifferences ? ` ${notableDifferences}` : '';
+    badge.title = `Face drift: ${pct}% similarity.${diff}`;
+  } else {
+    badge.title = '';
+  }
+  badge.textContent = driftLevel === 'face_count_mismatch' ? '⚠ face mismatch' : '⚠ drift';
+}
+
+async function checkDriftAndBadge(beforeUrl, afterUrl) {
+  if (!beforeUrl || !afterUrl) return;
+  try {
+    const resp = await fetch('/api/face-lock/drift-check', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ before_url: beforeUrl, after_url: afterUrl }),
+    });
+    if (!resp.ok) {
+      // Don't surface anything — silently drop the badge so the user doesn't
+      // see a stale "pending" state. Drift check is non-blocking metadata.
+      clearDriftBadge();
+      return;
+    }
+    const data = await resp.json();
+    // Guard against the user moving on (different version showing) by the time
+    // the request resolves. If currentUrl no longer matches afterUrl, skip.
+    if (typeof currentUrl !== 'undefined' && currentUrl !== afterUrl) return;
+    setDriftBadge(data.drift_level || 'no_face', data.similarity, data.notable_differences || '');
+  } catch (e) {
+    clearDriftBadge();
+    // Best-effort; never throw.
+    console.warn('drift check error', e);
+  }
 }
 
 function goToVersion(idx) {
@@ -2257,6 +2359,10 @@ function goToVersion(idx) {
   document.getElementById('result-img').src = currentUrl;
   resetSendBtns();
   renderVersionStrip();
+  // Drift badge is computed against the immediate prior version of THIS edit.
+  // When the user time-travels through the version stack, the badge no longer
+  // reflects the displayed pair, so clear it.
+  clearDriftBadge();
 }
 
 function undoEdit() {
@@ -2292,6 +2398,7 @@ function resetVersionStack() {
   versionStack = [];
   versionIndex = -1;
   document.getElementById('version-strip').style.display = 'none';
+  clearDriftBadge();
 }
 
 function clearPrompt() {

@@ -220,6 +220,38 @@ export async function handleSafeEditRoutes(
     return handleAnalyzeImage(req);
   }
 
+  // ---------------------------------------------------------------------------
+  // /api/face-lock/drift-check — vision-based face similarity between two
+  // images (typically a "before" version and an "after" edit result). Used by
+  // the UI to flag edits where the face drifted away from the source identity
+  // (a common failure mode of Eye / gpt-image-2 outputs and high-temperature
+  // re-routing chains).
+  //
+  // Body: { before_url: string, after_url: string }
+  // Returns:
+  //   {
+  //     similarity: number (0..1, higher = same person),
+  //     drift_level: 'identical' | 'minor' | 'moderate' | 'significant' |
+  //                  'no_face' | 'face_count_mismatch',
+  //     face_count_before: integer,
+  //     face_count_after:  integer,
+  //     notable_differences?: string,
+  //     same_person?: boolean | null,
+  //   }
+  //
+  // Implementation: a single multi-image Grok Vision call (the same chat
+  // completions endpoint we already use in handleAnalyzeImage) with both
+  // images attached to one user-message content array. Grok-2-vision and
+  // grok-4-1-fast-non-reasoning both accept multi-image payloads where the
+  // "content" field is an ordered array of image_url + text parts. We use
+  // the same model the rest of the codebase uses for vision classification
+  // so we don't introduce a new vendor dependency.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/face-lock/drift-check" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleFaceLockDriftCheck(req);
+  }
+
   if (url.pathname === "/api/engine-compatibility" && req.method === "GET") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     // Static map of (engine × content_profile) → verdict. Frontend uses this
@@ -2942,6 +2974,174 @@ async function handleAnalyzeImage(req: Request): Promise<Response> {
     });
   } catch (err: any) {
     return Response.json({ error: err?.message || "analyze_failed" }, { status: 500 });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// /api/face-lock/drift-check — face-similarity between two images via Grok
+// Vision. Single multi-image chat-completions call with strict JSON output.
+// Best-effort: failures return the appropriate status without throwing so the
+// UI's badge code can swallow the error and skip the badge.
+// -----------------------------------------------------------------------------
+
+const FACE_DRIFT_SYSTEM_PROMPT = `You are a face similarity classifier. You will be shown two images: image 1 ("before") and image 2 ("after").
+
+Return ONLY a JSON object — no markdown fences, no commentary — with this exact shape:
+{
+  "face_count_before": integer,
+  "face_count_after": integer,
+  "same_person": true | false | null,
+  "similarity": float between 0.0 and 1.0,
+  "notable_differences": string (max 100 chars)
+}
+
+Rules:
+- "face_count_*" counts the number of distinct human faces visible in each image. 0 if no face.
+- "same_person" is null when either image has zero clear faces or you cannot tell.
+- "similarity" is 0.0 for clearly different people; 1.0 for an identical face. Rate STRICTLY: even small shifts in eye color, jaw shape, brow position, nose proportion, or lip shape should drop similarity below 0.9. Lighting / makeup / hair style alone should not penalize similarity below 0.85 if the underlying face is the same.
+- "notable_differences" is a short human-readable description (e.g., "eye color shifted blue->green", "jaw narrower", "wider nose"). Empty string if none.
+- Return ONLY the raw JSON. No prose, no fences.`;
+
+type FaceDriftResult = {
+  similarity: number;
+  drift_level:
+    | "identical"
+    | "minor"
+    | "moderate"
+    | "significant"
+    | "no_face"
+    | "face_count_mismatch";
+  face_count_before: number;
+  face_count_after: number;
+  notable_differences: string;
+  same_person: boolean | null;
+};
+
+function deriveDriftLevel(
+  similarity: number,
+  faceBefore: number,
+  faceAfter: number
+): FaceDriftResult["drift_level"] {
+  if (faceBefore === 0 && faceAfter === 0) return "no_face";
+  if (faceBefore !== faceAfter) return "face_count_mismatch";
+  if (similarity >= 0.95) return "identical";
+  if (similarity >= 0.85) return "minor";
+  if (similarity >= 0.7) return "moderate";
+  return "significant";
+}
+
+function stripJsonFences(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
+}
+
+async function handleFaceLockDriftCheck(req: Request): Promise<Response> {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const beforeUrl = String(body?.before_url || "").trim();
+    const afterUrl = String(body?.after_url || "").trim();
+
+    if (!beforeUrl) {
+      return Response.json({ error: "before_url required" }, { status: 400 });
+    }
+    if (!afterUrl) {
+      return Response.json({ error: "after_url required" }, { status: 400 });
+    }
+
+    // Single Grok Vision call with both images attached to one user message.
+    // Grok-2-vision and grok-4-1-fast-non-reasoning accept multi-image content
+    // arrays — same shape used by handleAnalyzeImage with one image, just with
+    // a second image_url part. The temperature is pinned to 0 so the JSON is
+    // deterministic for the same input pair.
+    const visionRes = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env("XAI_API_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "grok-4-1-fast-non-reasoning",
+        messages: [
+          { role: "system", content: FACE_DRIFT_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Compare the faces in these two images. Return ONLY the JSON object.",
+              },
+              { type: "image_url", image_url: { url: beforeUrl } },
+              { type: "image_url", image_url: { url: afterUrl } },
+            ],
+          },
+        ],
+        temperature: 0,
+      }),
+    });
+
+    if (!visionRes.ok) {
+      const errText = await visionRes.text().catch(() => "");
+      return Response.json(
+        {
+          error: "vision_failed",
+          status: visionRes.status,
+          detail: errText.slice(0, 400),
+        },
+        { status: 502 }
+      );
+    }
+
+    const visionData = await visionRes.json();
+    const raw = String(visionData?.choices?.[0]?.message?.content || "{}");
+    const cleaned = stripJsonFences(raw);
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      return Response.json(
+        { error: "vision_unparseable", raw: cleaned.slice(0, 400) },
+        { status: 502 }
+      );
+    }
+
+    // Defensive normalization — never trust the model's exact shape.
+    const faceBefore = Number.isFinite(parsed.face_count_before)
+      ? Math.max(0, Math.round(Number(parsed.face_count_before)))
+      : 0;
+    const faceAfter = Number.isFinite(parsed.face_count_after)
+      ? Math.max(0, Math.round(Number(parsed.face_count_after)))
+      : 0;
+    const rawSim = Number(parsed.similarity);
+    const similarity = Number.isFinite(rawSim) ? Math.max(0, Math.min(1, rawSim)) : 0;
+    const samePerson =
+      parsed.same_person === true
+        ? true
+        : parsed.same_person === false
+        ? false
+        : null;
+    const notableDifferences = String(parsed.notable_differences || "").slice(0, 200);
+
+    const drift_level = deriveDriftLevel(similarity, faceBefore, faceAfter);
+
+    const result: FaceDriftResult = {
+      similarity,
+      drift_level,
+      face_count_before: faceBefore,
+      face_count_after: faceAfter,
+      notable_differences: notableDifferences,
+      same_person: samePerson,
+    };
+
+    return Response.json(result);
+  } catch (err: any) {
+    return Response.json(
+      { error: err?.message || "drift_check_failed" },
+      { status: 500 }
+    );
   }
 }
 
