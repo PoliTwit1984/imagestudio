@@ -610,6 +610,37 @@ export async function handleSafeEditRoutes(
   }
 
   // ---------------------------------------------------------------------------
+  // Reveal (Magnific upscale) — async + preset variants.
+  //
+  //   POST /api/reveal/async          { image_url, scale?, mode?, prompt? }
+  //                                   → { ok, job_id }
+  //                                   Wraps the existing Magnific call in
+  //                                   spawnJob so the request thread doesn't
+  //                                   block on the 30-90s upscale; UI's Active
+  //                                   Jobs panel polls /api/jobs/:id.
+  //
+  //   POST /api/reveal/preset/:slug   { image_url, intensity? }
+  //                                   → { ok, job_id }
+  //                                   Curated prompt + creativity/hdr/
+  //                                   resemblance bag from REVEAL_PRESETS.
+  //                                   Engine="reveal:<slug>" on the saved
+  //                                   asset row.
+  //
+  // The synchronous /api/upscale route in media.ts is left untouched.
+  // ---------------------------------------------------------------------------
+
+  if (url.pathname === "/api/reveal/async" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleRevealAsync(req, deps);
+  }
+
+  if (url.pathname.startsWith("/api/reveal/preset/") && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const slug = url.pathname.slice("/api/reveal/preset/".length);
+    return handleRevealPreset(req, slug, deps);
+  }
+
+  // ---------------------------------------------------------------------------
   // LUT extraction — reverse-engineer a 33×33×33 Hald-CLUT from a before/after
   // image pair (e.g., before = original, after = original with a Darkroom
   // preset applied). Builds the cube by sampling pixel pairs, fills empty
@@ -8728,6 +8759,483 @@ async function handleChainsRun(req: Request, deps: any): Promise<Response> {
   } catch (e: any) {
     return Response.json(
       { error: e?.message || "chains/run failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// =============================================================================
+// Reveal (Magnific) — async route + preset registry + preset route.
+//
+// The Reveal engine wraps Freepik's image-upscaler endpoint (the same one the
+// synchronous /api/upscale handler in media.ts calls). The preset registry
+// gives every recurring use case a curated prompt + creativity/hdr/resemblance
+// envelope. The async variant flips the call from blocking to spawnJob — the
+// 30-90s vendor poll runs as a detached promise and the UI's Active Jobs
+// panel (wave 28) picks the job up via GET /api/jobs/:id.
+//
+// Why a registry: Reveal-by-prompt is sensitive — small wording shifts move
+// the result from "preserves identity" to "plastic skin." The registry locks
+// proven prompts behind slugs so callers don't have to reinvent them.
+//
+// Note on the creativity / hdr / resemblance numbers: Freepik's upscaler
+// endpoint accepts { image, prompt, scale_factor }, NOT the older Magnific
+// triplet of (creativity, hdr, resemblance). We still record the curated
+// numbers in the saved asset's metadata so a future engine swap (true
+// Magnific / Visual Electric / etc.) can read them back, and so the UI can
+// display the preset's intent. The active levers in v1 are the prompt and
+// the scale.
+// =============================================================================
+
+interface RevealPreset {
+  slug: string;
+  name: string;
+  description: string;
+  prompt: string;
+  /** Curated Magnific-style envelope. Recorded in metadata; not all are
+   *  consumed by the current upscaler endpoint. */
+  creativity: number;
+  hdr: number;
+  resemblance: number;
+}
+
+const REVEAL_PRESETS: Record<string, RevealPreset> = {
+  "portrait-fidelity": {
+    slug: "portrait-fidelity",
+    name: "Portrait Fidelity",
+    description: "Identity-locked portrait upscale. Preserves eye color, pore micro-texture, lashes.",
+    prompt:
+      "ultra high fidelity portrait upscale, preserve eye color and pupil detail, render skin pore micro-texture, eyelash separation, sharpen iris pattern, photorealistic, no plastic skin, preserve identity exactly",
+    creativity: 0.3,
+    hdr: 5,
+    resemblance: 60,
+  },
+  "skin-luxury": {
+    slug: "skin-luxury",
+    name: "Skin Luxury",
+    description: "Beauty editorial: render fine pore detail, preserve makeup and freckles.",
+    prompt:
+      "luxury beauty editorial upscale, render fine pore detail, preserve makeup texture exactly, subtle natural skin sheen, no over-smoothing, no plastic look, preserve all freckles and skin asymmetry",
+    creativity: 0.35,
+    hdr: 6,
+    resemblance: 70,
+  },
+  "fabric-weave": {
+    slug: "fabric-weave",
+    name: "Fabric Weave",
+    description: "Render thread weave + fold geometry. Photorealistic fabric micro-detail.",
+    prompt:
+      "high fidelity fabric texture upscale, render thread weave, preserve fold geometry exactly, micro-detail in pattern and weave, photorealistic",
+    creativity: 0.4,
+    hdr: 5,
+    resemblance: 60,
+  },
+  "editorial-print": {
+    slug: "editorial-print",
+    name: "Editorial Print",
+    description: "Magazine-grade sharpening. Deep blacks, gallery detail, no over-sharpen halos.",
+    prompt:
+      "magazine editorial upscale, sharp render, deep blacks, gallery-quality detail, no over-sharpening halos, preserve composition exactly",
+    creativity: 0.3,
+    hdr: 5,
+    resemblance: 65,
+  },
+  "landscape-wide": {
+    slug: "landscape-wide",
+    name: "Landscape Wide",
+    description: "Foliage detail and atmospheric depth without fake-HDR clipping.",
+    prompt:
+      "natural landscape upscale, render foliage detail, atmospheric depth, preserve sky and color grading exactly, photorealistic, no fake HDR clipping",
+    creativity: 0.45,
+    hdr: 4,
+    resemblance: 55,
+  },
+  "product-glow": {
+    slug: "product-glow",
+    name: "Product Glow",
+    description: "Studio product upscale. Reflective surface micro-detail, sharp edges.",
+    prompt:
+      "studio product upscale, render reflective surface micro-detail, preserve lighting exactly, sharp edges, photorealistic",
+    creativity: 0.35,
+    hdr: 5,
+    resemblance: 65,
+  },
+};
+
+/**
+ * Result of a single Magnific (Freepik image-upscaler) call. Always returns a
+ * Supabase-rehosted URL — vendor URLs are short-lived and would 404 by the
+ * time the async job's row is read.
+ */
+interface MagnificCallResult {
+  url: string;
+  scale: number;
+  mode: "creative" | "faithful";
+  prompt: string;
+}
+
+/**
+ * Submit an image to Freepik's upscaler endpoint, poll for completion, and
+ * rehost the result to Supabase storage. Throws on failure — callers wrap
+ * this in spawnJob's worker so the throw surfaces as a job-row failure.
+ *
+ * mode='creative' → image-upscaler endpoint (accepts a prompt; better detail
+ * generation, slight identity drift risk).
+ * mode='faithful' → image-upscaler-precision endpoint (no prompt; identity-safe).
+ */
+async function callMagnific(args: {
+  imageUrl: string;
+  scale: number;
+  mode: "creative" | "faithful";
+  prompt: string;
+  onPoll?: () => Promise<void>;
+}): Promise<MagnificCallResult> {
+  const { imageUrl, scale, mode, prompt, onPoll } = args;
+  const freepikHeaders = {
+    "x-freepik-api-key": env("FREEPIK_API_KEY"),
+    "Content-Type": "application/json",
+  };
+
+  const imgResp = await fetch(imageUrl);
+  if (!imgResp.ok) {
+    throw new Error(`reveal: source fetch ${imgResp.status}`);
+  }
+  const imgBuf = await imgResp.arrayBuffer();
+  const b64 = Buffer.from(imgBuf).toString("base64");
+  const b64Data = `data:image/jpeg;base64,${b64}`;
+
+  let endpoint: string;
+  let payload: Record<string, any>;
+  if (mode === "creative") {
+    endpoint = "image-upscaler";
+    payload = {
+      image: b64Data,
+      prompt,
+      scale_factor: `${scale}x`,
+    };
+  } else {
+    endpoint = "image-upscaler-precision";
+    payload = {
+      image: b64Data,
+      scale_factor: `${scale}x`,
+    };
+  }
+
+  const submitRes = await fetch(`https://api.freepik.com/v1/ai/${endpoint}`, {
+    method: "POST",
+    headers: freepikHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  if (!submitRes.ok) {
+    const err = await submitRes.text();
+    throw new Error(`Magnific submit ${submitRes.status}: ${err.slice(0, 200)}`);
+  }
+
+  const submitData = await submitRes.json();
+  let resultUrl = "";
+
+  if (submitData.data?.status === "COMPLETED" && submitData.data?.generated?.length > 0) {
+    const gen = submitData.data.generated[0];
+    resultUrl = typeof gen === "string" ? gen : gen?.url || "";
+  } else if (submitData.data?.task_id) {
+    const taskId = submitData.data.task_id;
+    const pollUrl = `https://api.freepik.com/v1/ai/${endpoint}/${taskId}`;
+    const maxWait = 120_000;
+    const start = Date.now();
+
+    while (Date.now() - start < maxWait) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Soft-cancel hook — the worker's updateProgress closure throws a
+      // CancellationError if the job row got DELETEd mid-flight. Calling
+      // it here lets the caller bail before another vendor poll.
+      if (onPoll) await onPoll();
+      const pollRes = await fetch(pollUrl, { headers: freepikHeaders });
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+      const status = pollData.data?.status;
+
+      if (status === "COMPLETED" && pollData.data?.generated?.length > 0) {
+        const gen = pollData.data.generated[0];
+        resultUrl = typeof gen === "string" ? gen : gen?.url || "";
+        break;
+      }
+      if (status === "FAILED") {
+        throw new Error("Magnific task failed");
+      }
+    }
+
+    if (!resultUrl) throw new Error("Magnific timeout (120s)");
+  } else {
+    throw new Error(`Magnific unexpected response: ${JSON.stringify(submitData).slice(0, 200)}`);
+  }
+
+  // Rehost to Supabase. Vendor URLs are short-lived; rehosting is what
+  // makes the asset durable in our catalog.
+  const dl = await fetch(resultUrl);
+  if (!dl.ok) {
+    throw new Error(`reveal: vendor result fetch ${dl.status}`);
+  }
+  const buf = Buffer.from(await dl.arrayBuffer());
+  const { uploadToStorage, buildUploadPath } = await import("../supabase");
+  const finalUrl = await uploadBufferToStorage(
+    buf,
+    "image/png",
+    buildUploadPath,
+    uploadToStorage,
+    "reveal",
+  );
+
+  return { url: finalUrl, scale, mode, prompt };
+}
+
+// POST /api/reveal/async — async wrapper around callMagnific.
+// Body: { image_url, scale? = 2, mode? = 'creative'|'faithful' (default
+// 'creative'), prompt?, character?, user_id? }
+// Returns: { ok, job_id }
+async function handleRevealAsync(
+  req: Request,
+  deps: any,
+): Promise<Response> {
+  let body: any = {};
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json_body" }, { status: 400 });
+  }
+
+  const imageUrl = String(body.image_url || "").trim();
+  if (!imageUrl) {
+    return Response.json({ error: "image_url required" }, { status: 400 });
+  }
+
+  const scale = Number(body.scale) || 2;
+  const modeRaw = String(body.mode || "creative");
+  const mode = (modeRaw === "faithful" ? "faithful" : "creative") as
+    | "creative"
+    | "faithful";
+  const defaultPrompt =
+    "(photorealistic:1.3), (natural skin texture with visible pores:1.3), (8k detail:1.1), natural lighting, 35mm film grain";
+  const prompt = String(body.prompt || defaultPrompt);
+  const charName = body.character ? String(body.character) : null;
+
+  try {
+    const inputAssetId = await (deps as any)
+      .lookupAssetIdByUrl?.(imageUrl)
+      .catch(() => null);
+
+    const { job_id } = await spawnJob(deps, {
+      engine: "reveal",
+      job_type: "upscale",
+      input_asset_id: inputAssetId || null,
+      user_id: body.user_id ?? null,
+      params: {
+        image_url: imageUrl,
+        scale,
+        mode,
+        prompt,
+        character_name: charName,
+      },
+      worker: async (jobId, updateProgress) => {
+        try {
+          await updateProgress(0.1, "submitting to Magnific");
+          const result = await callMagnific({
+            imageUrl,
+            scale,
+            mode,
+            prompt,
+            onPoll: async () => {
+              // Cheap poll-ping — keeps progress fresh while the vendor
+              // task is queued AND lets updateProgress's cancellation
+              // peek at the jobs row.
+              await updateProgress(0.4, "waiting on Magnific");
+            },
+          });
+
+          await updateProgress(0.9, "saving asset");
+          let outputAssetId: string | null = null;
+          try {
+            const parentId =
+              (await (deps as any).lookupAssetIdByUrl?.(imageUrl)) || null;
+            outputAssetId = await (deps as any).saveAsset?.({
+              asset_type: "edit",
+              source_url: result.url,
+              engine: "reveal",
+              edit_action: "upscale",
+              prompt,
+              parent_id: parentId,
+              metadata: {
+                character_name: charName,
+                scale,
+                mode,
+                source_url: imageUrl,
+                job_id: jobId,
+              },
+              tags: ["reveal", "upscale", mode],
+            });
+          } catch (e) {
+            console.error("[reveal/async] saveAsset failed (non-fatal):", e);
+          }
+
+          // Pre-warm content profile cache for downstream watch routing.
+          queueBackgroundReanalysis(result.url);
+
+          return {
+            output_url: result.url,
+            output_asset_id: outputAssetId || undefined,
+          };
+        } catch (e: any) {
+          if (e instanceof CancellationError) throw e;
+          return {
+            error: String(e?.message || e),
+            error_class: "service",
+          };
+        }
+      },
+    });
+
+    return Response.json({ ok: true, job_id });
+  } catch (e: any) {
+    return Response.json(
+      { error: e?.message || "reveal/async failed" },
+      { status: 500 },
+    );
+  }
+}
+
+// POST /api/reveal/preset/:slug — apply a curated REVEAL preset to image_url.
+// Body: { image_url, intensity?, scale? = 2, user_id? }
+// Returns: { ok, job_id, slug, name }
+//
+// intensity is accepted but currently maps onto a logged metadata field —
+// the active levers (prompt + scale) come from the registry. The
+// creativity/hdr/resemblance triplet is recorded in metadata so a future
+// engine swap can consume it.
+async function handleRevealPreset(
+  req: Request,
+  slug: string,
+  deps: any,
+): Promise<Response> {
+  const preset = REVEAL_PRESETS[slug];
+  if (!preset) {
+    return Response.json(
+      { error: `unknown reveal preset: ${slug}` },
+      { status: 404 },
+    );
+  }
+
+  let body: any = {};
+  try {
+    body = await req.json();
+  } catch {
+    // Empty body is fine — preset has its own defaults.
+    body = {};
+  }
+
+  const imageUrl = String(body.image_url || "").trim();
+  if (!imageUrl) {
+    return Response.json({ error: "image_url required" }, { status: 400 });
+  }
+
+  const scale = Number(body.scale) || 2;
+  const intensityRaw = String(body.intensity || "medium");
+  const intensity = (["low", "medium", "high"].includes(intensityRaw)
+    ? intensityRaw
+    : "medium") as "low" | "medium" | "high";
+  const charName = body.character ? String(body.character) : null;
+
+  try {
+    const inputAssetId = await (deps as any)
+      .lookupAssetIdByUrl?.(imageUrl)
+      .catch(() => null);
+
+    const { job_id } = await spawnJob(deps, {
+      engine: `reveal:${slug}`,
+      job_type: "upscale-preset",
+      input_asset_id: inputAssetId || null,
+      user_id: body.user_id ?? null,
+      params: {
+        image_url: imageUrl,
+        preset_slug: slug,
+        preset_name: preset.name,
+        scale,
+        intensity,
+        creativity: preset.creativity,
+        hdr: preset.hdr,
+        resemblance: preset.resemblance,
+        character_name: charName,
+      },
+      worker: async (jobId, updateProgress) => {
+        try {
+          await updateProgress(0.1, `submitting to Magnific (${preset.name})`);
+          const result = await callMagnific({
+            imageUrl,
+            scale,
+            mode: "creative",
+            prompt: preset.prompt,
+            onPoll: async () => {
+              await updateProgress(0.4, "waiting on Magnific");
+            },
+          });
+
+          await updateProgress(0.9, "saving asset");
+          let outputAssetId: string | null = null;
+          try {
+            const parentId =
+              (await (deps as any).lookupAssetIdByUrl?.(imageUrl)) || null;
+            outputAssetId = await (deps as any).saveAsset?.({
+              asset_type: "edit",
+              source_url: result.url,
+              engine: `reveal:${slug}`,
+              edit_action: "upscale",
+              prompt: preset.prompt,
+              parent_id: parentId,
+              metadata: {
+                preset_slug: slug,
+                preset_name: preset.name,
+                intensity,
+                scale,
+                creativity: preset.creativity,
+                hdr: preset.hdr,
+                resemblance: preset.resemblance,
+                character_name: charName,
+                source_url: imageUrl,
+                job_id: jobId,
+              },
+              tags: ["reveal", "preset", slug],
+            });
+          } catch (e) {
+            console.error(
+              `[reveal/preset:${slug}] saveAsset failed (non-fatal):`,
+              e,
+            );
+          }
+
+          queueBackgroundReanalysis(result.url);
+
+          return {
+            output_url: result.url,
+            output_asset_id: outputAssetId || undefined,
+          };
+        } catch (e: any) {
+          if (e instanceof CancellationError) throw e;
+          return {
+            error: String(e?.message || e),
+            error_class: "service",
+          };
+        }
+      },
+    });
+
+    return Response.json({
+      ok: true,
+      job_id,
+      slug,
+      name: preset.name,
+    });
+  } catch (e: any) {
+    return Response.json(
+      { error: e?.message || "reveal/preset failed" },
       { status: 500 },
     );
   }
