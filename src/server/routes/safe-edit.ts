@@ -673,6 +673,9 @@ async function handleFluxEdit(
       console.error("[safe-edit:flux-edit] saveAsset failed (non-fatal):", e);
     }
 
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(resultUrl);
+
     return Response.json({
       ok: true,
       url: resultUrl,
@@ -1523,6 +1526,9 @@ async function handleApplyPreset(
       }
     }
 
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(finalUrl);
+
     return Response.json({
       ok: true,
       url: finalUrl,
@@ -2005,6 +2011,9 @@ async function handleDarkroomSkin(
       console.error("[safe-edit:darkroom-skin] saveAsset failed (non-fatal):", e);
     }
 
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(finalUrl);
+
     return Response.json({
       ok: true,
       url: finalUrl,
@@ -2188,6 +2197,9 @@ async function handleWearGarment(
     } catch (e) {
       console.error("[safe-edit:wear-garment] saveAsset failed (non-fatal):", e);
     }
+
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(resultUrl);
 
     return Response.json({
       ok: true,
@@ -2712,6 +2724,9 @@ async function handleSandwichEdit(
       console.error("[safe-edit:sandwich] saveAsset failed (non-fatal):", e);
     }
 
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(finalUrl);
+
     return Response.json({
       ok: true,
       image_url: finalUrl,
@@ -2888,6 +2903,9 @@ async function handleInpaint(
     } catch (e) {
       console.error("[safe-edit:inpaint] saveAsset failed (non-fatal):", e);
     }
+
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(resultUrl);
 
     return Response.json({
       ok: true,
@@ -3270,6 +3288,41 @@ async function handleAnalyzeImage(req: Request): Promise<Response> {
 }
 
 // -----------------------------------------------------------------------------
+// queueBackgroundReanalysis — fire-and-forget content-profile pre-warm.
+//
+// Called after every successful edit handler with the rehosted result URL.
+// Invokes handleAnalyzeImage directly (no HTTP self-call, no auth gate) so
+// assets.metadata.content_profile is populated before the next request that
+// needs the profile (Watch routing, engine-compat lookup) hits this URL.
+//
+// Contract:
+//   - NEVER awaited by the caller. Caller responds immediately.
+//   - Errors are logged and swallowed. Cache miss is the worst-case outcome.
+//   - No-op when imageUrl is empty/falsy.
+// -----------------------------------------------------------------------------
+function queueBackgroundReanalysis(imageUrl: string): void {
+  if (!imageUrl) return;
+  void (async () => {
+    try {
+      const req = new Request("http://internal/api/analyze-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_url: imageUrl }),
+      });
+      // handleAnalyzeImage has no internal auth check — calling it directly
+      // bypasses the route-level checkAuth gate cleanly. We discard the
+      // response; the side-effect (writeAssetContentProfile cache write)
+      // is what we want.
+      await handleAnalyzeImage(req).catch((e: any) =>
+        console.warn("[bg-reanalysis] analyze failed:", e?.message || e)
+      );
+    } catch (e: any) {
+      console.warn("[bg-reanalysis] outer error:", e?.message || e);
+    }
+  })();
+}
+
+// -----------------------------------------------------------------------------
 // /api/face-lock/drift-check — face-similarity between two images via Grok
 // Vision. Single multi-image chat-completions call with strict JSON output.
 // Best-effort: failures return the appropriate status without throwing so the
@@ -3598,6 +3651,9 @@ async function handleSmartEdit(
       console.error("[safe-edit:smart-edit] saveAsset failed (non-fatal):", e);
     }
 
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(resultUrl);
+
     const smartResp: any = {
       ok: true,
       url: resultUrl,
@@ -3792,6 +3848,9 @@ async function handleMakeNsfw(
     } catch (e) {
       console.error("[safe-edit:make-nsfw] saveAsset failed (non-fatal):", e);
     }
+
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(finalUrl);
 
     return Response.json({
       ok: true,
@@ -4067,6 +4126,9 @@ async function handleSurgicalEdit(
     } catch (e) {
       console.error("[safe-edit:surgical-edit] saveAsset failed (non-fatal):", e);
     }
+
+    // Pre-warm content-profile cache for the new asset. Fire-and-forget.
+    queueBackgroundReanalysis(upscaledUrl || finalUrl);
 
     return Response.json({
       ok: true,
