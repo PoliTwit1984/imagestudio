@@ -1351,6 +1351,36 @@
     cursor: pointer;
     font-size: 12px;
   }
+  .chain-save-btn {
+    background: #2a2a2a;
+    color: #fff;
+    border: 1px solid #2a2a2a;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .chain-save-btn:hover { border-color: #a78bfa; }
+  .chain-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .chain-load-select {
+    background: #1a1a1a;
+    color: #fff;
+    border: 1px solid #2a2a2a;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    min-width: 140px;
+  }
+  .chain-load-refresh {
+    background: #1a1a1a;
+    color: #888;
+    border: 1px solid #2a2a2a;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .chain-load-refresh:hover { color: #a78bfa; }
 </style>
 </head>
 <body>
@@ -1824,6 +1854,11 @@
           <div class="chain-builder-actions">
             <button class="chain-run-btn" id="chain-run-btn" disabled>▶ Run Chain</button>
             <button class="chain-clear-btn" id="chain-clear-btn">Clear</button>
+            <button class="chain-save-btn" id="chain-save-btn">💾 Save</button>
+            <select class="chain-load-select" id="chain-load-select">
+              <option value="">Load chain…</option>
+            </select>
+            <button class="chain-load-refresh" id="chain-load-refresh" title="Refresh chain list">⟳</button>
           </div>
         </div>
       </details>
@@ -9139,6 +9174,142 @@ if (_chainClearBtnEl) {
     renderChainCanvas();
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Chain persistence — save current chain as a preset_type='chain' row, list
+// existing chains, and load one back into the builder. Reuses /api/presets
+// CRUD (wave 10). chain_definition is stored as { steps: [...] } so the
+// wave-32 chains.execution-engine loader can read either {steps} or a bare
+// array. See darkroom.chains.persistence.
+// ─────────────────────────────────────────────────────────────────────────
+function _slugifyChainName(name) {
+  return String(name || '').toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60) || ('chain-' + Date.now().toString(36));
+}
+
+async function saveCurrentChain() {
+  if (_chainSteps.length === 0) {
+    if (typeof toast === 'function') toast('Build a chain first');
+    return;
+  }
+  for (const [i, s] of _chainSteps.entries()) {
+    if (!s.prompt || !s.prompt.trim()) {
+      if (typeof toast === 'function') toast(`Step ${i + 1} (${s.engine}) needs a prompt before saving`);
+      return;
+    }
+  }
+  const name = window.prompt('Chain name:', 'My Chain');
+  if (!name) return;
+  const slug = _slugifyChainName(name);
+
+  try {
+    const resp = await fetch('/api/presets', {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        slug,
+        preset_type: 'chain',
+        description: `${_chainSteps.length}-step chain: ${_chainSteps.map(s => s.engine).join(' → ')}`,
+        chain_definition: {
+          steps: _chainSteps.map(s => ({
+            engine: s.engine,
+            prompt: (s.prompt || '').trim(),
+            params: s.params || {},
+          })),
+        },
+        tags: ['user-chain'],
+        category: 'chain',
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      if (resp.status === 409) {
+        if (typeof toast === 'function') toast('Chain name already exists. Pick a different name.');
+      } else {
+        if (typeof toast === 'function') toast('Save failed: ' + (data.error || resp.statusText));
+      }
+      return;
+    }
+    if (typeof toast === 'function') toast('Chain saved: ' + name);
+    refreshChainLoadDropdown();
+  } catch (e) {
+    if (typeof toast === 'function') toast('Save failed: ' + (e.message || e));
+  }
+}
+
+async function refreshChainLoadDropdown() {
+  const sel = document.getElementById('chain-load-select');
+  if (!sel) return;
+  const previous = sel.value;
+  sel.disabled = true;
+  try {
+    const resp = await fetch('/api/presets?preset_type=chain&archived=false', { headers: headers() });
+    if (!resp.ok) throw new Error('list failed');
+    const data = await resp.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    sel.innerHTML = '<option value="">Load chain…</option>' + items.map(i => {
+      const desc = (i.description || i.slug || '').slice(0, 40);
+      const safeName = String(i.name || i.slug || '').replace(/</g, '&lt;');
+      const safeDesc = String(desc).replace(/</g, '&lt;');
+      const safeSlug = String(i.slug || '').replace(/"/g, '&quot;');
+      return `<option value="${safeSlug}">${safeName} (${safeDesc})</option>`;
+    }).join('');
+    if (previous && items.some(i => i.slug === previous)) sel.value = previous;
+  } catch (e) {
+    sel.innerHTML = '<option value="">Load chain…</option><option value="" disabled>(error loading)</option>';
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+async function loadChainBySlugIntoBuilder(slug) {
+  if (!slug) return;
+  try {
+    const resp = await fetch('/api/presets/' + encodeURIComponent(slug), { headers: headers() });
+    if (!resp.ok) {
+      if (typeof toast === 'function') toast('Load failed: ' + resp.statusText);
+      return;
+    }
+    const data = await resp.json();
+    // Support both { item: {chain_definition} } (forward-compat) and bare row.
+    const def = data?.item?.chain_definition ?? data?.chain_definition;
+    const steps = Array.isArray(def) ? def : (def?.steps || []);
+    if (!steps.length) {
+      if (typeof toast === 'function') toast('Chain has no steps');
+      return;
+    }
+    _chainSteps.length = 0;
+    _chainSteps.push(...steps.map(s => ({
+      engine: s.engine,
+      prompt: s.prompt || '',
+      params: s.params || {},
+    })));
+    renderChainCanvas();
+    if (typeof toast === 'function') toast(`Loaded: ${steps.length} steps`);
+  } catch (e) {
+    if (typeof toast === 'function') toast('Load failed: ' + (e.message || e));
+  }
+}
+
+document.getElementById('chain-save-btn')?.addEventListener('click', saveCurrentChain);
+
+document.getElementById('chain-load-select')?.addEventListener('change', (e) => {
+  const slug = e.target.value;
+  if (slug) {
+    loadChainBySlugIntoBuilder(slug);
+    e.target.value = '';  // reset so re-selecting same fires again
+  }
+});
+
+document.getElementById('chain-load-refresh')?.addEventListener('click', refreshChainLoadDropdown);
+
+// Initial load when chain builder details opens (toggle event fires on open + close)
+document.querySelector('.chain-builder-panel')?.addEventListener('toggle', (e) => {
+  if (e.target.open) refreshChainLoadDropdown();
+});
 
 // Initial render on app boot
 renderChainCanvas();
