@@ -150,6 +150,48 @@
   .darkroom-polish input[type="checkbox"] { margin: 0; cursor: pointer; accent-color: #c850c0; }
   .darkroom-polish:has(input:checked) { border-color: #c850c0; color: #c850c0; }
 
+  /* Enhancor engine picker — Compose mode dropdown showing all 7 engines
+     under their house names with quality badges and pricing tooltips. */
+  .enhancor-picker-wrap {
+    display: inline-flex; align-items: center; gap: 6px; position: relative;
+  }
+  .enhancor-picker-label {
+    font-size: 0.72rem; color: #888; text-transform: uppercase; letter-spacing: 0.8px;
+    white-space: nowrap;
+  }
+  .enhancor-engine-select {
+    background: #1a1a1a; border: 1px solid #c850c0; color: #e0b8ff; padding: 7px 28px 7px 10px;
+    border-radius: 8px; font-size: 0.78rem; cursor: pointer;
+    -webkit-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+    min-width: 160px;
+  }
+  .enhancor-engine-select:focus { outline: none; border-color: #d884ff; }
+  .enhancor-engine-select option { background: #1a1a1a; color: #e0e0e0; }
+  /* Quality badge pill displayed beside the select */
+  .enhancor-quality-badge {
+    display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 0.65rem;
+    font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; white-space: nowrap;
+    background: #252525; color: #aaa; border: 1px solid #333;
+  }
+  .enhancor-quality-badge.badge-hd  { background: #1a2040; border-color: #3b5bdb; color: #74a0ff; }
+  .enhancor-quality-badge.badge-2k  { background: #1a2a1a; border-color: #2f9e44; color: #69db7c; }
+  .enhancor-quality-badge.badge-4k  { background: #2a1a30; border-color: #ae3ec9; color: #da77f2; }
+  /* Tooltip shown on hover over the select wrapper */
+  .enhancor-picker-wrap .enhancor-tooltip {
+    display: none; position: absolute; bottom: calc(100% + 8px); left: 0;
+    background: #1e1e1e; color: #ccc; padding: 10px 14px; border-radius: 8px;
+    font-size: 0.72rem; white-space: normal; width: 240px; line-height: 1.5;
+    border: 1px solid #333; z-index: 200; pointer-events: none;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  }
+  .enhancor-picker-wrap:hover .enhancor-tooltip { display: block; }
+  .enhancor-tooltip .tt-house { color: #d884ff; font-weight: 600; margin-bottom: 4px; }
+  .enhancor-tooltip .tt-cost  { color: #f59e0b; }
+  .enhancor-tooltip .tt-qual  { color: #69db7c; }
+  .enhancor-tooltip .tt-footer { color: #555; font-size: 0.65rem; margin-top: 6px; display: block; }
+
   /* Loading */
   .loading { text-align: center; padding: 60px 0; display: none; }
   .loading.active { display: block; }
@@ -1884,6 +1926,38 @@
       <select class="lora-select" id="lora-select" style="display:none;" aria-label="Pick a LoRA for face consistency. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
         <option value="">Select LoRA...</option>
       </select>
+      <!-- Enhancor engine picker — 7 engines under house names with quality badges + cost tooltips -->
+      <div class="enhancor-picker-wrap" id="enhancor-picker-wrap">
+        <span class="enhancor-picker-label">Enhancor</span>
+        <select class="enhancor-engine-select" id="enhancor-engine-select"
+          aria-label="Enhancor engine: Skin Pro, Lens Pro, Lens Cinema, Lens Reality, Develop, Sharpen Portrait, Sharpen"
+          onchange="onEnhancorEngineChange()">
+          <optgroup label="Skin">
+            <option value="skin_pro"        data-cost="480" data-quality="HD">Skin Pro</option>
+          </optgroup>
+          <optgroup label="Lens">
+            <option value="kora_pro"        data-cost="480" data-quality="HD">Lens Pro</option>
+            <option value="kora_pro_cinema" data-cost="480" data-quality="2K">Lens Cinema</option>
+            <option value="kora_reality"    data-cost="480" data-quality="HD">Lens Reality</option>
+          </optgroup>
+          <optgroup label="Develop">
+            <option value="develop"         data-cost="480" data-quality="4K">Develop</option>
+          </optgroup>
+          <optgroup label="Sharpen">
+            <option value="sharpen_portrait" data-cost="480" data-quality="4K">Sharpen Portrait</option>
+            <option value="sharpen"          data-cost="240" data-quality="4K">Sharpen</option>
+          </optgroup>
+        </select>
+        <span class="enhancor-quality-badge badge-hd" id="enhancor-quality-badge">HD</span>
+        <!-- Tooltip populated dynamically by onEnhancorEngineChange() -->
+        <div class="enhancor-tooltip" id="enhancor-tooltip">
+          <div class="tt-house" id="enhancor-tt-house">Skin</div>
+          <div class="tt-engine-name" id="enhancor-tt-engine">Skin Pro</div>
+          <div class="tt-cost" id="enhancor-tt-cost">480 credits</div>
+          <div class="tt-qual" id="enhancor-tt-qual">HD</div>
+          <span class="tt-footer">powered by enhancor.ai</span>
+        </div>
+      </div>
       <select class="edit-engine-select" id="aspect-select" style="font-size:0.75rem;padding:6px 10px;min-width:70px;" aria-label="Aspect ratio for generated images">
         <option value="3:4">3:4 Portrait</option>
         <option value="4:5">4:5 IG Feed</option>
@@ -2924,6 +2998,14 @@ let characters = [];
 let loras = [];
 let versionStack = []; // [{url, label}]
 let versionIndex = -1;
+
+// Global state object — activeEngine is the Enhancor engine currently selected
+// in the Compose-mode picker. Generation and edit handlers read state.activeEngine
+// to decide which Enhancor model to call (skin_pro | kora_pro | kora_pro_cinema |
+// kora_reality | develop | sharpen_portrait | sharpen). Default = skin_pro.
+const state = {
+  activeEngine: 'skin_pro',
+};
 
 // --- Three-mode layout (darkroom.ui-polish.three-mode-layout) ----------------
 // Compose / Develop / Print pills partition the visible action surface so the
@@ -4820,6 +4902,54 @@ function toggleEngine() {
   sel.value = order[(order.indexOf(sel.value) + 1) % order.length];
   onEngineChange();
 }
+
+// Enhancor engine picker — Compose mode
+// Engine metadata used by the tooltip and quality badge.
+const ENHANCOR_ENGINE_META = {
+  skin_pro:        { house: 'Skin',    label: 'Skin Pro',         cost: 480, quality: 'HD'  },
+  kora_pro:        { house: 'Lens',    label: 'Lens Pro',         cost: 480, quality: 'HD'  },
+  kora_pro_cinema: { house: 'Lens',    label: 'Lens Cinema',      cost: 480, quality: '2K'  },
+  kora_reality:    { house: 'Lens',    label: 'Lens Reality',     cost: 480, quality: 'HD'  },
+  develop:         { house: 'Develop', label: 'Develop',          cost: 480, quality: '4K'  },
+  sharpen_portrait:{ house: 'Sharpen', label: 'Sharpen Portrait', cost: 480, quality: '4K'  },
+  sharpen:         { house: 'Sharpen', label: 'Sharpen',          cost: 240, quality: '4K'  },
+};
+
+function onEnhancorEngineChange() {
+  const sel = document.getElementById('enhancor-engine-select');
+  const engineKey = sel.value;
+  // Update global state so generation/edit handlers can read state.activeEngine
+  state.activeEngine = engineKey;
+
+  const meta = ENHANCOR_ENGINE_META[engineKey];
+  if (!meta) return;
+
+  // Update quality badge
+  const badge = document.getElementById('enhancor-quality-badge');
+  if (badge) {
+    badge.textContent = meta.quality;
+    badge.className = 'enhancor-quality-badge';
+    if (meta.quality === 'HD')   badge.classList.add('badge-hd');
+    else if (meta.quality === '2K') badge.classList.add('badge-2k');
+    else if (meta.quality === '4K') badge.classList.add('badge-4k');
+  }
+
+  // Update tooltip content
+  const ttHouse  = document.getElementById('enhancor-tt-house');
+  const ttEngine = document.getElementById('enhancor-tt-engine');
+  const ttCost   = document.getElementById('enhancor-tt-cost');
+  const ttQual   = document.getElementById('enhancor-tt-qual');
+  if (ttHouse)  ttHouse.textContent  = meta.house;
+  if (ttEngine) ttEngine.textContent = meta.label;
+  if (ttCost)   ttCost.textContent   = meta.cost + ' credits';
+  if (ttQual)   ttQual.textContent   = meta.quality;
+}
+
+// Initialise Enhancor picker to default on page load
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('enhancor-engine-select');
+  if (sel) { sel.value = state.activeEngine; onEnhancorEngineChange(); }
+});
 
 async function enhancePrompt() {
   const ta = document.getElementById('scene');
