@@ -334,6 +334,92 @@ export async function handleSafeEditRoutes(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Asset metadata mutate — star / archive / tag a row in `assets`.
+  //
+  //   PATCH /api/assets/:id   body { starred?, archived?, tags? }
+  //   POST  /api/assets/:id   (alias — same body, same behavior)
+  //
+  // Only those three fields are accepted; everything else is silently
+  // dropped so the route can't be used to overwrite source_url, parent_id,
+  // engine, etc. Returns the updated row via Prefer: return=representation.
+  //
+  // Used by the result-image toolbar (asset-toolbar) in public/index.html
+  // for the star ⭐ / archive 🗄 / tag + chip-list affordances. The UI
+  // calls /api/asset-chain first to resolve source_url → asset_id, then
+  // hits this endpoint with the resolved id.
+  //
+  // See darkroom.catalog.star-archive-tags.
+  // ---------------------------------------------------------------------------
+  {
+    const assetIdMatch = url.pathname.match(/^\/api\/assets\/([0-9a-fA-F-]{36})$/);
+    if (assetIdMatch && (req.method === "PATCH" || req.method === "POST")) {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      if (!SUPABASE_URL) {
+        return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+      }
+      const assetId = assetIdMatch[1];
+      try {
+        let body: any = {};
+        try {
+          body = await req.json();
+        } catch {
+          // Empty body / unreadable JSON — treat as no-op error.
+          return Response.json({ error: "invalid_json_body" }, { status: 400 });
+        }
+        const patch: Record<string, any> = {};
+        if (typeof body.starred === "boolean") patch.starred = body.starred;
+        if (typeof body.archived === "boolean") patch.archived = body.archived;
+        if (Array.isArray(body.tags)) {
+          // Normalize: strings only, trimmed, deduped, max 32 chars each, max 32 tags.
+          const seen = new Set<string>();
+          const cleaned: string[] = [];
+          for (const t of body.tags) {
+            const s = String(t || "").trim().slice(0, 32);
+            if (!s) continue;
+            if (seen.has(s)) continue;
+            seen.add(s);
+            cleaned.push(s);
+            if (cleaned.length >= 32) break;
+          }
+          patch.tags = cleaned;
+        }
+        if (Object.keys(patch).length === 0) {
+          return Response.json(
+            { error: "no_valid_fields", accepted: ["starred", "archived", "tags"] },
+            { status: 400 },
+          );
+        }
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/assets?id=eq.${encodeFilterValue(assetId)}`,
+          {
+            method: "PATCH",
+            headers: { ...supaHeaders(), Prefer: "return=representation" },
+            body: JSON.stringify(patch),
+          },
+        );
+        if (!res.ok) {
+          const t = await res.text();
+          return Response.json(
+            { error: "asset_patch_failed", detail: t.slice(0, 300) },
+            { status: 502 },
+          );
+        }
+        const rows = await res.json();
+        const row = Array.isArray(rows) ? rows[0] : null;
+        if (!row) {
+          return Response.json({ error: "not_found", asset_id: assetId }, { status: 404 });
+        }
+        return Response.json({ ok: true, asset: row });
+      } catch (e: any) {
+        return Response.json(
+          { error: "asset_patch_error", detail: e?.message || String(e) },
+          { status: 500 },
+        );
+      }
+    }
+  }
+
   if (url.pathname === "/api/engine-compatibility" && req.method === "GET") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     // Static map of (engine × content_profile) → verdict. Frontend uses this
@@ -7702,6 +7788,26 @@ async function handleDetailSubmissions(url: URL): Promise<Response> {
 // wrapper itself.
 // =============================================================================
 
+/**
+ * Soft-cancellation signal. Thrown by updateProgress() when it detects that
+ * the job row has been flipped to status='cancelled' (typically by a user
+ * hitting DELETE /api/jobs/:id mid-flight). Workers can let this bubble up;
+ * the spawnJob wrapper distinguishes it from real failures and skips the
+ * usual final-state PATCH so the cancelled flag survives.
+ *
+ * In v1 we don't have signal handles for in-flight vendor calls, so a
+ * cancellation that lands in the middle of a long fetch() will only take
+ * effect at the next progress-update boundary. Workers should call
+ * updateProgress() between each expensive step (face-detect, vendor call,
+ * post-processing) so the check runs frequently enough to be useful.
+ */
+export class CancellationError extends Error {
+  constructor() {
+    super("Job cancelled by user");
+    this.name = "CancellationError";
+  }
+}
+
 export interface SpawnJobParams {
   /** Which Darkroom engine owns this job ('develop', 'reveal', 'lock', etc.). */
   engine: string;
@@ -7793,7 +7899,20 @@ export async function spawnJob(
 
   // 3. updateProgress closure — wraps PATCH in try/catch so a transient
   //    network blip on a progress write doesn't kill the actual work.
+  //
+  //    Soft-cancellation check: BEFORE writing progress, peek at the job's
+  //    current status. If a DELETE /api/jobs/:id has flipped it to
+  //    'cancelled', throw CancellationError so the worker abandons before
+  //    spending any more compute. Vendor calls already in flight will
+  //    finish, but their results are dropped on the floor by the wrapper's
+  //    catch (no final completed-state PATCH gets written). A status read
+  //    fail (network blip) is treated as "not cancelled" — we'd rather
+  //    finish a real job than abort one because of a transient hiccup.
   const updateProgress = async (frac: number, msg?: string) => {
+    const cancelled = await readJobStatus(jobId).catch(() => null);
+    if (cancelled === "cancelled") {
+      throw new CancellationError();
+    }
     const clamped = Math.max(0, Math.min(1, Number(frac) || 0));
     try {
       await patchJob(jobId, {
@@ -7813,6 +7932,13 @@ export async function spawnJob(
     try {
       result = await params.worker(jobId, updateProgress);
     } catch (e: any) {
+      // Soft-cancel path: updateProgress threw CancellationError because
+      // someone DELETEd /api/jobs/:id mid-flight. The cancelled row is
+      // already correct; don't write a 'failed' status over it.
+      if (e instanceof CancellationError) {
+        console.log(`[spawnJob:${jobId}] cancelled mid-flight`);
+        return;
+      }
       // Worker threw despite the contract. Classify as 'service' and store.
       result = {
         error: String(e?.message || e),
@@ -7821,7 +7947,8 @@ export async function spawnJob(
     }
 
     // Re-read status before final write so a DELETE /api/jobs/:id
-    // (cancellation) isn't clobbered by a late-arriving completed PATCH.
+    // (cancellation) that landed AFTER the worker finished isn't clobbered
+    // by a late-arriving completed PATCH.
     const current = await readJobStatus(jobId);
     if (current === "cancelled") {
       // Cancelled mid-flight — drop the result on the floor. The row already

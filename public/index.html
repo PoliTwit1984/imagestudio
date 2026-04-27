@@ -173,6 +173,85 @@
   .drift-badge[data-drift="identical"],
   .drift-badge[data-drift="no_face"],
   .drift-badge[data-drift="pending"] { display: none; }
+
+  /* Asset toolbar — sits over each result-img-wrap as a star/archive/tag
+     row. The asset_id is auto-resolved from source_url at render time
+     via /api/asset-chain so the user doesn't have to know the id. PATCHes
+     /api/assets/:id when any affordance is toggled. See darkroom.catalog.
+     star-archive-tags. */
+  .asset-toolbar {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: rgba(10, 10, 10, 0.78);
+    border: 1px solid #2a2a2a;
+    border-radius: 999px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    user-select: none;
+  }
+  .asset-toolbar.disabled { opacity: 0.4; pointer-events: none; }
+  .asset-toolbar-btn {
+    background: transparent;
+    border: none;
+    color: #ccc;
+    font-size: 14px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .asset-toolbar-btn:hover { background: #1a1a1a; color: #fff; }
+  .asset-toolbar-btn.starred { color: #facc15; }
+  .asset-toolbar-btn.archived { color: #a78bfa; }
+  .asset-toolbar-tags {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 280px;
+  }
+  .asset-toolbar-tag {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    color: #c850c0;
+    font-size: 10px;
+    padding: 2px 6px 2px 8px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1.2;
+  }
+  .asset-toolbar-tag-x {
+    cursor: pointer;
+    color: #888;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .asset-toolbar-tag-x:hover { color: #ef4444; }
+  .asset-toolbar-tag-input {
+    background: transparent;
+    border: none;
+    color: #e0e0e0;
+    font-size: 11px;
+    width: 70px;
+    outline: none;
+    padding: 2px 4px;
+  }
+  .asset-toolbar-tag-input::placeholder { color: #555; }
+  .asset-toolbar-status {
+    color: #555;
+    font-size: 10px;
+    font-style: italic;
+  }
+
   .img-overlay {
     display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.7); border-radius: 12px;
@@ -1112,6 +1191,23 @@
         <button class="version-btn" id="redo-btn" onclick="redoEdit()" title="Redo">Redo &#8594;</button>
       </div>
       <div class="result-img-wrap">
+        <!-- Asset toolbar — star / archive / tags. asset_id is auto-resolved
+             from source_url via /api/asset-chain at render time. PATCHes
+             /api/assets/:id on every change. Hidden until an asset is
+             resolved (no asset row → nothing to mutate). -->
+        <div class="asset-toolbar disabled" id="asset-toolbar" data-asset-id="">
+          <button type="button" class="asset-toolbar-btn" id="asset-toolbar-star"
+            title="Star this image" aria-label="Star this image"
+            onclick="toggleAssetStar(event)">&#9734;</button>
+          <button type="button" class="asset-toolbar-btn" id="asset-toolbar-archive"
+            title="Archive this image" aria-label="Archive this image"
+            onclick="toggleAssetArchive(event)">&#128451;</button>
+          <div class="asset-toolbar-tags" id="asset-toolbar-tags"></div>
+          <input type="text" class="asset-toolbar-tag-input"
+            id="asset-toolbar-tag-input" placeholder="+ tag"
+            maxlength="32" onkeydown="onAssetTagInputKey(event)">
+          <span class="asset-toolbar-status" id="asset-toolbar-status"></span>
+        </div>
         <img id="result-img" src="" alt="Generated">
         <div class="img-overlay" id="img-overlay">
           <div class="spinner"></div>
@@ -1217,6 +1313,17 @@
            assets table (no chain data) or the network errors. -->
       <details class="history-graph-panel">
         <summary style="cursor:pointer;font-weight:600;color:#a78bfa;">History Graph <span style="font-weight:400;color:#888;font-size:0.78rem;">— edit-tree / chain-graph for this image</span></summary>
+        <!-- Search bar — filters .history-graph-node by prompt or engine
+             substring match. Pure client-side: walks the rendered DOM, hides
+             non-matching cards, leaves matching ones visible. Empty input
+             shows everything. See darkroom.catalog.history-search. -->
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px 0 8px;">
+          <input id="history-graph-search" type="search"
+            placeholder="Filter by prompt or engine..."
+            style="flex:1;background:#0f0f0f;border:1px solid #2a2a2a;color:#e0e0e0;padding:5px 10px;border-radius:6px;font-size:0.78rem;outline:none;"
+            oninput="filterHistoryGraph(event.target.value)">
+          <span id="history-graph-search-status" style="color:#666;font-size:0.7rem;font-style:italic;"></span>
+        </div>
         <div id="history-graph-container" class="history-graph">
           <div class="history-graph-empty">No image loaded yet.</div>
         </div>
@@ -2297,13 +2404,18 @@ function renderHistoryGraphNode(node, activeId) {
   const isActive = node.id === activeId;
   const engineLabel = _historyGraphEscape(node.engine || node.asset_type || '?');
   const promptText = _historyGraphEscape((node.prompt || '').slice(0, 60));
+  // Full prompt (not truncated) for the search filter — kept on a data-attr
+  // so the case-insensitive filter in #history-graph-search has the full
+  // text to match against, not just the visible 60-char preview.
+  const safePromptFull = _historyGraphEscape(node.prompt || '');
+  const safeEngineFull = _historyGraphEscape(node.engine || node.asset_type || '');
   const safeUrl = _historyGraphEscape(node.source_url || '');
   const safeId = _historyGraphEscape(node.id || '');
   const childrenHtml = (node.children && node.children.length)
     ? `<div class="history-graph-children">${node.children.map(c => renderHistoryGraphNode(c, activeId)).join('')}</div>`
     : '';
   return `
-    <div class="history-graph-node${isActive ? ' active' : ''}" data-asset-id="${safeId}" data-source-url="${safeUrl}">
+    <div class="history-graph-node${isActive ? ' active' : ''}" data-asset-id="${safeId}" data-source-url="${safeUrl}" data-prompt="${safePromptFull}" data-engine="${safeEngineFull}">
       <img src="${safeUrl}" alt="" loading="lazy" />
       <div class="history-graph-node-meta">
         <div class="history-graph-node-engine">${engineLabel}</div>
@@ -2328,7 +2440,345 @@ setInterval(() => {
     }
   }
 }, 1500);
+
+// Client-side filter for the history graph. Walks every .history-graph-node
+// in the container, matches its data-prompt + data-engine + the visible
+// engine/prompt text against a case-insensitive substring of the input
+// value, and toggles display. Children stay visible if either the parent
+// or any descendant matches — keeps the tree readable. Empty input shows
+// everything. See darkroom.catalog.history-search.
+function filterHistoryGraph(rawQuery) {
+  const container = document.getElementById('history-graph-container');
+  const status = document.getElementById('history-graph-search-status');
+  if (!container) return;
+  const q = String(rawQuery || '').trim().toLowerCase();
+  const allNodes = container.querySelectorAll('.history-graph-node');
+  const total = allNodes.length;
+  if (!q) {
+    allNodes.forEach((n) => { n.style.display = ''; });
+    // Also un-hide every wrapping .history-graph-children container.
+    container.querySelectorAll('.history-graph-children').forEach((c) => {
+      c.style.display = '';
+    });
+    if (status) status.textContent = total > 0 ? `Showing all ${total} nodes` : '';
+    return;
+  }
+  let shown = 0;
+  // First pass: tag every node that matches itself.
+  const selfMatch = new Map();
+  allNodes.forEach((n) => {
+    const prompt = String(n.dataset.prompt || '').toLowerCase();
+    const engine = String(n.dataset.engine || '').toLowerCase();
+    const visibleText = String(n.textContent || '').toLowerCase();
+    const isMatch = prompt.includes(q) || engine.includes(q) || visibleText.includes(q);
+    selfMatch.set(n, isMatch);
+  });
+  // Second pass: a node is "visible" if it matches OR any descendant does.
+  // Walk siblings/children; a .history-graph-node and its associated
+  // .history-graph-children sit at the same DOM level (siblings), so we
+  // pair them via order of appearance.
+  const isVisible = new Map();
+  function descendantMatches(node) {
+    // The siblings-children pairing: the .history-graph-children element
+    // immediately after a node holds its descendant nodes. Walk those.
+    const next = node.nextElementSibling;
+    if (!next || !next.classList || !next.classList.contains('history-graph-children')) {
+      return false;
+    }
+    const childNodes = next.querySelectorAll(':scope > .history-graph-node');
+    for (const c of childNodes) {
+      if (selfMatch.get(c) || descendantMatches(c)) return true;
+    }
+    return false;
+  }
+  allNodes.forEach((n) => {
+    const visible = selfMatch.get(n) || descendantMatches(n);
+    isVisible.set(n, visible);
+    n.style.display = visible ? '' : 'none';
+    if (visible) shown++;
+  });
+  // Toggle child wrappers — hide one if none of its kids are visible, so
+  // the tree-line guide doesn't dangle.
+  container.querySelectorAll('.history-graph-children').forEach((c) => {
+    const kids = c.querySelectorAll(':scope > .history-graph-node');
+    let anyVisible = false;
+    kids.forEach((k) => { if (isVisible.get(k)) anyVisible = true; });
+    c.style.display = anyVisible ? '' : 'none';
+  });
+  if (status) {
+    status.textContent = `Showing ${shown} of ${total} nodes`;
+  }
+}
+window.filterHistoryGraph = filterHistoryGraph;
+
+// Re-apply the active filter every time the graph is re-rendered, so a
+// user's search query survives a chain reload (e.g., after navigating to
+// a different version). Hook by overriding loadHistoryGraph to call us
+// once it finishes painting.
+const _origLoadHistoryGraph = window.loadHistoryGraph;
+if (typeof _origLoadHistoryGraph === 'function') {
+  window.loadHistoryGraph = async function(...args) {
+    const r = await _origLoadHistoryGraph.apply(this, args);
+    try {
+      const inp = document.getElementById('history-graph-search');
+      if (inp && inp.value) filterHistoryGraph(inp.value);
+      else filterHistoryGraph('');  // refresh "Showing all N" status
+    } catch {}
+    return r;
+  };
+}
 // --- /History Graph ----------------------------------------------------------
+
+// --- Asset toolbar (star / archive / tags) ---------------------------------
+// Sits over each result-img-wrap. Resolves source_url → asset_id via
+// /api/asset-chain at render time, then PATCHes /api/assets/:id when the
+// user toggles a flag or adds/removes a tag.
+//
+// State is kept on the DOM (data-attrs + class names on the toolbar) so
+// the page can re-paint the toolbar without re-fetching from server. The
+// poll-loop refreshes the resolved asset_id when currentUrl flips so the
+// affordance always points at the right row.
+//
+// See darkroom.catalog.star-archive-tags.
+let _assetToolbarAssetId = null;
+let _assetToolbarLastUrl = null;
+let _assetToolbarLoadInflight = null;
+
+function _assetToolbarEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _assetToolbarSetStatus(msg) {
+  const el = document.getElementById('asset-toolbar-status');
+  if (el) el.textContent = msg || '';
+}
+
+function _assetToolbarRender(state) {
+  const tb = document.getElementById('asset-toolbar');
+  if (!tb) return;
+  const star = document.getElementById('asset-toolbar-star');
+  const archive = document.getElementById('asset-toolbar-archive');
+  const tagsContainer = document.getElementById('asset-toolbar-tags');
+  if (!state) {
+    tb.classList.add('disabled');
+    tb.dataset.assetId = '';
+    if (star) {
+      star.classList.remove('starred');
+      star.innerHTML = '&#9734;';
+      star.title = 'Star this image';
+    }
+    if (archive) {
+      archive.classList.remove('archived');
+      archive.title = 'Archive this image';
+    }
+    if (tagsContainer) tagsContainer.innerHTML = '';
+    return;
+  }
+  tb.classList.remove('disabled');
+  tb.dataset.assetId = state.id || '';
+  if (star) {
+    if (state.starred) {
+      star.classList.add('starred');
+      star.innerHTML = '&#9733;';
+      star.title = 'Unstar this image';
+    } else {
+      star.classList.remove('starred');
+      star.innerHTML = '&#9734;';
+      star.title = 'Star this image';
+    }
+  }
+  if (archive) {
+    if (state.archived) {
+      archive.classList.add('archived');
+      archive.title = 'Unarchive this image';
+    } else {
+      archive.classList.remove('archived');
+      archive.title = 'Archive this image';
+    }
+  }
+  if (tagsContainer) {
+    const tags = Array.isArray(state.tags) ? state.tags : [];
+    tagsContainer.innerHTML = tags.map((t) => {
+      const safe = _assetToolbarEscape(t);
+      return `<span class="asset-toolbar-tag" data-tag="${safe}">${safe}<span class="asset-toolbar-tag-x" onclick="removeAssetTag('${safe.replace(/'/g, "\\'")}')">&times;</span></span>`;
+    }).join('');
+  }
+}
+
+// Look up the asset row by source_url via /api/asset-chain (which returns
+// { seed, root, nodes, ... } where seed is the source_url match).
+async function _assetToolbarResolve(sourceUrl) {
+  if (!sourceUrl) return null;
+  // Dedupe — if we already resolved this URL, reuse the cached id.
+  if (_assetToolbarLastUrl === sourceUrl && _assetToolbarAssetId) {
+    return _assetToolbarAssetId;
+  }
+  try {
+    const resp = await fetch(`/api/asset-chain?source_url=${encodeURIComponent(sourceUrl)}`, {
+      headers: headers(),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !data.ok) return null;
+    // The seed is the asset whose source_url we asked about. /api/asset-chain
+    // returns it as data.seed_id (just the id) plus the full row in
+    // data.nodes / data.root depending on whether the seed is itself the
+    // root. Find the row in data.nodes.
+    const seedId = data.seed_id;
+    if (!seedId) return null;
+    const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    const row = nodes.find((n) => n && n.id === seedId) || data.root || null;
+    if (!row) return null;
+    _assetToolbarAssetId = row.id;
+    _assetToolbarLastUrl = sourceUrl;
+    return row;
+  } catch {
+    return null;
+  }
+}
+
+async function refreshAssetToolbar(sourceUrl) {
+  if (!sourceUrl) {
+    _assetToolbarAssetId = null;
+    _assetToolbarLastUrl = null;
+    _assetToolbarRender(null);
+    return;
+  }
+  if (_assetToolbarLoadInflight) return;
+  _assetToolbarLoadInflight = (async () => {
+    _assetToolbarSetStatus('Loading…');
+    const row = await _assetToolbarResolve(sourceUrl);
+    if (!row) {
+      _assetToolbarRender(null);
+      _assetToolbarSetStatus('No asset row');
+    } else {
+      _assetToolbarRender(row);
+      _assetToolbarSetStatus('');
+    }
+  })().finally(() => { _assetToolbarLoadInflight = null; });
+  return _assetToolbarLoadInflight;
+}
+window.refreshAssetToolbar = refreshAssetToolbar;
+
+async function _assetToolbarPatch(patch) {
+  const id = _assetToolbarAssetId;
+  if (!id) {
+    if (typeof toast === 'function') toast('No asset to update');
+    return null;
+  }
+  _assetToolbarSetStatus('Saving…');
+  try {
+    const resp = await fetch(`/api/assets/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: headers(),
+      body: JSON.stringify(patch),
+    });
+    let data = {};
+    try { data = await resp.json(); } catch {}
+    if (!resp.ok) {
+      _assetToolbarSetStatus('');
+      if (typeof toast === 'function') toast(data.error || `Update failed (${resp.status})`);
+      return null;
+    }
+    _assetToolbarSetStatus('');
+    if (data && data.asset) _assetToolbarRender(data.asset);
+    return data.asset || null;
+  } catch (e) {
+    _assetToolbarSetStatus('');
+    if (typeof toast === 'function') toast('Update failed: ' + (e && e.message || e));
+    return null;
+  }
+}
+
+function toggleAssetStar(ev) {
+  if (ev) ev.stopPropagation();
+  const star = document.getElementById('asset-toolbar-star');
+  const next = !(star && star.classList.contains('starred'));
+  return _assetToolbarPatch({ starred: next });
+}
+window.toggleAssetStar = toggleAssetStar;
+
+async function toggleAssetArchive(ev) {
+  if (ev) ev.stopPropagation();
+  const archive = document.getElementById('asset-toolbar-archive');
+  const next = !(archive && archive.classList.contains('archived'));
+  const updated = await _assetToolbarPatch({ archived: next });
+  if (updated && updated.archived && typeof toast === 'function') {
+    toast('Archived');
+  }
+  return updated;
+}
+window.toggleAssetArchive = toggleAssetArchive;
+
+function _assetToolbarCurrentTags() {
+  const tagsContainer = document.getElementById('asset-toolbar-tags');
+  if (!tagsContainer) return [];
+  return Array.from(tagsContainer.querySelectorAll('.asset-toolbar-tag'))
+    .map((el) => String(el.dataset.tag || '').trim())
+    .filter(Boolean);
+}
+
+async function addAssetTag(raw) {
+  const tag = String(raw || '').trim().slice(0, 32);
+  if (!tag) return null;
+  const cur = _assetToolbarCurrentTags();
+  if (cur.includes(tag)) return null;
+  const next = [...cur, tag];
+  return _assetToolbarPatch({ tags: next });
+}
+window.addAssetTag = addAssetTag;
+
+async function removeAssetTag(tag) {
+  const cur = _assetToolbarCurrentTags();
+  const next = cur.filter((t) => t !== tag);
+  return _assetToolbarPatch({ tags: next });
+}
+window.removeAssetTag = removeAssetTag;
+
+function onAssetTagInputKey(ev) {
+  if (!ev) return;
+  // Comma or Enter commits the current input as a chip. Tab/Escape cancels.
+  if (ev.key === 'Enter' || ev.key === ',') {
+    ev.preventDefault();
+    const inp = ev.target;
+    const val = (inp.value || '').replace(/,$/, '').trim();
+    if (val) {
+      // Allow paste of comma-separated list.
+      const parts = val.split(',').map((s) => s.trim()).filter(Boolean);
+      (async () => {
+        for (const p of parts) {
+          // Re-read tags between additions so dupes-in-batch are dropped.
+          // eslint-disable-next-line no-await-in-loop
+          await addAssetTag(p);
+        }
+      })();
+    }
+    inp.value = '';
+  } else if (ev.key === 'Escape') {
+    ev.preventDefault();
+    ev.target.value = '';
+  }
+}
+window.onAssetTagInputKey = onAssetTagInputKey;
+
+// Same poll-cadence trick the history graph uses — when currentUrl flips,
+// refresh the toolbar so it points at the right row.
+let _lastCheckedToolbarUrl = null;
+setInterval(() => {
+  const url = (typeof currentUrl !== 'undefined' ? currentUrl : null);
+  if (url && url !== _lastCheckedToolbarUrl) {
+    _lastCheckedToolbarUrl = url;
+    if (typeof refreshAssetToolbar === 'function') {
+      refreshAssetToolbar(url).catch(() => { /* never throw out of poll */ });
+    }
+  } else if (!url && _lastCheckedToolbarUrl) {
+    _lastCheckedToolbarUrl = null;
+    refreshAssetToolbar(null);
+  }
+}, 1500);
+// --- /Asset toolbar ---------------------------------------------------------
 
 // --- Active Jobs panel ------------------------------------------------------
 // Polls GET /api/jobs?status=running|queued every 3s while the panel exists,
