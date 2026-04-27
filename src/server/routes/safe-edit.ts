@@ -1729,8 +1729,12 @@ type DarkroomPreset = {
   lut_asset_id?: string | null;
 };
 
+// Short, imperative tail. Long preservation lists were causing Grok PRO to
+// interpret the prompt as a no-op (Joe reported clicking presets did nothing
+// to the image). Now the transform language dominates and identity is a
+// single trailing sentence.
 const DARKROOM_PRESET_IDENTITY_TAIL =
-  "Preserve identical face geometry, identical pose, identical wardrobe, identical composition. Only the color, contrast, and tonal response change. Photorealistic, no plastic look.";
+  "Same person, same pose, same composition. Photorealistic.";
 
 const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
   "darkroom-dawn": {
@@ -1738,7 +1742,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Dawn",
     description: "Cool blue hour, muted palette, soft cyan shadows.",
     engine: "lens",
-    prompt: `Apply a cool blue-hour color grade reminiscent of a Fuji Eterna 250D motion-picture stock at first light: muted overall palette with desaturated warm tones, lifted blacks fading toward soft cyan, gentle teal cast in the shadows, slightly cool midtones, and a low-contrast film-like response curve. Preserve skin tone integrity — keep flesh in a believable warm-neutral range while the surrounding palette pulls cool. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Recolor this photo to cool blue-hour: deep teal shadows, lifted blacks tinted cyan, desaturated warm tones, low-contrast film curve like Fuji Eterna 250D. The whole image is noticeably cooler and more cinematic than the source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
     lut_asset_id: null,
   },
@@ -1747,7 +1751,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Glow",
     description: "Boudoir warmth, soft highlights, subtle bloom.",
     engine: "lens",
-    prompt: `Render with a warm boudoir glow: soft golden highlights with gentle halation around bright edges, subtle bloom on practical light sources, lifted skin warmth, creamy midtones, and a faint diffusion haze that wraps light around the subject without crushing detail. Reference: a tungsten-lit interior on Cinestill 800T tuned for portraiture. Keep contrast tender, not flat. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Recolor this photo with warm boudoir glow: golden highlights blooming softly, halation around bright edges, lifted skin warmth, creamy diffused midtones, tungsten-tinted whites like Cinestill 800T. Visibly warmer and more luminous than the source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
     lut_asset_id: null,
   },
@@ -1756,7 +1760,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Lace",
     description: "Delicate intimate diffusion, soft focus around face and skin.",
     engine: "lens",
-    prompt: `Apply a delicate intimate diffusion grade: soft focus halo around the face and skin edges, faint diffusion glow that blooms from highlights into adjacent midtones, lifted shadow detail, gentle pastel-leaning midtones, and a slight pearl finish on lit skin. Reference: a hand-blown soft filter (Tiffen Black Pro-Mist 1/4) over a 1980s portrait lens, daylight balanced. Maintain crisp eyes and lashes — only the surrounding tonality softens. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Add a soft Pro-Mist diffusion grade: dreamy halo around skin and bright edges, gentle pastel midtones, faint pearl sheen on lit skin, lifted shadows. Eyes and lashes stay sharp; everything else softens. Visibly diffused and dreamy compared to the source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
     lut_asset_id: null,
   },
@@ -1765,7 +1769,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Noir",
     description: "Black-and-white film noir, deep contrast, sculpted shadows.",
     engine: "lens",
-    prompt: `Convert to a black-and-white film noir grade: deep blocky shadows, high-key blacks, sculpted contrast with hard falloff, silvery specular highlights, and a Kodak Tri-X 400 grain response pushed to ASA 800. Reference: 1940s low-key studio lighting with a single key and minimal fill, hard rim accents. Eliminate all color while preserving full tonal nuance in skin and fabric. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Convert to high-contrast black and white film noir. Crush blacks deep, push silvery highlights, sculpt hard shadow falloff, add Tri-X 400 grain pushed to 800. NO color anywhere — pure monochrome with rich tonal nuance. Dramatically different from the source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.8, medium: 3.8, high: 4.8 },
     lut_asset_id: null,
   },
@@ -1774,7 +1778,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Polaroid",
     description: "Instant film stock, slight magenta cast, faded blacks.",
     engine: "lens",
-    prompt: `Apply an instant-film grade modeled on Polaroid SX-70 / 600 era integral film: faded warm-magenta cast across midtones, lifted blacks with a soft analog floor (no true black), slight cyan bleed in cooler shadows, gentle low-contrast response curve, mild edge vignette, and the characteristic creamy off-white in highlights. Reference: a sun-exposed shoebox of 1978 instants. Preserve facial detail; the fade lives in the tonal envelope, not in the focus. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Recolor as faded Polaroid SX-70 instant film: warm magenta cast through midtones, lifted blacks with no true shadow, cyan bleed in cooler tones, soft analog low-contrast curve, creamy off-white highlights, gentle edge vignette. Looks decades-old, sun-faded. Visibly nostalgic compared to source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
     lut_asset_id: null,
   },
@@ -1783,7 +1787,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Studio",
     description: "Clean editorial studio light, neutral palette.",
     engine: "lens",
-    prompt: `Render with a clean editorial studio grade: neutral palette across the full tonal range, even diffuse key fill characteristic of a large softbox at chest height, gentle beauty-style diffusion on skin, slight luminance lift in midtones, and a calibrated white point with no color cast. Reference: a Phase One IQ4 capture for a Vogue beauty editorial, daylight balanced. Crisp, calm, magazine-ready. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Recolor with clean editorial studio grade: neutral white balance, evenly lifted midtones, gentle beauty diffusion on skin, calibrated whites with zero color cast. Phase One IQ4 magazine-beauty look. Visibly cleaner and more polished than the source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
     lut_asset_id: null,
   },
@@ -1792,7 +1796,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Sunkissed",
     description: "Golden hour, warm orange wash, lifted shadows.",
     engine: "lens",
-    prompt: `Apply a golden-hour grade: warm orange wash through highlights and midtones, lifted shadows with a faint amber undertone, gently warmed flesh tones, soft hair backlight as if a low sun is grazing from camera-rear, and a subtle haze in bright passes. Reference: a Kodak Gold 200 negative shot 30 minutes before sunset. Skin should feel genuinely sunlit, not orange-painted. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Recolor as golden-hour 30 minutes before sunset: warm orange wash through highlights and midtones, amber-tinted shadows, sun-warmed skin tones, soft amber backlight halo, faint atmospheric haze. Kodak Gold 200 look. Visibly warmer and sunlit compared to the source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
     lut_asset_id: null,
   },
@@ -1801,7 +1805,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom 35mm",
     description: "Analog film grain, halation, color shifts in shadows.",
     engine: "lens",
-    prompt: `Apply a 35mm analog film grade in the Kodak Portra 400 family: visible but tasteful film grain, slight halation around bright highlights and skin specular hits, color shifts where greens push slightly cooler and warm midtones drift gently toward magenta, lifted blacks, and a soft response curve through the shoulder. Reference: a hybrid scan from a Noritsu HS-1800. Grain should be present but never crunchy. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Recolor as Kodak Portra 400 35mm scan: visible film grain throughout, halation rings around bright skin highlights, greens shifted cooler, warms drifted toward magenta, lifted blacks, soft shoulder rolloff. Noritsu HS-1800 hybrid scan look. Visibly analog and film-grained compared to source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
     lut_asset_id: null,
   },
@@ -1810,7 +1814,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Velvet",
     description: "Rich saturated reds and maroons, deep luxury palette.",
     engine: "lens",
-    prompt: `Render with a rich velvet luxury grade: deeply saturated reds and maroons, plum-leaning shadow tones, low-key overall exposure with sculpted falloff, slight specular shine on lit skin, controlled highlight rolloff, and a warm-leaning white point. Reference: a Hasselblad capture lit by a single warm-gelled key for a fragrance campaign. Maintain skin realism inside the saturated envelope. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Recolor with deep velvet luxury grade: heavily saturated reds and maroons, plum-tinted shadows, low-key sculpted falloff, slight specular shine on skin, warm-leaning whites. Hasselblad fragrance-campaign look. Dramatically richer and more saturated than the source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.8, medium: 3.8, high: 4.8 },
     lut_asset_id: null,
   },
@@ -1819,7 +1823,7 @@ const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
     name: "Darkroom Wet Look",
     description: "High-shine skin emphasis, glossy specular highlights.",
     engine: "lens",
-    prompt: `Apply a high-shine wet-look grade: glossy specular highlights along skin contours, slick reflective sheen on cheekbones, collarbone, shoulders, and any exposed skin, sharpened edge clarity, mildly bumped contrast, and a clean cool-neutral white balance to keep highlights reading as wet rather than oily. Reference: a Steven Klein editorial under a wet-set rig. Preserve pore detail beneath the gloss — the surface is wet, not airbrushed. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    prompt: `Add high-shine wet sheen to all visible skin: glossy specular highlights on cheekbones, collarbone, shoulders, slick reflective surface, sharpened edge clarity, bumped contrast, cool-neutral whites. Pores stay visible under the gloss. Steven Klein wet-set look. Visibly wet and glossy compared to source. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
     guidance_scale: { low: 2.8, medium: 3.8, high: 4.8 },
     lut_asset_id: null,
   },
