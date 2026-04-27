@@ -1010,6 +1010,21 @@ export async function handleSafeEditRoutes(
     return handleCreateCheckout(req);
   }
 
+  // ---------------------------------------------------------------------------
+  // Enhancor webhook — POST /api/enhancor/webhook
+  //
+  //   Receives job-completion callbacks from Enhancor (at-least-once delivery).
+  //   Body: { request_id, result, status, cost? }
+  //
+  //   NOTE: intentionally auth-bypassed — Enhancor can't send our internal
+  //   bearer token. Correlation-id matching (vendor_request_id) provides the
+  //   equivalent security guarantee: only Enhancor knows the request_id they
+  //   assigned on intake.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/enhancor/webhook" && req.method === "POST") {
+    return handleEnhancorWebhook(req);
+  }
+
   return null;
 }
 
@@ -8955,6 +8970,135 @@ async function handleJobsCancel(jobId: string): Promise<Response> {
       { status: 500 },
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Enhancor webhook handler — POST /api/enhancor/webhook
+//
+// Purpose:   Receive job-completion callbacks from Enhancor and update the
+//            matching jobs row.
+// Inputs:    JSON body { request_id: string, result: string, status: string,
+//                        cost?: number }
+// Outputs:   200 { ok: true } on success or idempotent no-op
+//            404 { error: "not_found" } when no matching job row exists
+//            400 { error: "invalid_body" } when request_id is absent
+//            500 on PostgREST errors
+// Side effects: PATCHes jobs row: status='completed', webhook_received_at=now(),
+//              result_url=result, cost_credits=cost (when present)
+// Failure behavior: non-2xx PostgREST → 500 with detail; JSON parse error → 400
+//
+// Idempotency: the handler checks webhook_received_at before writing. If the
+// column is already set this request_id was previously processed — return 200
+// immediately without re-patching. This is safe with Enhancor's at-least-once
+// delivery model: a second delivery of the same callback is a no-op, not a 409.
+// ---------------------------------------------------------------------------
+async function handleEnhancorWebhook(req: Request): Promise<Response> {
+  if (!SUPABASE_URL) {
+    return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+  }
+
+  // Parse body — must be valid JSON with a request_id field.
+  let body: { request_id?: string; result?: string; status?: string; cost?: number };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_body", detail: "expected JSON" }, { status: 400 });
+  }
+
+  const { request_id, result, cost } = body;
+  if (!request_id || typeof request_id !== "string") {
+    return Response.json(
+      { error: "invalid_body", detail: "request_id is required" },
+      { status: 400 },
+    );
+  }
+
+  // Fetch the matching job row — vendor='enhancor' AND vendor_request_id=request_id.
+  // PostgREST filter string uses eq.<value> for equality.
+  let existingRow: { id: string; webhook_received_at: string | null } | null = null;
+  try {
+    const fetchRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/jobs?vendor=eq.enhancor&vendor_request_id=eq.${encodeFilterValue(request_id)}&select=id,webhook_received_at&limit=1`,
+      { headers: supaHeaders() },
+    );
+    if (!fetchRes.ok) {
+      const t = await fetchRes.text();
+      console.error(`[enhancor-webhook] lookup failed ${fetchRes.status}: ${t.slice(0, 200)}`);
+      return Response.json(
+        { error: "lookup_failed", detail: t.slice(0, 200) },
+        { status: 500 },
+      );
+    }
+    const rows = await fetchRes.json();
+    existingRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  } catch (e: any) {
+    return Response.json(
+      { error: "lookup_error", detail: e?.message || String(e) },
+      { status: 500 },
+    );
+  }
+
+  // 404 when no matching job row — log and surface so Enhancor can alert.
+  if (!existingRow) {
+    console.warn(
+      `[enhancor-webhook] no job row found for vendor_request_id=${request_id}`,
+    );
+    return Response.json(
+      { error: "not_found", request_id },
+      { status: 404 },
+    );
+  }
+
+  // Idempotency guard: if webhook_received_at is already set, this delivery is
+  // a duplicate. Return 200 (correct — not 409) so Enhancor stops retrying.
+  if (existingRow.webhook_received_at !== null) {
+    console.log(
+      `[enhancor-webhook] duplicate delivery for request_id=${request_id} (job=${existingRow.id}) — no-op`,
+    );
+    return Response.json({ ok: true, idempotent: true, job_id: existingRow.id });
+  }
+
+  // Build the PATCH body. cost_credits is only written when present in payload.
+  const patch: Record<string, unknown> = {
+    status: "completed",
+    webhook_received_at: new Date().toISOString(),
+    result_url: result ?? null,
+  };
+  if (typeof cost === "number") {
+    patch.cost_credits = cost;
+  }
+
+  // PATCH via PostgREST — filter by id (already resolved above) for precision.
+  try {
+    const patchRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/jobs?id=eq.${encodeFilterValue(existingRow.id)}`,
+      {
+        method: "PATCH",
+        headers: { ...supaHeaders(), Prefer: "return=minimal" },
+        body: JSON.stringify(patch),
+      },
+    );
+    if (!patchRes.ok) {
+      const t = await patchRes.text();
+      console.error(
+        `[enhancor-webhook] patch failed ${patchRes.status} (job=${existingRow.id}): ${t.slice(0, 200)}`,
+      );
+      return Response.json(
+        { error: "patch_failed", detail: t.slice(0, 200) },
+        { status: 500 },
+      );
+    }
+  } catch (e: any) {
+    return Response.json(
+      { error: "patch_error", detail: e?.message || String(e) },
+      { status: 500 },
+    );
+  }
+
+  console.log(
+    `[enhancor-webhook] processed request_id=${request_id} → job=${existingRow.id} status=completed`,
+  );
+  return Response.json({ ok: true, job_id: existingRow.id });
 }
 
 // =============================================================================
