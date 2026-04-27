@@ -1438,6 +1438,409 @@ export async function handleSafeEditRoutes(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // POST /api/lunas/:id/chat — send a message and get a Luna reply
+  //
+  // Accepts: JSON body { message: string, attachments?: array }
+  // Returns: { reply: string, memories_extracted: number }
+  //
+  // Flow:
+  //   1. Auth + ownership check (luna.user_id must match x-user-id).
+  //   2. Load last 30 active memories (invalidated_at IS NULL) for this luna.
+  //   3. Load last 20 messages for this luna (newest-first, then reversed).
+  //   4. Build system prompt via buildSystemPrompt(luna, recentMemories).
+  //   5. Call Anthropic Claude API (ANTHROPIC_API_KEY env var).
+  //   6. Persist user message into darkroom_luna_messages (role='user').
+  //   7. Persist luna reply into darkroom_luna_messages (role='luna').
+  //   8. Run classifyMemoryFromMessage and persist any new memories.
+  //   9. Return { reply, memories_extracted }.
+  //
+  // Model default: claude-sonnet-4-6. Override via x-luna-model header.
+  // ---------------------------------------------------------------------------
+  {
+    const chatMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/chat$/);
+    if (chatMatch && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = chatMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Parse body
+      let body: Record<string, unknown> = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "invalid_json_body" }, { status: 400 });
+      }
+
+      const userMessage = typeof body.message === "string" ? body.message.trim() : "";
+      if (!userMessage) {
+        return Response.json({ error: "message is required" }, { status: 400 });
+      }
+
+      // Ownership check — load the luna row
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Load last 30 active memories for system prompt
+      let recentMemories: import("../lunaCompanion").LunaMemory[] = [];
+      try {
+        const memRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_memories` +
+          `?luna_id=eq.${encodeFilterValue(lunaId)}` +
+          `&invalidated_at=is.null` +
+          `&order=created_at.desc` +
+          `&limit=30`,
+          { headers: supaHeaders() },
+        );
+        if (memRes.ok) recentMemories = await memRes.json() as import("../lunaCompanion").LunaMemory[];
+      } catch {
+        // Non-fatal — proceed without memories
+      }
+
+      // Load last 20 messages for conversation history
+      let recentMessages: import("../lunaCompanion").LunaMessage[] = [];
+      try {
+        const msgRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_messages` +
+          `?luna_id=eq.${encodeFilterValue(lunaId)}` +
+          `&order=created_at.desc` +
+          `&limit=20`,
+          { headers: supaHeaders() },
+        );
+        if (msgRes.ok) {
+          const raw = await msgRes.json() as import("../lunaCompanion").LunaMessage[];
+          // Reverse to chronological order for the API
+          recentMessages = raw.reverse();
+        }
+      } catch {
+        // Non-fatal — proceed without history
+      }
+
+      // Build system prompt
+      const { buildSystemPrompt, classifyMemoryFromMessage } = await import("../lunaCompanion");
+      const systemPrompt = buildSystemPrompt(luna, recentMemories);
+
+      // Build Anthropic messages array from conversation history + new user message
+      const anthropicMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
+      for (const msg of recentMessages) {
+        if (msg.role === "user") {
+          anthropicMessages.push({ role: "user", content: msg.content });
+        } else if (msg.role === "luna") {
+          anthropicMessages.push({ role: "assistant", content: msg.content });
+        }
+        // Skip 'system' role messages — handled via system prompt
+      }
+      // Append the new user message
+      anthropicMessages.push({ role: "user", content: userMessage });
+
+      // Determine model — allow override via header
+      const modelOverride = req.headers.get("x-luna-model");
+      const model = modelOverride || "claude-sonnet-4-6";
+
+      // Call Anthropic Claude API
+      const anthropicKey = env("ANTHROPIC_API_KEY");
+      if (!anthropicKey) {
+        return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 503 });
+      }
+
+      let lunaReply = "";
+      try {
+        const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": anthropicKey,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 1024,
+            system: systemPrompt,
+            messages: anthropicMessages,
+          }),
+        });
+
+        if (!anthropicRes.ok) {
+          const errText = await anthropicRes.text().catch(() => "");
+          console.error(`[api/lunas/:id/chat] Anthropic API error ${anthropicRes.status}: ${errText}`);
+          return Response.json(
+            { error: `llm_error: ${anthropicRes.status}` },
+            { status: 502 },
+          );
+        }
+
+        const anthropicData = await anthropicRes.json() as {
+          content: Array<{ type: string; text?: string }>;
+        };
+        lunaReply = anthropicData.content?.[0]?.text ?? "";
+      } catch (e: any) {
+        console.error("[api/lunas/:id/chat] Anthropic fetch failed:", e);
+        return Response.json({ error: e?.message || "llm_fetch_failed" }, { status: 502 });
+      }
+
+      if (!lunaReply) {
+        return Response.json({ error: "empty_llm_reply" }, { status: 502 });
+      }
+
+      // Persist user message
+      let userMsgId: string | null = null;
+      try {
+        const insertUserMsg = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_messages`,
+          {
+            method: "POST",
+            headers: {
+              ...supaHeaders(),
+              Prefer: "return=representation",
+            },
+            body: JSON.stringify({
+              luna_id: lunaId,
+              role: "user",
+              content: userMessage,
+              attachments_jsonb: Array.isArray(body.attachments) ? body.attachments : [],
+            }),
+          },
+        );
+        if (insertUserMsg.ok) {
+          const rows = await insertUserMsg.json() as Array<{ id: string }>;
+          userMsgId = rows[0]?.id ?? null;
+        } else {
+          console.error("[api/lunas/:id/chat] user message persist failed:", await insertUserMsg.text().catch(() => ""));
+        }
+      } catch (e: any) {
+        console.error("[api/lunas/:id/chat] user message persist error:", e);
+        // Non-fatal — we have the reply, continue
+      }
+
+      // Persist luna reply
+      try {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_messages`,
+          {
+            method: "POST",
+            headers: {
+              ...supaHeaders(),
+              Prefer: "return=minimal",
+            },
+            body: JSON.stringify({
+              luna_id: lunaId,
+              role: "luna",
+              content: lunaReply,
+              attachments_jsonb: [],
+            }),
+          },
+        );
+      } catch (e: any) {
+        console.error("[api/lunas/:id/chat] luna reply persist error:", e);
+        // Non-fatal
+      }
+
+      // Run memory extractor and persist new memories
+      let memoriesExtracted = 0;
+      try {
+        const newMemories = await classifyMemoryFromMessage(userMessage, lunaReply);
+        for (const mem of newMemories) {
+          try {
+            await fetch(
+              `${SUPABASE_URL}/rest/v1/darkroom_luna_memories`,
+              {
+                method: "POST",
+                headers: {
+                  ...supaHeaders(),
+                  Prefer: "return=minimal",
+                },
+                body: JSON.stringify({
+                  luna_id: lunaId,
+                  type: mem.type,
+                  body: mem.body,
+                  source_msg_id: userMsgId,
+                }),
+              },
+            );
+            memoriesExtracted++;
+          } catch (e: any) {
+            console.error("[api/lunas/:id/chat] memory persist error:", e);
+          }
+        }
+      } catch (e: any) {
+        console.error("[api/lunas/:id/chat] classifyMemoryFromMessage error:", e);
+        // Non-fatal
+      }
+
+      return Response.json({ reply: lunaReply, memories_extracted: memoriesExtracted });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /api/lunas/:id/face/upload-ref — upload a face reference photo
+  //
+  // Accepts: multipart/form-data with a single image file field named 'file'.
+  // Returns: { luna: <updated Luna row> }
+  //
+  // Flow:
+  //   1. Auth + ownership check.
+  //   2. Parse multipart form data — read the 'file' field.
+  //   3. Upload image buffer to Supabase storage (image-studio bucket,
+  //      luna-face-refs/ prefix) via uploadToStorage from supabase.ts.
+  //   4. PATCH darkroom_lunas.face_ref_url with the resulting public URL.
+  //   5. Return updated luna row.
+  //
+  // Quota: free for all tiers — no checkQuotaOrReject call.
+  // ---------------------------------------------------------------------------
+  {
+    const faceUploadMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/face\/upload-ref$/);
+    if (faceUploadMatch && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = faceUploadMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Ownership check
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Parse multipart form data
+      let fileBuffer: Buffer | null = null;
+      let fileContentType = "image/jpeg";
+      let originalFilename = "face-ref";
+
+      try {
+        const formData = await req.formData();
+        const fileEntry = formData.get("file");
+        if (!fileEntry || !(fileEntry instanceof File)) {
+          return Response.json(
+            { error: "multipart field 'file' is required and must be an image" },
+            { status: 400 },
+          );
+        }
+        fileContentType = fileEntry.type || "image/jpeg";
+        originalFilename = fileEntry.name || "face-ref";
+        fileBuffer = Buffer.from(await fileEntry.arrayBuffer());
+      } catch (e: any) {
+        return Response.json(
+          { error: `failed to parse multipart body: ${e?.message || "parse_error"}` },
+          { status: 400 },
+        );
+      }
+
+      if (!fileBuffer || fileBuffer.byteLength === 0) {
+        return Response.json({ error: "uploaded file is empty" }, { status: 400 });
+      }
+
+      // Validate content type is an image
+      if (!fileContentType.startsWith("image/")) {
+        return Response.json(
+          { error: `file must be an image — received content-type: ${fileContentType}` },
+          { status: 400 },
+        );
+      }
+
+      // Upload to Supabase storage
+      const { uploadToStorage, buildUploadPath } = await import("../supabase");
+      let faceRefUrl: string;
+      try {
+        const storagePath = buildUploadPath(
+          `luna-face-refs/${lunaId}`,
+          originalFilename,
+          fileContentType,
+        );
+        faceRefUrl = await uploadToStorage(
+          storagePath,
+          fileBuffer.buffer.slice(fileBuffer.byteOffset, fileBuffer.byteOffset + fileBuffer.byteLength) as ArrayBuffer,
+          fileContentType,
+        );
+      } catch (e: any) {
+        console.error("[api/lunas/:id/face/upload-ref] storage upload failed:", e);
+        return Response.json(
+          { error: `storage_upload_failed: ${e?.message || "unknown"}` },
+          { status: 502 },
+        );
+      }
+
+      // Update luna row with new face_ref_url
+      let updatedLuna: import("../lunaCompanion").Luna;
+      try {
+        const patchRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              ...supaHeaders(),
+              Prefer: "return=representation",
+            },
+            body: JSON.stringify({ face_ref_url: faceRefUrl }),
+          },
+        );
+        if (!patchRes.ok) {
+          const errText = await patchRes.text().catch(() => "");
+          return Response.json(
+            { error: `face_ref_url update failed: ${patchRes.status}${errText ? ` — ${errText}` : ""}` },
+            { status: 502 },
+          );
+        }
+        const rows = await patchRes.json() as import("../lunaCompanion").Luna[];
+        if (!rows[0]) throw new Error("empty response from face_ref_url PATCH");
+        updatedLuna = rows[0];
+      } catch (e: any) {
+        console.error("[api/lunas/:id/face/upload-ref] luna patch failed:", e);
+        return Response.json({ error: e?.message || "luna_patch_failed" }, { status: 500 });
+      }
+
+      return Response.json({ luna: updatedLuna });
+    }
+  }
+
   return null;
 }
 
