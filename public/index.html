@@ -469,8 +469,8 @@
     <textarea id="scene" placeholder="Build your prompt below, or just type freestyle and hit AI Enhance..."></textarea>
 
     <div class="enhance-row">
-      <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()" title="Grok 4.20 rewrites your prompt for maximum photorealism — adds lighting, camera, skin texture, film stock details">AI Enhance</button>
-      <span class="enhance-hint">Grok rewrites your prompt for max realism</span>
+      <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()" title="AI rewrites your prompt for maximum photorealism — adds lighting, camera, skin texture, film stock details">AI Enhance</button>
+      <span class="enhance-hint">AI rewrites your prompt for max realism</span>
       <button class="action-btn" style="margin-left:auto;font-size:0.75rem;" onclick="clearPrompt()">Clear</button>
     </div>
 
@@ -636,15 +636,15 @@
       <button class="gen-btn" id="gen-btn" onclick="generate()" title="Generate image from your prompt using the selected engine and settings">Generate</button>
       <button class="pose-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload Image</button>
       <input type="file" id="upload-input-main" accept="image/*" style="display:none;" onchange="handleUpload(this)">
-      <button class="pose-btn" onclick="openPoseRef()" title="Upload a reference photo to copy the pose — Grok analyzes the body position and feeds it into generation">Pose Ref</button>
+      <button class="pose-btn" onclick="openPoseRef()" title="Upload a reference photo to copy the pose — AI vision analyzes the body position and feeds it into generation">Pose Ref</button>
       <button class="pose-btn" onclick="openPinterest()" style="border-color:#e60023;color:#e60023;" title="Search Pinterest for pose references — find the pose you want, click to use it">Pinterest</button>
-      <select class="edit-engine-select" id="engine-select" style="font-size:0.78rem;padding:7px 10px;min-width:120px;" title="GROK: img2img face-locked re-imagine | FAL.AI: Flux LoRA, zero filter | GPT-2: highest fidelity, refuses NSFW" onchange="onEngineChange()">
-        <option value="grok">GROK (img2img)</option>
-        <option value="fal">FAL.AI (Flux LoRA)</option>
-        <option value="gpt">GPT-Image-2</option>
+      <select class="edit-engine-select" id="engine-select" style="font-size:0.78rem;padding:7px 10px;min-width:120px;" title="Lens: img2img face-locked re-imagine | Flux LoRA: zero filter, character LoRA | Eye: highest fidelity, refuses NSFW" onchange="onEngineChange()">
+        <option value="grok">Lens (img2img)</option>
+        <option value="fal">Flux LoRA</option>
+        <option value="gpt">Eye</option>
       </select>
-      <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()" title="PRO ($0.07): grok-imagine-image-pro, has content moderation | BASIC ($0.02): grok-imagine-image, no moderation but looser face lock">PRO $0.07</div>
-      <select class="lora-select" id="lora-select" style="display:none;" title="Pick a LoRA for face consistency on fal.ai. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
+      <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()" title="PRO ($0.07): Lens Pro, has content moderation | BASIC ($0.02): Lens Basic, no moderation but looser face lock">PRO $0.07</div>
+      <select class="lora-select" id="lora-select" style="display:none;" title="Pick a LoRA for face consistency. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
         <option value="">Select LoRA...</option>
       </select>
       <select class="edit-engine-select" id="aspect-select" style="font-size:0.75rem;padding:6px 10px;min-width:70px;" title="Aspect ratio for generated images">
@@ -680,7 +680,7 @@
 
     <!-- Pose reference panel -->
     <div class="pose-panel" id="pose-panel" style="display:none;">
-      <div class="edit-label">Pose Reference <span style="font-weight:400;color:#888;">— upload any image, Grok analyzes the pose</span></div>
+      <div class="edit-label">Pose Reference <span style="font-weight:400;color:#888;">— upload any image, AI vision analyzes the pose</span></div>
       <div style="display:flex;gap:12px;align-items:flex-start;">
         <div style="flex:1;">
           <input type="file" id="pose-upload" accept="image/*" style="font-size:0.8rem;color:#888;margin-bottom:8px;">
@@ -694,8 +694,8 @@
       </div>
       <div id="pose-analysis-status" style="color:#06b6d4;font-size:0.78rem;margin-top:6px;display:none;"></div>
       <div style="margin-top:8px;">
-        <div style="color:#888;font-size:0.75rem;">Pose description + scene (Grok fills this, you can edit):</div>
-        <textarea id="pose-scene" class="setting-textarea" rows="3" style="min-height:60px;font-size:0.82rem;margin-top:4px;" placeholder="Grok will describe the pose here after you upload an image..."></textarea>
+        <div style="color:#888;font-size:0.75rem;">Pose description + scene (AI fills this, you can edit):</div>
+        <textarea id="pose-scene" class="setting-textarea" rows="3" style="min-height:60px;font-size:0.82rem;margin-top:4px;" placeholder="AI will describe the pose here after you upload an image..."></textarea>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
         <div style="color:#888;font-size:0.75rem;">Pose strength:</div>
@@ -742,19 +742,19 @@
       </div>
       <div class="result-actions">
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
-        <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Freepik Magnific Creative — Grok auto-generates a prompt, you edit it, then upscale with texture/detail injection. Can change face.">Magnific</button>
-        <button class="action-btn" id="btn-topaz" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Topaz Bloom Realism — face enhancement + skin texture + upscale. Click to adjust settings.">Topaz</button>
-        <button class="action-btn" id="btn-enhancor" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Enhancor v3 skin enhancement — body mode, level 65, face locked. Good for realistic skin texture on nudes where Topaz/Magnific blur out.">Enhancor</button>
+        <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Reveal — creative detail injection upscale. AI auto-generates a prompt, you edit it, then upscale with texture. Can change face.">Reveal</button>
+        <button class="action-btn" id="btn-topaz" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Develop — face enhancement + skin texture + upscale. Click to adjust settings.">Develop</button>
+        <button class="action-btn" id="btn-enhancor" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Skin — body skin enhance, level 65, face locked. Good for realistic skin texture on nudes where Develop/Reveal blur out.">Skin</button>
         <button class="action-btn" id="btn-darkroom-skin" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
         <button class="action-btn" id="btn-detail-brush" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
-        <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="fal.ai face swap — pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
+        <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
         <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;" title="VEED Fabric 1.0 — turn this image into a talking head video. Type text → ElevenLabs voice → lip-synced video. ~2-3 min processing.">Fabric Video</button>
         <button class="action-btn" id="btn-kling" onclick="openKling()" style="border-color:#e879f9;color:#e879f9;" title="Kling Pro — image to video with motion. 5s or 10s. High quality cinematic motion.">Kling Video</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
-        <button class="action-btn" id="btn-resize" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" title="Shrink image to 1200px on the long edge. Useful before Grok edits — Grok is slow on big images.">Resize 1200</button>
-        <button class="action-btn" id="btn-paint-mask" onclick="openMaskPainter()" style="border-color:#c850c0;color:#c850c0;" title="Paint a mask over the image, then inpaint with Flux Fill Pro (NSFW-permissive, true mask-aware inpainting).">Paint Mask</button>
-        <button class="action-btn" id="btn-sandwich" onclick="openSandwich()" style="border-color:#f472b6;color:#f472b6;" title="Sandwich edit: P-Edit clothes the subject → Nano Banana / GPT-2 edits the scene → P-Edit unclothes. Lets you use safe editors on NSFW source.">Sandwich Edit</button>
+        <button class="action-btn" id="btn-resize" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" title="Shrink image to 1200px on the long edge. Useful before Lens edits — Lens is slow on big images.">Resize 1200</button>
+        <button class="action-btn" id="btn-paint-mask" onclick="openMaskPainter()" style="border-color:#c850c0;color:#c850c0;" title="Paint a mask over the image, then inpaint with Brush (NSFW-permissive, true mask-aware inpainting).">Paint Mask</button>
+        <button class="action-btn" id="btn-sandwich" onclick="openSandwich()" style="border-color:#f472b6;color:#f472b6;" title="Sandwich edit: Strip clothes the subject → Glance / Eye edits the scene → Strip unclothes. Lets you use safe editors on NSFW source.">Sandwich Edit</button>
         <button class="action-btn" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()" title="Download the image to your device">Download</button>
         <button class="action-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
@@ -839,9 +839,9 @@
         <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap;">
           <label style="color:#aaa;font-size:0.85rem;">Engine:
             <select id="faceswap-engine" class="edit-engine-select">
-              <option value="fal">Lock (fal · pixel-precise)</option>
-              <option value="nano">Glance (nano · fast, soft blend)</option>
-              <option value="gpt">Eye (gpt-2 · highest quality, refuses NSFW)</option>
+              <option value="fal">Lock (pixel-precise)</option>
+              <option value="nano">Glance (fast, soft blend)</option>
+              <option value="gpt">Eye (highest quality, refuses NSFW)</option>
             </select>
           </label>
           <button class="edit-btn" id="faceswap-go" onclick="runFaceSwap()" style="background:linear-gradient(135deg,#a855f7,#7c3aed);">Swap Face</button>
@@ -850,9 +850,9 @@
         <div style="color:#888;font-size:0.78rem;margin-top:6px;">Lock = surgical face replace (best for nudes). Glance = scene-aware swap, slight regen elsewhere. Eye = highest fidelity but refuses suggestive source.</div>
       </div>
 
-      <!-- Topaz settings panel -->
+      <!-- Develop (Topaz) settings panel -->
       <div class="faceswap-panel" id="topaz-panel" style="display:none;border-color:#00bcd433;">
-        <div class="edit-label" style="color:#00bcd4;">Topaz Enhance <span style="font-weight:400;color:#888;">— choose model & settings</span></div>
+        <div class="edit-label" style="color:#00bcd4;">Develop Enhance <span style="font-weight:400;color:#888;">— choose model & settings</span></div>
         <div style="margin-bottom:10px;">
           <div style="color:#888;font-size:0.72rem;margin-bottom:4px;">Model</div>
           <select id="topaz-model" style="width:100%;background:#1a1a1a;border:1px solid #333;color:#ccc;padding:8px 10px;border-radius:8px;font-size:0.85rem;">
@@ -896,7 +896,7 @@
           </div>
         </div>
         <div style="display:flex;gap:8px;margin-top:12px;">
-          <button class="edit-btn" id="topaz-go" onclick="runTopazWithSettings()" style="background:linear-gradient(135deg,#00bcd4,#0097a7);">Enhance with Topaz</button>
+          <button class="edit-btn" id="topaz-go" onclick="runTopazWithSettings()" style="background:linear-gradient(135deg,#00bcd4,#0097a7);">Enhance with Develop</button>
           <button class="action-btn" onclick="closeTopazSettings()">Cancel</button>
         </div>
       </div>
@@ -959,27 +959,27 @@
             <button class="action-btn" id="mask-erase-btn" onclick="toggleMaskErase()" style="border-color:#facc15;color:#facc15;">Erase: off</button>
             <button class="action-btn" onclick="clearMask()" style="border-color:#ef4444;color:#ef4444;">Clear</button>
             <input type="text" id="mask-prompt" class="edit-input" placeholder="What to paint inside the mask (e.g., 'a brass victorian lamp' OR 'wearing this black lace lingerie')" style="flex:1;min-width:300px;">
-            <button class="action-btn" id="mask-describe-btn" onclick="autoDescribeGarment()" style="border-color:#22d3ee;color:#22d3ee;" title="Grok Vision writes a one-line prompt from the garment image. Auto-runs on Inpaint if prompt is empty.">Auto-describe</button>
-            <button class="action-btn" id="mask-pedit-optimize-btn" onclick="optimizePEditPromptInPainter()" style="border-color:#10b981;color:#10b981;" title="Rewrite the prompt to match P-Edit's documented best practices (action verb + target + preservation clause). Use this when running Wear via P-Edit.">P-Edit Optimize</button>
+            <button class="action-btn" id="mask-describe-btn" onclick="autoDescribeGarment()" style="border-color:#22d3ee;color:#22d3ee;" title="AI vision writes a one-line prompt from the garment image. Auto-runs on Inpaint if prompt is empty.">Auto-describe</button>
+            <button class="action-btn" id="mask-pedit-optimize-btn" onclick="optimizePEditPromptInPainter()" style="border-color:#10b981;color:#10b981;" title="Rewrite the prompt to match Strip's documented best practices (action verb + target + preservation clause). Use this when running Wear via Strip.">Strip Optimize</button>
             <select class="edit-engine-select" id="mask-upscaler">
               <option value="none">No upscale</option>
-              <option value="topaz">+Topaz</option>
+              <option value="topaz">+Develop</option>
               <option value="freepik">+Freepik</option>
             </select>
-            <button class="edit-btn" id="mask-go-btn" onclick="runInpaint()" style="background:linear-gradient(135deg,#c850c0,#7e22ce);">Inpaint with Flux Fill Pro</button>
-            <button class="edit-btn" id="mask-wear-btn" onclick="runWearGarment()" style="background:linear-gradient(135deg,#f472b6,#dc2626);" title="P-Edit multi-image: skip the mask, send person + garment + prompt → P-Edit figures out placement. NSFW-permissive, less precise than Flux Fill, often more natural for full-body lingerie.">Wear via P-Edit</button>
+            <button class="edit-btn" id="mask-go-btn" onclick="runInpaint()" style="background:linear-gradient(135deg,#c850c0,#7e22ce);">Inpaint with Brush</button>
+            <button class="edit-btn" id="mask-wear-btn" onclick="runWearGarment()" style="background:linear-gradient(135deg,#f472b6,#dc2626);" title="Strip multi-image: skip the mask, send person + garment + prompt → Strip figures out placement. NSFW-permissive, less precise than Brush, often more natural for full-body lingerie.">Wear via Strip</button>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #2a2a2a;">
             <div style="font-weight:600;color:#f472b6;font-size:0.85rem;">Garment Reference(s) <span style="font-weight:400;color:#888;">— add multiple angles for better fidelity</span></div>
             <input type="text" id="mask-garment-url" class="edit-input" placeholder="Paste image URL (front, back, side, worn shot...)" style="flex:1;min-width:280px;">
-            <button class="action-btn" id="mask-add-ref-btn" onclick="addGarmentRef()" style="border-color:#f472b6;color:#f472b6;" title="Add this URL/upload as another reference angle (front, back, side, worn shot). P-Edit uses all of them; Flux Fill auto-collages them.">+ Add Angle</button>
+            <button class="action-btn" id="mask-add-ref-btn" onclick="addGarmentRef()" style="border-color:#f472b6;color:#f472b6;" title="Add this URL/upload as another reference angle (front, back, side, worn shot). Strip uses all of them; Brush auto-collages them.">+ Add Angle</button>
             <button class="action-btn" onclick="document.getElementById('mask-garment-upload').click()" style="border-color:#f472b6;color:#f472b6;">Upload</button>
             <input type="file" id="mask-garment-upload" accept="image/*" style="display:none;" onchange="handleGarmentUpload(this)">
-            <button class="action-btn" id="mask-removebg-btn" onclick="removeGarmentBg()" style="border-color:#a3e635;color:#a3e635;" title="Strip background from current/most-recent garment image (BiRefNet)">Remove BG</button>
+            <button class="action-btn" id="mask-removebg-btn" onclick="removeGarmentBg()" style="border-color:#a3e635;color:#a3e635;" title="Cutout — remove background from current/most-recent garment image">Remove BG</button>
             <label style="color:#aaa;font-size:0.8rem;display:flex;align-items:center;gap:4px;">
               <input type="checkbox" id="mask-auto-removebg" checked style="margin:0;"> auto
             </label>
-            <button class="action-btn" id="mask-automask-btn" onclick="runAutoMask()" style="border-color:#22d3ee;color:#22d3ee;" title="Grok Vision classifies the garment, then auto-paints the body region where it would go. You can refine with brush/erase.">Auto-mask from Garment</button>
+            <button class="action-btn" id="mask-automask-btn" onclick="runAutoMask()" style="border-color:#22d3ee;color:#22d3ee;" title="AI vision classifies the garment, then auto-paints the body region where it would go. You can refine with brush/erase.">Auto-mask from Garment</button>
             <button class="action-btn" id="mask-place-btn" onclick="placeGarmentOverlay()" style="border-color:#f472b6;color:#f472b6;" title="Place the garment image on top so you can drag, resize, and rotate it. Then click Bake → Mask to convert its silhouette into the inpaint mask.">Place Overlay</button>
             <button class="action-btn" id="mask-bake-btn" onclick="bakeOverlayToMask()" style="display:none;border-color:#10b981;color:#10b981;" title="Convert the placed garment silhouette into a white mask region. You can still refine with brush/erase after baking.">Bake → Mask</button>
             <button class="action-btn" id="mask-overlay-hide-btn" onclick="hideGarmentOverlay()" style="display:none;border-color:#888;color:#888;">Hide Overlay</button>
@@ -992,7 +992,7 @@
           <div id="mask-garment-strip" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px;padding:8px;background:#0a0a0a;border-radius:8px;">
             <!-- thumbnails inserted dynamically -->
           </div>
-          <div style="margin-top:8px;color:#888;font-size:0.8rem;">Flux Fill Pro: permissive, mask-aware. White = repaint. Garment ref steers what gets painted (Redux conditioning) — works for lingerie, fabric, style, pose. Strength: 0.5–0.7 keeps faces/body intact, 0.8+ forces exact garment match.</div>
+          <div style="margin-top:8px;color:#888;font-size:0.8rem;">Brush: permissive, mask-aware. White = repaint. Garment ref steers what gets painted — works for lingerie, fabric, style, pose. Strength: 0.5–0.7 keeps faces/body intact, 0.8+ forces exact garment match.</div>
         </div>
       </div>
 
@@ -1003,20 +1003,20 @@
             <div style="font-weight:600;color:#f472b6;">Sandwich Edit · clothe → safe-edit → unclothe</div>
             <button class="action-btn" onclick="closeSandwich()">Close</button>
           </div>
-          <div style="color:#aaa;font-size:0.85rem;margin-bottom:14px;">P-Edit puts simple clothing on the subject → mainstream editor (Nano Banana or GPT-2) changes the scene → P-Edit removes the clothing. Use this when you want gpt-2/nano-banana quality on an NSFW source.</div>
+          <div style="color:#aaa;font-size:0.85rem;margin-bottom:14px;">Strip puts simple clothing on the subject → mainstream editor (Glance or Eye) changes the scene → Strip removes the clothing. Use this when you want Eye/Glance quality on an NSFW source.</div>
           <label style="color:#ccc;font-size:0.85rem;display:block;margin-bottom:6px;">What to edit (scene change)</label>
           <textarea id="sandwich-edit-prompt" class="setting-textarea" rows="3" placeholder="e.g., change the lighting to warm sunset, replace the comforter with white silk, add a brass lamp on the nightstand"></textarea>
           <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap;">
             <label style="color:#aaa;font-size:0.85rem;">Editor:
               <select id="sandwich-engine" class="edit-engine-select">
-                <option value="nano">Nano Banana (fast)</option>
-                <option value="gpt">GPT Image 2 (highest quality)</option>
+                <option value="nano">Glance (fast)</option>
+                <option value="gpt">Eye (highest quality)</option>
               </select>
             </label>
             <label style="color:#aaa;font-size:0.85rem;">Upscaler:
               <select id="sandwich-upscaler" class="edit-engine-select">
                 <option value="none">None</option>
-                <option value="topaz">Topaz</option>
+                <option value="topaz">Develop</option>
                 <option value="freepik">Freepik</option>
               </select>
             </label>
@@ -1035,9 +1035,9 @@
         </div>
       </div>
 
-      <!-- Magnific prompt editor -->
+      <!-- Reveal prompt editor -->
       <div class="magnific-editor" id="magnific-editor" style="display:none;">
-        <div class="edit-label">Magnific Prompt <span style="font-weight:400;color:#888;">(edit before upscaling)</span></div>
+        <div class="edit-label">Reveal Prompt <span style="font-weight:400;color:#888;">(edit before upscaling)</span></div>
         <textarea class="setting-textarea" id="magnific-prompt-input" rows="4" style="min-height:60px;font-size:0.82rem;"></textarea>
         <div style="display:flex;gap:8px;margin-top:8px;">
           <button class="edit-btn" id="magnific-go" onclick="runMagnific()" style="background:linear-gradient(135deg,#f59e0b,#d97706);">Upscale with this prompt</button>
@@ -1049,37 +1049,37 @@
         <div class="edit-label">Edit this image</div>
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
-          <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="Grok 4.20 rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
-          <button class="enhance-btn" id="edit-pedit-optimize-btn" onclick="optimizePEditPromptForEdit()" style="font-size:0.78rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669);" title="Rewrite your prompt to match P-Edit's documented best practices: action verb + target + preservation clause. Recommended when P-Edit is the selected engine.">P-Edit</button>
-          <select class="edit-engine-select" id="edit-engine-select" title="Grok: img2img re-gen | Bria: NL edit | P-Edit: prunaai (safety off) | Nano Banana: Gemini 2.5 Flash | GPT-Image-2: OpenAI | Flux Fill: auto-mask via Grok Vision then Flux Fill Pro inpaints (NSFW-permissive, surgical)">
-            <option value="grok">Grok</option>
-            <option value="fal">Bria Edit</option>
-            <option value="pedit">P-Edit</option>
-            <option value="nano">Nano Banana</option>
-            <option value="gpt">GPT Image 2</option>
-            <option value="flux">Flux Fill (auto-mask)</option>
-            <option value="smart">Smart (auto)</option>
+          <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="AI rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
+          <button class="enhance-btn" id="edit-pedit-optimize-btn" onclick="optimizePEditPromptForEdit()" style="font-size:0.78rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669);" title="Rewrite your prompt to match Strip's documented best practices: action verb + target + preservation clause. Recommended when Strip is the selected engine.">Strip</button>
+          <select class="edit-engine-select" id="edit-engine-select" title="Lens: img2img re-gen | Frame: composition-preserving NL edit | Strip: no filter, NSFW-permissive | Glance: fast scene swap | Eye: highest fidelity | Brush: auto-mask then surgical inpaint (NSFW-permissive)">
+            <option value="grok">Lens</option>
+            <option value="fal">Frame</option>
+            <option value="pedit">Strip</option>
+            <option value="nano">Glance</option>
+            <option value="gpt">Eye</option>
+            <option value="flux">Brush (auto-mask)</option>
+            <option value="smart">Watch (auto)</option>
           </select>
           <button class="edit-btn" id="edit-btn" onclick="editImage()" title="Apply the edit using the selected engine">Edit</button>
         </div>
         <div class="edit-row" style="margin-top:8px;">
-          <button class="edit-btn" id="make-nsfw-btn" onclick="makeNsfw()" style="background:linear-gradient(135deg,#dc2626,#9333ea);border-color:transparent;flex:1;" title="P-Edit transforms the image (NSFW or anything) → Topaz Bloom Realism upscaler. The Joe pipeline in one click.">🔥 Make NSFW + Upscale</button>
-          <select class="edit-engine-select" id="make-nsfw-upscaler" title="Which upscaler to run after P-Edit">
-            <option value="topaz">Topaz Bloom</option>
+          <button class="edit-btn" id="make-nsfw-btn" onclick="makeNsfw()" style="background:linear-gradient(135deg,#dc2626,#9333ea);border-color:transparent;flex:1;" title="Strip transforms the image (NSFW or anything) → Develop upscaler. The Joe pipeline in one click.">🔥 Make NSFW + Upscale</button>
+          <select class="edit-engine-select" id="make-nsfw-upscaler" title="Which upscaler to run after Strip">
+            <option value="topaz">Develop</option>
             <option value="freepik">Freepik Skin</option>
-            <option value="none">None (P-Edit only)</option>
+            <option value="none">None (Strip only)</option>
           </select>
         </div>
         <div class="edit-row" style="margin-top:8px;">
-          <button class="edit-btn" id="surgical-edit-btn" onclick="surgicalEdit()" style="background:linear-gradient(135deg,#0ea5e9,#10b981);border-color:transparent;flex:1;" title="Auto-detect NSFW regions → mask them out → gpt-image-2 edits everything else → composite original NSFW pixels back. Surgical preservation. Falls back to Flux Fill Pro if gpt-image-2 refuses.">🎯 Surgical Edit (preserve subject)</button>
+          <button class="edit-btn" id="surgical-edit-btn" onclick="surgicalEdit()" style="background:linear-gradient(135deg,#0ea5e9,#10b981);border-color:transparent;flex:1;" title="Auto-detect NSFW regions → mask them out → Eye edits everything else → composite original NSFW pixels back. Surgical preservation. Falls back to Brush if Eye refuses.">🎯 Surgical Edit (preserve subject)</button>
           <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:#888;">
             <input type="checkbox" id="surgical-upscale-after" />
-            +Topaz
+            +Develop
           </label>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-          <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()" title="Sends the current image to the chat panel — your creative director prompt analyzes it and suggests edits as clickable tags">Grok Vision: Suggest Edits</button>
-          <span class="enhance-hint" id="analyze-hint">Grok looks at the image and recommends improvements</span>
+          <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()" title="Sends the current image to the chat panel — your creative director prompt analyzes it and suggests edits as clickable tags">AI Vision: Suggest Edits</button>
+          <span class="enhance-hint" id="analyze-hint">AI looks at the image and recommends improvements</span>
         </div>
         <div class="edit-status" id="edit-status" style="display:none;"></div>
         <div class="edit-presets" id="edit-presets">
@@ -1121,7 +1121,7 @@
   <!-- Chat panel (always visible) -->
   <div class="main-right">
     <div class="chat-panel">
-      <div class="chat-panel-header">Grok Creative Director</div>
+      <div class="chat-panel-header">Creative Director</div>
       <div class="chat-container">
         <div class="chat-messages" id="chat-messages">
           <div class="chat-msg assistant">What are we creating? Brainstorm, refine, or attach an image and I'll give you ideas.</div>
@@ -1137,7 +1137,7 @@
         </div>
         <div class="chat-input-row">
           <button class="chat-attach" onclick="attachCurrentImage()" title="Attach current image">img</button>
-          <input type="text" id="chat-input" class="chat-input" placeholder="Ask Grok...">
+          <input type="text" id="chat-input" class="chat-input" placeholder="Ask the Director...">
           <button class="chat-send" id="chat-send" onclick="sendChat()">Send</button>
         </div>
       </div>
@@ -1652,7 +1652,7 @@ async function generate() {
 
   const btn = document.getElementById('gen-btn');
   btn.disabled = true;
-  const engineLabel = currentEngine === 'fal' ? `FAL.AI${currentLora ? ' + ' + currentLora : ''}` : `GROK ${currentModel.toUpperCase()}`;
+  const engineLabel = currentEngine === 'fal' ? `Flux LoRA${currentLora ? ' + ' + currentLora : ''}` : currentEngine === 'gpt' ? `Eye` : `Lens ${currentModel.toUpperCase()}`;
   btn.textContent = `${engineLabel}...`;
   document.getElementById('loading').classList.add('active');
   document.getElementById('result').classList.remove('active');
@@ -1828,7 +1828,7 @@ async function editImage() {
   // Auto-optimize prompt for P-Edit before sending. If the rewrite has unfilled
   // angle-bracket placeholders, BLOCK the edit and surface them to the user.
   if (editEngine === 'pedit' && !editPrompt.includes('<')) {
-    btn.disabled = true; btn.textContent = 'Optimizing for P-Edit...';
+    btn.disabled = true; btn.textContent = 'Optimizing for Strip...';
     try {
       const opt = await optimizePEditPrompt(editPrompt, 1);
       editPrompt = opt.optimized_prompt;
@@ -1847,10 +1847,10 @@ async function editImage() {
         btn.disabled = false; btn.textContent = 'Edit';
         return;
       }
-      showEditStatus(`Auto-optimized for P-Edit (verb: ${opt.verb || 'modify'})`, 'loading');
+      showEditStatus(`Auto-optimized for Strip (verb: ${opt.verb || 'modify'})`, 'loading');
     } catch (err) {
       // Optimizer failed — fall through with the raw prompt + warn
-      console.warn('P-Edit optimizer failed, sending raw prompt', err);
+      console.warn('Strip optimizer failed, sending raw prompt', err);
       toast('Optimizer failed — sending raw prompt. ' + err.message);
     }
   }
@@ -2828,9 +2828,9 @@ async function runWearGarment() {
 
   const btn = document.getElementById('mask-wear-btn');
   const orig = btn.textContent;
-  btn.disabled = true; btn.textContent = 'P-Edit running...';
-  showImgOverlay('P-Edit dressing the subject...');
-  showEditStatus(`Wear-garment via P-Edit: "${prompt.slice(0, 80)}"`, 'loading');
+  btn.disabled = true; btn.textContent = 'Strip running...';
+  showImgOverlay('Strip dressing the subject...');
+  showEditStatus(`Wear-garment via Strip: "${prompt.slice(0, 80)}"`, 'loading');
 
   try {
     const res = await fetch('/api/wear-garment', {
@@ -2875,7 +2875,7 @@ async function optimizePEditPrompt(rawPrompt, numImages) {
 function summarizeOptimizeResult(data) {
   const verb = data.verb || 'modify';
   const missing = Array.isArray(data.missing) ? data.missing : [];
-  const lines = [`P-Edit prompt optimized (verb: ${verb})`];
+  const lines = [`Strip prompt optimized (verb: ${verb})`];
   if (missing.length) {
     lines.push(`⚠ ${missing.length} placeholder${missing.length === 1 ? '' : 's'} need${missing.length === 1 ? 's' : ''} filling:`);
     for (const m of missing) lines.push(`  → ${m}`);
@@ -2912,7 +2912,7 @@ async function optimizePEditPromptForEdit() {
       }
       toast(`Optimized — ${missing.length} placeholder${missing.length === 1 ? '' : 's'} to fill in`);
     } else {
-      toast(`P-Edit prompt optimized (verb: ${data.verb || 'modify'})`);
+      toast(`Strip prompt optimized (verb: ${data.verb || 'modify'})`);
     }
     showEditStatus(summarizeOptimizeResult(data), missing.length ? 'loading' : 'success');
   } catch (err) {
@@ -2946,7 +2946,7 @@ async function optimizePEditPromptInPainter() {
       }
       toast(`Optimized — ${missing.length} placeholder${missing.length === 1 ? '' : 's'} to fill in`);
     } else {
-      toast(`P-Edit prompt optimized (verb: ${data.verb || 'modify'})`);
+      toast(`Strip prompt optimized (verb: ${data.verb || 'modify'})`);
     }
   } catch (err) {
     toast('Optimize failed: ' + err.message);
@@ -3030,7 +3030,7 @@ async function runInpaint() {
   const btn = document.getElementById('mask-go-btn');
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = 'Inpainting...';
-  showImgOverlay(garmentUrl ? 'Flux Fill Pro inpainting + garment ref...' : 'Flux Fill Pro inpainting...');
+  showImgOverlay(garmentUrl ? 'Brush inpainting + garment ref...' : 'Brush inpainting...');
   showEditStatus(`Inpaint${garmentUrl ? ' (with garment ref)' : ''}: "${prompt.slice(0, 60)}"`, 'loading');
 
   try {
@@ -3157,7 +3157,7 @@ async function surgicalEdit() {
     hideImgOverlay();
     showEditStrengthSlider(beforeUrl, currentUrl);
     const modelInfo = data.stages?.model || 'unknown';
-    const upscaleNote = data.stages?.upscaled_url ? ' + Topaz' : '';
+    const upscaleNote = data.stages?.upscaled_url ? ' + Develop' : '';
     showEditStatus(`Surgical edit done via ${modelInfo}${upscaleNote} (v${versionIndex + 1}/${versionStack.length})`, 'success');
   } catch (err) {
     hideImgOverlay();
@@ -3175,8 +3175,8 @@ async function makeNsfw() {
   const upscaler = document.getElementById('make-nsfw-upscaler').value;
   const btn = document.getElementById('make-nsfw-btn');
   const originalText = btn.textContent;
-  btn.disabled = true; btn.textContent = '🔥 P-Edit + ' + upscaler.toUpperCase() + '...';
-  showImgOverlay(`P-Edit transform → ${upscaler}...`);
+  btn.disabled = true; btn.textContent = '🔥 Strip + ' + upscaler.toUpperCase() + '...';
+  showImgOverlay(`Strip transform → ${upscaler}...`);
   showEditStatus(`Make NSFW pipeline running... "${editPrompt.slice(0, 60)}"`, 'loading');
 
   try {
@@ -3267,8 +3267,8 @@ async function runTopazWithSettings() {
 
   const btn = document.getElementById('btn-topaz');
   btn.disabled = true; btn.textContent = '...';
-  showImgOverlay(`Topaz ${topazModel}...`);
-  showEditStatus(`Topaz ${topazModel} processing...`, 'loading');
+  showImgOverlay(`Develop ${topazModel}...`);
+  showEditStatus(`Develop ${topazModel} processing...`, 'loading');
 
   try {
     const res = await fetch('/api/topaz', {
@@ -3286,20 +3286,20 @@ async function runTopazWithSettings() {
       })
     });
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Topaz failed');
+    if (!res.ok || data.error) throw new Error(data.error || 'Develop failed');
 
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
-    pushVersion(currentUrl, 'topaz bloom');
+    pushVersion(currentUrl, 'develop bloom');
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
-    showEditStatus(`Topaz ${topazModel} applied`, 'success');
+    showEditStatus(`Develop ${topazModel} applied`, 'success');
   } catch (err) {
     hideImgOverlay();
-    showEditStatus('Topaz failed: ' + err.message, 'error');
+    showEditStatus('Develop failed: ' + err.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = 'Topaz';
+    btn.disabled = false; btn.textContent = 'Develop';
   }
 }
 
@@ -3307,8 +3307,8 @@ async function runTopaz() {
   if (!currentUrl) return;
   const btn = document.getElementById('btn-topaz');
   btn.disabled = true; btn.textContent = '...';
-  showImgOverlay('Topaz Bloom Realism enhancing...');
-  showEditStatus('Topaz processing — face enhancement + skin texture + upscale...', 'loading');
+  showImgOverlay('Develop Bloom Realism enhancing...');
+  showEditStatus('Develop processing — face enhancement + skin texture + upscale...', 'loading');
 
   try {
     const res = await fetch('/api/topaz', {
@@ -3316,20 +3316,20 @@ async function runTopaz() {
       body: JSON.stringify({ image_url: currentUrl, character: selectedChar })
     });
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Topaz failed');
+    if (!res.ok || data.error) throw new Error(data.error || 'Develop failed');
 
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
-    pushVersion(currentUrl, 'topaz bloom');
+    pushVersion(currentUrl, 'develop bloom');
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
-    showEditStatus('Topaz Bloom Realism applied — face + skin + upscale', 'success');
+    showEditStatus('Develop Bloom Realism applied — face + skin + upscale', 'success');
   } catch (err) {
     hideImgOverlay();
-    showEditStatus('Topaz failed: ' + err.message, 'error');
+    showEditStatus('Develop failed: ' + err.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = 'Topaz';
+    btn.disabled = false; btn.textContent = 'Develop';
   }
 }
 
@@ -3543,8 +3543,8 @@ async function runEnhancor() {
   if (!currentUrl) return;
   const btn = document.getElementById('btn-enhancor');
   btn.disabled = true; btn.textContent = '...';
-  showImgOverlay('Enhancor v3 — body skin enhance, face locked...');
-  showEditStatus('Enhancor processing — this can take 30-90s...', 'loading');
+  showImgOverlay('Skin — body skin enhance, face locked...');
+  showEditStatus('Skin processing — this can take 30-90s...', 'loading');
 
   try {
     const res = await fetch('/api/enhancor', {
@@ -3560,20 +3560,20 @@ async function runEnhancor() {
       })
     });
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Enhancor failed');
+    if (!res.ok || data.error) throw new Error(data.error || 'Skin failed');
 
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
-    pushVersion(currentUrl, 'enhancor v3');
+    pushVersion(currentUrl, 'skin v3');
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
-    showEditStatus(`Enhancor v3 applied — skin realism (cost ${data.cost} credits)`, 'success');
+    showEditStatus(`Skin applied — skin realism (cost ${data.cost} credits)`, 'success');
   } catch (err) {
     hideImgOverlay();
-    showEditStatus('Enhancor failed: ' + err.message, 'error');
+    showEditStatus('Skin failed: ' + err.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = 'Enhancor';
+    btn.disabled = false; btn.textContent = 'Skin';
   }
 }
 
@@ -3608,12 +3608,12 @@ async function upscaleImage(mode) {
   }
 }
 
-// Magnific two-step: generate prompt → edit → upscale
+// Reveal two-step: generate prompt → edit → upscale
 async function startMagnific() {
   if (!currentUrl) return;
   const btn = document.getElementById('btn-magnific');
   btn.disabled = true; btn.textContent = '...';
-  showEditStatus('Grok analyzing image for Magnific prompt...', 'loading');
+  showEditStatus('AI analyzing image for Reveal prompt...', 'loading');
 
   try {
     const res = await fetch('/api/magnific-prompt', {
@@ -3626,11 +3626,11 @@ async function startMagnific() {
     document.getElementById('magnific-prompt-input').value = data.prompt;
     document.getElementById('magnific-editor').style.display = 'block';
     document.getElementById('magnific-prompt-input').focus();
-    showEditStatus('Edit the Magnific prompt below, then click "Upscale with this prompt"', 'success');
+    showEditStatus('Edit the Reveal prompt below, then click "Upscale with this prompt"', 'success');
   } catch (err) {
-    showEditStatus('Magnific prompt failed: ' + err.message, 'error');
+    showEditStatus('Reveal prompt failed: ' + err.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = 'Magnific';
+    btn.disabled = false; btn.textContent = 'Reveal';
   }
 }
 
@@ -3644,8 +3644,8 @@ async function runMagnific() {
 
   const btn = document.getElementById('magnific-go');
   btn.disabled = true; btn.textContent = 'Upscaling...';
-  showImgOverlay('Magnific upscaling...');
-  showEditStatus('Magnific upscaling with your prompt...', 'loading');
+  showImgOverlay('Reveal upscaling...');
+  showEditStatus('Reveal upscaling with your prompt...', 'loading');
 
   try {
     const res = await fetch('/api/upscale', {
@@ -3653,19 +3653,19 @@ async function runMagnific() {
       body: JSON.stringify({ image_url: currentUrl, scale: 2, mode: 'creative', prompt, character: selectedChar })
     });
     const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Magnific failed');
+    if (!res.ok || data.error) throw new Error(data.error || 'Reveal failed');
 
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
-    pushVersion(currentUrl, 'magnific');
+    pushVersion(currentUrl, 'reveal');
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
     closeMagnificEditor();
-    showEditStatus(`Magnific upscaled ${data.scale}x\nPrompt: "${prompt.slice(0, 120)}"`, 'success');
+    showEditStatus(`Reveal upscaled ${data.scale}x\nPrompt: "${prompt.slice(0, 120)}"`, 'success');
   } catch (err) {
     hideImgOverlay();
-    showEditStatus('Magnific failed: ' + err.message, 'error');
+    showEditStatus('Reveal failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Upscale with this prompt';
   }
@@ -3933,7 +3933,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const poseUrl = upload.url;
           document.getElementById('pose-url-input').value = poseUrl;
 
-          statusEl.textContent = 'Grok analyzing pose...';
+          statusEl.textContent = 'AI analyzing pose...';
           const res = await fetch('/api/analyze-pose', {
             method: 'POST', headers: headers(),
             body: JSON.stringify({ pose_image_url: poseUrl })
@@ -3966,7 +3966,7 @@ async function analyzePoseFromUrl() {
   preview.src = url;
   preview.style.display = 'block';
   const statusEl = document.getElementById('pose-analysis-status');
-  statusEl.textContent = 'Grok analyzing pose...';
+  statusEl.textContent = 'AI analyzing pose...';
   statusEl.style.display = 'block';
   statusEl.style.color = '#06b6d4';
 
@@ -4478,8 +4478,8 @@ const SETTING_LABELS = {
   realism_directive: { label: 'Realism Directive', desc: 'Appended to ALL AI prompts. Defines what "real" means.' },
   enhance_system: { label: 'AI Enhance (Generate)', desc: 'System prompt for the AI Enhance button on scene prompts.' },
   enhance_edit_system: { label: 'AI Enhance (Edit)', desc: 'System prompt for the AI button on edit prompts.' },
-  vision_system: { label: 'Grok Vision Analysis', desc: 'System prompt when Grok analyzes an image and suggests edits.' },
-  chat_system: { label: 'Chat Creative Director', desc: 'System prompt for the Grok chat panel.' },
+  vision_system: { label: 'AI Vision Analysis', desc: 'System prompt when AI vision analyzes an image and suggests edits.' },
+  chat_system: { label: 'Chat Creative Director', desc: 'System prompt for the chat panel.' },
 };
 
 let settingsData = [];

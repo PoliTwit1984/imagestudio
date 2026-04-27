@@ -231,7 +231,7 @@ async function handleFluxEdit(
       if (regions.length === 0) {
         return Response.json({
           ok: false,
-          error: `Grok Vision couldn't locate "${prompt.slice(0, 60)}" in the image. Use Paint Mask for manual control.`,
+          error: `AI vision couldn't locate "${prompt.slice(0, 60)}" in the image. Use Paint Mask for manual control.`,
         });
       }
       maskBuf = await rasterizeRegionsToMask(regions, W, H, 0.12);
@@ -258,7 +258,7 @@ async function handleFluxEdit(
     if (isBlank) {
       return Response.json({
         ok: false,
-        error: "Flux edit blocked by content filter on this image. Try a different engine (Strip is more permissive).",
+        error: "Brush edit blocked by content filter on this image. Try a different engine (Strip is more permissive).",
       }, { status: 422 });
     }
 
@@ -277,14 +277,14 @@ async function handleFluxEdit(
       url: resultUrl,
       mask_url: maskUrl,
       mask_source: maskSource,
-      model: "flux-fill-pro (auto-masked)",
+      model: "Brush (auto-masked)",
     });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
   }
 }
 
-// Use Grok Vision to find the bounding box(es) for whatever the user wants to edit.
+// Use AI vision to find the bounding box(es) for whatever the user wants to edit.
 async function detectEditRegionsFromPrompt(
   imageUrl: string,
   editPrompt: string,
@@ -1100,18 +1100,18 @@ async function handleDarkroomSkin(
       if (status === 400 || status === 422) {
         // Likely content moderation refusal
         if (upstreamBody.toLowerCase().includes("moderation") || upstreamBody.toLowerCase().includes("content")) {
-          userMsg = "Darkroom Skin declined this image (content filter). Try Skin (Enhancor) instead — it's permissive and pore-aware.";
+          userMsg = "Darkroom Skin declined this image (content filter). Try Skin instead — it's permissive and pore-aware.";
         } else {
-          userMsg = "Darkroom Skin couldn't process this image. Try a different source or Skin (Enhancor) for body skin.";
+          userMsg = "Darkroom Skin couldn't process this image. Try a different source or Skin for body skin.";
         }
       } else if (status === 401 || status === 403) {
         userMsg = "Darkroom Skin authentication issue. Try again in a moment.";
       } else if (status === 429) {
         userMsg = "Darkroom Skin rate limited. Wait a few seconds and try again.";
       } else if (status >= 500) {
-        userMsg = "Darkroom Skin service temporarily unavailable. Try again or use Skin (Enhancor).";
+        userMsg = "Darkroom Skin service temporarily unavailable. Try again or use Skin.";
       } else {
-        userMsg = `Darkroom Skin failed (status ${status}). Try Skin (Enhancor) for skin pores.`;
+        userMsg = `Darkroom Skin failed (status ${status}). Try Skin for skin pores.`;
       }
 
       return Response.json({ error: userMsg, upstream_status: status }, { status: 502 });
@@ -1229,7 +1229,7 @@ async function handleDescribeWearPrompt(req: Request): Promise<Response> {
       }),
     });
     if (!res.ok) {
-      throw new Error(`Grok ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      throw new Error(`AI vision ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
     const data = await res.json();
     const prompt = String(data.choices?.[0]?.message?.content || "").trim().replace(/^["']|["']$/g, "");
@@ -1241,7 +1241,7 @@ async function handleDescribeWearPrompt(req: Request): Promise<Response> {
 }
 
 // -----------------------------------------------------------------------------
-// /api/wear-garment — P-Edit multi-image: person + garment ref → person wearing
+// /api/wear-garment — Strip multi-image: person + garment ref → person wearing
 // the garment. No mask needed. NSFW-permissive (disable_safety_checker).
 // Body: { image_url, garment_url, prompt?, upscaler? }
 // -----------------------------------------------------------------------------
@@ -1302,7 +1302,7 @@ async function handleWearGarment(
     return Response.json({
       ok: true,
       image_url: resultUrl,
-      model: upscaler === "none" ? "p-edit (multi-image)" : `p-edit (multi-image) + ${upscaler}`,
+      model: upscaler === "none" ? "Strip (multi-image)" : `Strip (multi-image) + ${upscaler === "topaz" ? "Develop" : upscaler}`,
     });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
@@ -1341,7 +1341,7 @@ async function handleDescribeGarment(req: Request): Promise<Response> {
       }),
     });
     if (!res.ok) {
-      throw new Error(`Grok ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      throw new Error(`AI vision ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
     const data = await res.json();
     const description = String(data.choices?.[0]?.message?.content || "").trim().replace(/^["']|["']$/g, "");
@@ -1353,7 +1353,7 @@ async function handleDescribeGarment(req: Request): Promise<Response> {
 }
 
 // -----------------------------------------------------------------------------
-// /api/remove-bg — strip background → transparent PNG via BiRefNet on FAL.
+// /api/remove-bg — strip background → transparent PNG via Cutout on FAL.
 // Body: { image_url } → { image_url }
 // -----------------------------------------------------------------------------
 
@@ -1399,11 +1399,11 @@ async function handleRemoveBg(req: Request): Promise<Response> {
       body: JSON.stringify({ image_url: imageUrl, output_format: "png" }),
     });
     if (!res.ok) {
-      throw new Error(`BiRefNet ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      throw new Error(`Cutout ${res.status}: ${(await res.text()).slice(0, 300)}`);
     }
     const data = await res.json();
     const url = data.image?.url || data.images?.[0]?.url;
-    if (!url) throw new Error("BiRefNet returned no image");
+    if (!url) throw new Error("Cutout returned no image");
 
     // Re-host to our Supabase so it doesn't expire and is CORS-friendly for the canvas
     const dl = await fetch(url);
@@ -1693,7 +1693,7 @@ async function handleSandwichEdit(
       image_url: finalUrl,
       clothed_url: clothedUrl,
       edited_url: editedUrl,
-      model: `sandwich (pedit → ${editEngine} → pedit)${upscaler !== "none" ? " + " + upscaler : ""}`,
+      model: `sandwich (Strip → ${editEngine === "nano" ? "Glance" : editEngine === "gpt" ? "Eye" : editEngine} → Strip)${upscaler !== "none" ? " + " + (upscaler === "topaz" ? "Develop" : upscaler) : ""}`,
     });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
@@ -1847,7 +1847,7 @@ async function handleInpaint(
       ok: true,
       image_url: resultUrl,
       mask_url: maskUrl,
-      model: upscaler === "none" ? "flux-fill-pro" : `flux-fill-pro + ${upscaler}`,
+      model: upscaler === "none" ? "Brush" : `Brush + ${upscaler === "topaz" ? "Develop" : upscaler}`,
     });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
@@ -1975,15 +1975,15 @@ async function handleSmartEdit(
     // Explicit model paths
     if (preferModel === "pedit") {
       resultUrl = await callPEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
-      modelUsed = "p-image-edit";
+      modelUsed = "Strip";
     } else if (preferModel === "nano") {
       resultUrl = await callNanoBanana({ imageUrl: body.image_url, prompt: anchoredPrompt });
-      modelUsed = "nano-banana";
+      modelUsed = "Glance";
     } else if (preferModel === "grok") {
       resultUrl = await callGrokEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
-      modelUsed = "grok-imagine-image";
+      modelUsed = "Lens";
     } else if (preferModel === "gpt" || preferModel === "auto") {
-      // gpt-image-2 first
+      // Eye first
       try {
         resultUrl = await callGptImage2Edit({
           imageUrl: body.image_url,
@@ -1992,7 +1992,7 @@ async function handleSmartEdit(
           size: body.size ?? GPT_SIZE,
           quality: body.quality ?? GPT_QUALITY,
         });
-        modelUsed = GPT_IMAGE_MODEL;
+        modelUsed = "Eye";
       } catch (err: any) {
         const msg = String(err?.message || err);
         const isContentRefusal =
@@ -2002,16 +2002,16 @@ async function handleSmartEdit(
           msg.includes("400");
         if (preferModel === "gpt" || !isContentRefusal) {
           if (preferModel === "gpt") throw err;
-          fallbackReason = `gpt-image-2 error: ${msg.slice(0, 200)}`;
+          fallbackReason = `Eye error: ${msg.slice(0, 200)}`;
         } else {
-          fallbackReason = "gpt-image-2 refused (content policy); falling back to P-Edit";
+          fallbackReason = "Eye refused (content policy); falling back to Strip";
         }
       }
 
-      // Auto fallback to P-Edit (handles NSFW + general edits) if gpt-image-2 didn't deliver.
+      // Auto fallback to Strip (handles NSFW + general edits) if Eye didn't deliver.
       if (!resultUrl) {
         resultUrl = await callPEdit({ imageUrl: body.image_url, prompt: anchoredPrompt });
-        modelUsed = "p-image-edit";
+        modelUsed = "Strip";
       }
     }
 
@@ -2071,7 +2071,7 @@ async function callGptImage2Edit(args: {
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`gpt-image-2 ${res.status}: ${errText.slice(0, 400)}`);
+    throw new Error(`Eye ${res.status}: ${errText.slice(0, 400)}`);
   }
 
   const data = await res.json();
@@ -2081,19 +2081,19 @@ async function callGptImage2Edit(args: {
     // Some endpoints may return a URL instead — handle both.
     const url = data.data?.[0]?.url;
     if (url) return url;
-    throw new Error("gpt-image-2 returned no image");
+    throw new Error("Eye returned no image");
   }
   // Re-upload the b64 image to our Supabase storage so we get a stable URL.
   return await uploadBase64ToSupabase(b64);
 }
 
 // -----------------------------------------------------------------------------
-// P-Edit (prunaai/p-image-edit) — workhorse for free-form edits incl. NSFW
+// Strip (prunaai/p-image-edit) — workhorse for free-form edits incl. NSFW
 // -----------------------------------------------------------------------------
 
 async function callNanoBanana(args: { imageUrl: string; prompt: string }): Promise<string> {
-  // Google Gemini 2.5 Flash Image ("Nano Banana") via FAL.
-  // Fast, photoreal, less prone to scene reinterpretation than gpt-image-2.
+  // Google Gemini 2.5 Flash Image ("Glance") via FAL.
+  // Fast, photoreal, less prone to scene reinterpretation than Eye.
   const res = await fetch("https://fal.run/fal-ai/nano-banana/edit", {
     method: "POST",
     headers: {
@@ -2108,11 +2108,11 @@ async function callNanoBanana(args: { imageUrl: string; prompt: string }): Promi
     }),
   });
   if (!res.ok) {
-    throw new Error(`Nano Banana ${res.status}: ${(await res.text()).slice(0, 400)}`);
+    throw new Error(`Glance ${res.status}: ${(await res.text()).slice(0, 400)}`);
   }
   const data = await res.json();
   const url = data.images?.[0]?.url || data.image?.url;
-  if (!url) throw new Error("Nano Banana returned no image");
+  if (!url) throw new Error("Glance returned no image");
   return String(url);
 }
 
@@ -2141,16 +2141,16 @@ async function callPEdit(args: { imageUrl: string; prompt: string; refUrls?: str
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`P-Edit ${res.status}: ${errText.slice(0, 400)}`);
+    throw new Error(`Strip ${res.status}: ${errText.slice(0, 400)}`);
   }
 
   const data = await res.json();
   if (data.status === "failed") {
-    throw new Error(`P-Edit failed: ${data.error || "unknown"}`);
+    throw new Error(`Strip failed: ${data.error || "unknown"}`);
   }
   const output = data.output;
   const url = Array.isArray(output) ? output[0] : output;
-  if (!url) throw new Error("P-Edit returned no image");
+  if (!url) throw new Error("Strip returned no image");
   return String(url);
 }
 
@@ -2222,7 +2222,7 @@ async function callTopaz(imageUrl: string): Promise<string> {
     body: JSON.stringify({ image_url: imageUrl, model: "Bloom Realism" }),
   });
   if (!submitRes.ok) {
-    throw new Error(`Topaz submit ${submitRes.status}: ${(await submitRes.text()).slice(0, 200)}`);
+    throw new Error(`Develop submit ${submitRes.status}: ${(await submitRes.text()).slice(0, 200)}`);
   }
   const submitData = await submitRes.json();
   const processId = submitData.process_id || submitData.id;
@@ -2241,10 +2241,10 @@ async function callTopaz(imageUrl: string): Promise<string> {
       return dlData.download_url || dlData.url || imageUrl;
     }
     if (statusData.status === "failed") {
-      throw new Error(`Topaz failed: ${statusData.error || "unknown"}`);
+      throw new Error(`Develop failed: ${statusData.error || "unknown"}`);
     }
   }
-  throw new Error("Topaz timed out after 2 minutes");
+  throw new Error("Develop timed out after 2 minutes");
 }
 
 async function callFreepikSkinEnhancer(imageUrl: string): Promise<string> {
@@ -2370,9 +2370,9 @@ async function handleSurgicalEdit(
       gptError = String(err?.message || err);
     }
 
-    // Step 6: if gpt-image-2 refused, fall back to Flux Fill Pro on FAL
+    // Step 6: if Eye refused, fall back to Brush on FAL
     let editedBuf: Buffer;
-    let modelUsed = "gpt-image-2";
+    let modelUsed = "Eye";
     if (gptResultBuf) {
       editedBuf = gptResultBuf;
     } else {
@@ -2397,7 +2397,7 @@ async function handleSurgicalEdit(
         maskUrl,
         prompt: body.prompt,
       });
-      modelUsed = `flux-fill-pro (gpt-image-2 ${gptError ? "refused" : "n/a"})`;
+      modelUsed = `Brush (Eye ${gptError ? "refused" : "n/a"})`;
     }
 
     // Step 7: composite ORIGINAL pixels back over the edited result, using the
@@ -2507,7 +2507,7 @@ Be GENEROUS with the bounding boxes — pad them slightly. Better to over-mask t
   });
 
   if (!grokRes.ok) {
-    throw new Error(`Grok Vision ${grokRes.status}: ${(await grokRes.text()).slice(0, 200)}`);
+    throw new Error(`AI Vision ${grokRes.status}: ${(await grokRes.text()).slice(0, 200)}`);
   }
 
   const grokData = await grokRes.json();
@@ -2703,7 +2703,7 @@ async function callGptImage2EditWithBuffers(args: {
     body: form,
   });
   if (!res.ok) {
-    throw new Error(`gpt-image-2 ${res.status}: ${(await res.text()).slice(0, 400)}`);
+    throw new Error(`Eye ${res.status}: ${(await res.text()).slice(0, 400)}`);
   }
   const data = await res.json();
   const b64 = data.data?.[0]?.b64_json;
@@ -2713,7 +2713,7 @@ async function callGptImage2EditWithBuffers(args: {
     const dlRes = await fetch(url);
     return Buffer.from(await dlRes.arrayBuffer());
   }
-  throw new Error("gpt-image-2 returned no image");
+  throw new Error("Eye returned no image");
 }
 
 async function callFluxFillPro(args: {
@@ -2745,17 +2745,17 @@ async function callFluxFillPro(args: {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`Flux Fill ${res.status}: ${(await res.text()).slice(0, 400)}`);
+    throw new Error(`Brush ${res.status}: ${(await res.text()).slice(0, 400)}`);
   }
   const data = await res.json();
   const url = data.images?.[0]?.url || data.image?.url;
-  if (!url) throw new Error("Flux Fill returned no image");
+  if (!url) throw new Error("Brush returned no image");
   const dlRes = await fetch(url);
   return Buffer.from(await dlRes.arrayBuffer());
 }
 
 // -----------------------------------------------------------------------------
-// Grok fallback
+// Lens fallback
 // -----------------------------------------------------------------------------
 
 async function callGrokEdit(args: { imageUrl: string; prompt: string }): Promise<string> {
@@ -2775,12 +2775,12 @@ async function callGrokEdit(args: { imageUrl: string; prompt: string }): Promise
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Grok ${res.status}: ${errText.slice(0, 400)}`);
+    throw new Error(`Lens ${res.status}: ${errText.slice(0, 400)}`);
   }
 
   const data = await res.json();
   const url = data.data?.[0]?.url;
-  if (!url) throw new Error("Grok returned no image URL");
+  if (!url) throw new Error("Lens returned no image URL");
   return url;
 }
 
