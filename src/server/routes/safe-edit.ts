@@ -1027,6 +1027,8 @@ async function handleDarkroomSkin(
     const strengthByIntensity = { low: 0.20, medium: 0.28, high: 0.38 };
     const _strength = strengthByIntensity[intensity];
 
+    // Use PRO tier — looser edit moderation, better identity preservation.
+    // (BASIC has stricter edit moderation per our Grok prompting research.)
     const grokRes = await fetch("https://api.x.ai/v1/images/edits", {
       method: "POST",
       headers: {
@@ -1034,7 +1036,7 @@ async function handleDarkroomSkin(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "grok-imagine-image",
+        model: "grok-imagine-image-pro",
         prompt: DARKROOM_SKIN_PROMPT_V1,
         image: { url: imageUrl, type: "image_url" },
         n: 1,
@@ -1042,8 +1044,31 @@ async function handleDarkroomSkin(
     });
 
     if (!grokRes.ok) {
-      // Don't echo upstream error bodies — could leak provider name.
-      return Response.json({ error: "Darkroom Skin pass failed (upstream)" }, { status: 502 });
+      // Log the actual upstream error server-side for debugging.
+      const upstreamBody = await grokRes.text();
+      console.error(`[darkroom-skin] upstream ${grokRes.status}:`, upstreamBody.slice(0, 500));
+
+      // Classify and return a vendor-neutral, helpful user-facing message.
+      const status = grokRes.status;
+      let userMsg: string;
+      if (status === 400 || status === 422) {
+        // Likely content moderation refusal
+        if (upstreamBody.toLowerCase().includes("moderation") || upstreamBody.toLowerCase().includes("content")) {
+          userMsg = "Darkroom Skin declined this image (content filter). Try Skin (Enhancor) instead — it's permissive and pore-aware.";
+        } else {
+          userMsg = "Darkroom Skin couldn't process this image. Try a different source or Skin (Enhancor) for body skin.";
+        }
+      } else if (status === 401 || status === 403) {
+        userMsg = "Darkroom Skin authentication issue. Try again in a moment.";
+      } else if (status === 429) {
+        userMsg = "Darkroom Skin rate limited. Wait a few seconds and try again.";
+      } else if (status >= 500) {
+        userMsg = "Darkroom Skin service temporarily unavailable. Try again or use Skin (Enhancor).";
+      } else {
+        userMsg = `Darkroom Skin failed (status ${status}). Try Skin (Enhancor) for skin pores.`;
+      }
+
+      return Response.json({ error: userMsg, upstream_status: status }, { status: 502 });
     }
     const data = await grokRes.json();
     const upstreamUrl = data.data?.[0]?.url;

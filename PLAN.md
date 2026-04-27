@@ -1124,6 +1124,128 @@ The library compounds: as users build and share custom brushes (Phase 16.5), the
 
 ---
 
+## PHASE 17 — LUT EXTRACTION (Lightroom-style Presets)
+
+> **The architectural unlock for color-grade presets.** Run an AI preset (Lens/Glance) on a reference image ONCE, extract the color transform as a 3D LUT, save to Supabase as a Hald-CLUT PNG. Every subsequent application of that preset is pure pixel math: ~250ms, $0/use, 100% deterministic, NSFW-safe.
+
+### 17.1 Why this matters
+
+Current preset architecture: every Darkroom Skin / Glow / Noir application costs $0.05-0.07 in API fees, takes 15-30s, has content-moderation risk on NSFW source images, and produces non-deterministic output. **At scale (1,000 users × 50 preset apps/mo) that's $3,500/mo in API costs alone.**
+
+Lightroom-style LUT extraction inverts this:
+- One Grok call extracts the look from a SAFE reference image
+- Apply to any image (including NSFW) via Sharp's `recomb()` / Hald-CLUT lookup — pure math
+- Sub-second response, $0 per application after extraction
+- Identical result every time
+- LUTs are tiny (~300KB PNG) and exportable as real Lightroom .xmp files for the photo industry
+
+### 17.2 What LUTs can / can't capture
+
+**Can capture (color-grade work):**
+- Hue shifts per channel
+- Saturation curves
+- Contrast / tone curves
+- White balance / temperature shifts
+- Channel mixing (R→R, R→G, etc.)
+- Vignette baseline
+- Color grade (shadow/midtone/highlight × HSL)
+
+**Cannot capture (parameterize separately):**
+- Grain (size, roughness, amount)
+- Sharpening (amount, radius, masking)
+- Halation / glow (radius, intensity, color)
+- Vignette dynamics (per-image-aware)
+- Geometric transforms
+- Content additions (skin-pore detail, water beads, fabric)
+
+### 17.3 Preset architecture
+
+Each preset becomes a structured bundle:
+
+```json
+{
+  "preset_id": "darkroom-glow-v1",
+  "extraction_method": "lut" | "ai-runtime" | "hybrid",
+  "lut_url": "supabase.co/.../darkroom-glow-v1.cube.png",
+  "lut_size": 33,
+  "grain_params": { "amount": 0.15, "roughness": 0.5, "size": 1.2 },
+  "vignette_params": { "amount": -0.25, "midpoint": 0.6, "feather": 0.3 },
+  "sharpening_params": { "amount": 25, "radius": 1.0, "masking": 0.5 },
+  "halation_params": null,
+  "intensity_curve": { "low": 0.4, "medium": 0.7, "high": 1.0 }
+}
+```
+
+Apply pipeline (server-side, pure Sharp):
+
+1. Sharp loads source image
+2. Apply LUT via `recomb()` matrix or Hald-CLUT lookup → ~100ms
+3. Composite grain noise layer → ~50ms
+4. Apply radial vignette mask → ~50ms
+5. Apply sharpening → ~50ms
+6. Total: ~250ms
+
+### 17.4 LUT extraction pipeline
+
+- [ ] **`POST /api/extract-lut`** — takes original_url + ai_processed_url → returns lut_id and downloadable Hald-CLUT PNG
+- [ ] Algorithm:
+  1. Load both images (original + AI-processed) via Sharp
+  2. Resize both to 1024×1024 for sampling
+  3. Build 3D color histogram: for each input RGB pixel, observe output RGB
+  4. Quantize to 33×33×33 cube (33,000 buckets)
+  5. For each bucket: median of observed outputs (handles noise from AI generation)
+  6. Empty buckets: tri-linear interpolation from neighbors
+  7. Encode as Hald-CLUT PNG (512×512 image = 33×33×33 cube)
+  8. Upload to Supabase, return URL
+- [ ] **`POST /api/apply-lut`** — takes image_url + lut_id + intensity → returns processed URL
+- [ ] Sharp implementation: `recomb()` for 3×3 matrix shortcuts; full Hald-CLUT for non-linear transforms
+- [ ] Intensity slider: linearly interpolate between identity LUT and full LUT
+
+### 17.5 Per-preset extraction status
+
+Mark each Darkroom preset by extraction method:
+
+| Preset | Method | Why |
+|---|---|---|
+| Darkroom Skin | ai-runtime | Adds pore-level detail not in source |
+| Darkroom Glow | **LUT** | Pure color/lighting transform |
+| Darkroom Noir | **LUT + grain** | Color + grain layer |
+| Darkroom Polaroid | **LUT + grain + vignette** | Full hybrid |
+| Darkroom Velvet | **LUT** | Color saturation transform |
+| Darkroom Dawn | **LUT** | Color temperature transform |
+| Darkroom Sunkissed | **LUT** | Color/warmth transform |
+| Darkroom Wet Look | ai-runtime | Adds water/sheen not in source |
+| Darkroom Lace | hybrid | Color LUT + halation parameter |
+| Darkroom 35mm | **LUT + grain** | Color curves + film grain |
+| Darkroom Studio | **LUT + sharpening** | Color + edge enhancement |
+
+8/11 presets become LUT-extractable. **8 fewer AI calls per use × every user.**
+
+### 17.6 LUT marketplace tie-in (Phase 13 community)
+
+- [ ] Users can extract LUTs from their own AI-processed images and share them
+- [ ] **Export as Lightroom XMP** — actual photographers can use Darkroom LUTs in real Lightroom
+- [ ] Marketplace: paid LUTs (creator sets price, Darkroom takes 20%)
+- [ ] Tags + auto-classification (warm/cool, high-contrast/flat, color-graded, B&W)
+
+### 17.7 Build path
+
+- [ ] **v1**: extraction endpoint + apply endpoint + Hald-CLUT format
+- [ ] **v1.5**: extract grain/vignette/sharpening params from diff alongside LUT
+- [ ] **v2**: re-extract every Darkroom preset as LUT-or-hybrid; deprecate AI-runtime calls for those
+- [ ] **v2.5**: Lightroom XMP export
+- [ ] **v3**: marketplace (paid LUTs, creator economy hook)
+
+### 17.8 Why this is a huge moat
+
+- Adobe Lightroom can't AI-generate looks — they have to be manually crafted
+- AI image apps run AI every use — expensive, slow, moderation-prone
+- **Darkroom: AI extracts the look once, runs it as math forever.** Best of both worlds.
+- LUT library compounds with community submissions
+- Real-Lightroom export creates a B2B revenue stream into the photographer market
+
+---
+
 ## ACTIVE WORK QUEUE (Next Up)
 
 > Ordered by user-visible impact. Tackle from the top. Each is small enough to ship in one session.
