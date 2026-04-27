@@ -2426,10 +2426,10 @@ function parseNsfwRegions(output: unknown): NsfwRegion[] {
 }
 
 // -----------------------------------------------------------------------------
-// /api/analyze-image — one-shot Grok Vision content classifier
+// /api/analyze-image — one-shot Grok Vision content classifier (v2)
 //
 // Returns a structured content profile the UI uses to drive engine routing
-// (see GET /api/engine-compatibility for the verdict map). Profile shape:
+// (see GET /api/engine-compatibility for the verdict map). v2 profile shape:
 //   {
 //     nudity_level: "none" | "implied" | "topless" | "explicit",
 //     face_visible: boolean,
@@ -2438,11 +2438,24 @@ function parseNsfwRegions(output: unknown): NsfwRegion[] {
 //     subject_count: integer,
 //     content_complexity: "simple" | "moderate" | "complex",
 //     skin_tone_dominant: "light" | "medium" | "dark" | "varied" | "n/a",
-//     explicit_text: boolean
+//     explicit_text: boolean,
+//     primary_subject: "person" | "object" | "scene" | "abstract" | "other",
+//     explicit_acts: boolean,
+//     minor_concern: boolean,
+//     violence: boolean,
+//     tags: string[]
 //   }
 //
-// We also return a `cache_key` (sha256 of image_url) so the UI can dedupe
-// without rehashing on the client.
+// Cache layers (read in order, write best-effort):
+//   1. assets.metadata.content_profile — DB-backed, keyed by source_url. Only
+//      counts as a hit if the cached profile has all v2 fields (we re-classify
+//      and overwrite wave-11 partials).
+//   2. Client-side sessionStorage — cache_key (sha256(image_url)) is returned
+//      on every response and the UI dedupes there.
+//
+// Hard-refusal short-circuit: if the classifier flags `minor_concern` or
+// `violence`, the endpoint returns 422 with `error: "content_refused"` so
+// engines never run on those.
 // -----------------------------------------------------------------------------
 
 const ANALYZE_IMAGE_SYSTEM_PROMPT = `You are a content classifier. Analyze the image and return a JSON object with:
@@ -2453,8 +2466,17 @@ const ANALYZE_IMAGE_SYSTEM_PROMPT = `You are a content classifier. Analyze the i
   "subject_count": integer,
   "content_complexity": "simple" | "moderate" | "complex",
   "skin_tone_dominant": "light" | "medium" | "dark" | "varied" | "n/a",
-  "explicit_text": boolean
+  "explicit_text": boolean,
+  "primary_subject": "person" | "object" | "scene" | "abstract" | "other",
+  "explicit_acts": boolean,
+  "minor_concern": boolean,
+  "violence": boolean,
+  "tags": string[]
 }
+For minor_concern, err on the side of caution — true if the image MAY depict a minor.
+For violence, true if the image depicts gore, weapons, or injury.
+For explicit_acts, true only if the image depicts explicit sexual acts.
+For tags, return 3-8 free-form descriptive lowercase tags (e.g. "studio", "softbox", "warm-tones").
 Return ONLY the JSON object, no markdown fences, no explanation.`;
 
 const ANALYZE_NUDITY_VALUES = new Set(["none", "implied", "topless", "explicit"]);
@@ -2468,6 +2490,13 @@ const ANALYZE_SCENE_VALUES = new Set([
 ]);
 const ANALYZE_COMPLEXITY_VALUES = new Set(["simple", "moderate", "complex"]);
 const ANALYZE_SKIN_TONE_VALUES = new Set(["light", "medium", "dark", "varied", "n/a"]);
+const ANALYZE_PRIMARY_SUBJECT_VALUES = new Set([
+  "person",
+  "object",
+  "scene",
+  "abstract",
+  "other",
+]);
 
 async function sha256Hex(input: string): Promise<string> {
   const enc = new TextEncoder().encode(input);
@@ -2475,6 +2504,75 @@ async function sha256Hex(input: string): Promise<string> {
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+// A cached content_profile is only "v2-complete" if the caution flags + tags
+// were populated. Wave-11 rows are missing these — we re-classify those.
+function isV2Profile(p: any): boolean {
+  if (!p || typeof p !== "object") return false;
+  return (
+    typeof p.minor_concern === "boolean" &&
+    typeof p.violence === "boolean" &&
+    typeof p.explicit_acts === "boolean" &&
+    typeof p.primary_subject === "string" &&
+    Array.isArray(p.tags)
+  );
+}
+
+// Best-effort lookup of an asset row whose source_url matches imageUrl.
+// Returns { id, metadata } on hit, null otherwise. Failures are swallowed —
+// caching is non-blocking.
+async function lookupAssetBySourceUrl(
+  imageUrl: string
+): Promise<{ id: string; metadata: any } | null> {
+  if (!SUPABASE_URL) return null;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/assets?source_url=eq.${encodeFilterValue(imageUrl)}&select=id,metadata&limit=1`,
+      { headers: supaHeaders() }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const row = rows[0];
+    if (!row?.id) return null;
+    return { id: String(row.id), metadata: row.metadata || {} };
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort write — failures are logged and swallowed so the endpoint never
+// fails just because the cache write didn't land.
+async function writeAssetContentProfile(
+  assetId: string,
+  existingMetadata: any,
+  profile: any
+): Promise<void> {
+  if (!SUPABASE_URL) return;
+  try {
+    const merged = {
+      ...(existingMetadata && typeof existingMetadata === "object" ? existingMetadata : {}),
+      content_profile: profile,
+    };
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/assets?id=eq.${encodeFilterValue(assetId)}`,
+      {
+        method: "PATCH",
+        headers: supaHeaders(),
+        body: JSON.stringify({
+          metadata: merged,
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    );
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn(`[analyze-image] cache write failed for asset ${assetId}: ${errText.slice(0, 200)}`);
+    }
+  } catch (err: any) {
+    console.warn(`[analyze-image] cache write threw for asset ${assetId}: ${err?.message || err}`);
+  }
 }
 
 async function handleAnalyzeImage(req: Request): Promise<Response> {
@@ -2487,6 +2585,35 @@ async function handleAnalyzeImage(req: Request): Promise<Response> {
 
     const cacheKey = await sha256Hex(imageUrl);
 
+    // ── Read path: DB cache lookup ──────────────────────────────────────────
+    // If an asset row exists for this source_url AND its metadata.content_profile
+    // is v2-complete, return the cached profile immediately (sub-100ms path).
+    // Hard-refusal flags still short-circuit cached hits — never let a refused
+    // profile get through with status 200.
+    const assetHit = await lookupAssetBySourceUrl(imageUrl);
+    if (assetHit && isV2Profile(assetHit.metadata?.content_profile)) {
+      const cachedProfile = assetHit.metadata.content_profile;
+      if (cachedProfile.minor_concern || cachedProfile.violence) {
+        return Response.json(
+          {
+            error: "content_refused",
+            refusal_reason: cachedProfile.minor_concern ? "minor_concern" : "violence",
+            profile: cachedProfile,
+            cache_key: cacheKey,
+            cached: true,
+          },
+          { status: 422 }
+        );
+      }
+      return Response.json({
+        ok: true,
+        cache_key: cacheKey,
+        content_profile: cachedProfile,
+        cached: true,
+      });
+    }
+
+    // ── Classify ────────────────────────────────────────────────────────────
     const visionRes = await fetch("https://api.x.ai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -2540,6 +2667,16 @@ async function handleAnalyzeImage(req: Request): Promise<Response> {
     const scene = String(parsed.scene_type || "").toLowerCase();
     const complexity = String(parsed.content_complexity || "").toLowerCase();
     const skinTone = String(parsed.skin_tone_dominant || "").toLowerCase();
+    const primarySubject = String(parsed.primary_subject || "").toLowerCase();
+
+    // Tags — array of 3-8 lowercase strings, defensive against scalars/objects.
+    let tags: string[] = [];
+    if (Array.isArray(parsed.tags)) {
+      tags = parsed.tags
+        .map((t: any) => String(t || "").trim().toLowerCase())
+        .filter((t: string) => t.length > 0 && t.length <= 64)
+        .slice(0, 8);
+    }
 
     const profile = {
       nudity_level: ANALYZE_NUDITY_VALUES.has(nudity) ? nudity : "none",
@@ -2553,7 +2690,36 @@ async function handleAnalyzeImage(req: Request): Promise<Response> {
         : "moderate",
       skin_tone_dominant: ANALYZE_SKIN_TONE_VALUES.has(skinTone) ? skinTone : "n/a",
       explicit_text: Boolean(parsed.explicit_text),
+      primary_subject: ANALYZE_PRIMARY_SUBJECT_VALUES.has(primarySubject)
+        ? primarySubject
+        : "other",
+      explicit_acts: Boolean(parsed.explicit_acts),
+      minor_concern: Boolean(parsed.minor_concern),
+      violence: Boolean(parsed.violence),
+      tags,
     };
+
+    // ── Write path: best-effort DB cache update ─────────────────────────────
+    // If an asset row exists for this source_url, persist the profile under
+    // metadata.content_profile so the next call hits the cache. We write
+    // BEFORE the refusal short-circuit so refused profiles also get cached
+    // (next call will short-circuit faster).
+    if (assetHit) {
+      await writeAssetContentProfile(assetHit.id, assetHit.metadata, profile);
+    }
+
+    // ── Hard-refusal short-circuit ──────────────────────────────────────────
+    if (profile.minor_concern || profile.violence) {
+      return Response.json(
+        {
+          error: "content_refused",
+          refusal_reason: profile.minor_concern ? "minor_concern" : "violence",
+          profile,
+          cache_key: cacheKey,
+        },
+        { status: 422 }
+      );
+    }
 
     return Response.json({
       ok: true,
