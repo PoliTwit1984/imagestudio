@@ -356,6 +356,36 @@
   .compat-caption .compat-good { color: #22c55e; font-style: normal; }
   .compat-caption .compat-bad  { color: #ef4444; font-style: normal; }
 
+  /* Watch-pick recommendation badge — applied to the engine-pill that the
+     client-side router would auto-select for the current image. Star badge
+     in the corner of the pill; only one pill carries it at a time. */
+  .engine-pill.engine-recommended {
+    position: relative;
+    outline: 1px solid #a78bfa;
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+  .engine-pill.engine-recommended::after {
+    content: '\2605';
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: #a78bfa;
+    color: #fff;
+    font-size: 10px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    line-height: 1;
+  }
+  /* For <option> elements (which can't host real DOM badges) we append
+     a " (Watch pick)" suffix to the option text in JS — no CSS needed. */
+
   /* Lightbox */
   .lightbox {
     display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -1594,12 +1624,98 @@ function renderEngineCompatDots() {
     const v = verdictFor(key);
     const cls = dotClassForVerdict(v);
     const verdictLabel = v ? v : 'loading';
-    return `<span class="engine-pill" title="${ENGINE_DISPLAY[key]}: ${verdictLabel}">`
+    return `<span class="engine-pill" data-engine-key="${key}" title="${ENGINE_DISPLAY[key]}: ${verdictLabel}">`
       + `<span class="engine-dot ${cls}"></span>${ENGINE_DISPLAY[key]}</span>`;
   });
   row.innerHTML = fragments.join('');
   decorateEngineOptions();
   updateCompatCaption();
+  updateRecommendedEngineBadge();
+}
+
+// Mirror of server-side pickWatchEngine logic from wave-21 backend. Picks
+// the engine the Watch (smart) router would auto-select given the current
+// content profile + user prompt + mask + ref-image state. Returns one of
+// {brush, strip, lens, eye, glance} or null if Watch would refuse.
+function pickWatchEngineClient(profile, userPrompt, hasMask, hasRefImage) {
+  if (!profile) return null;
+  if (profile.minor_concern || profile.violence) return null;
+  if (hasMask) return 'brush';
+  if (profile.explicit_acts || profile.nudity_level === 'explicit') return 'strip';
+  if (['topless', 'implied'].includes(profile.nudity_level) && hasRefImage) return 'lens';
+  if (['topless', 'implied'].includes(profile.nudity_level)) return 'lens';
+  if (profile.nudity_level === 'none' && /change|swap|replace|move|put|add|remove/i.test(userPrompt || '')) return 'eye';
+  if (profile.nudity_level === 'none' && /style|color|grade|look|tone|warm|cool|cinematic/i.test(userPrompt || '')) return 'lens';
+  return 'glance';
+}
+
+// Detect whether a mask has been painted in the foreground canvas. Cheap:
+// check the painter visibility plus a single getImageData scan would be
+// expensive, so just check painter visibility — that's the user-intent
+// signal, and the only window where Brush is the right answer.
+function hasPaintedMask() {
+  const painter = document.getElementById('mask-painter');
+  if (painter && painter.style.display && painter.style.display !== 'none') return true;
+  return false;
+}
+
+// Detect whether an external reference image is loaded for compositing.
+// Currently the closest signal is the garment-ref strip in the mask
+// painter or a non-empty mask-garment-url.
+function hasRefImageLoaded() {
+  const url = (document.getElementById('mask-garment-url') || {}).value || '';
+  if (url && url.trim()) return true;
+  const strip = document.getElementById('mask-garment-strip');
+  if (strip && strip.children && strip.children.length > 0) return true;
+  return false;
+}
+
+// Add the ★ "Watch pick" badge to whichever engine-pill (and option) the
+// client-side router currently recommends. Only one element carries the
+// badge at any time. Idempotent — safe to call from polls and event hooks.
+function updateRecommendedEngineBadge() {
+  const profile = window._currentImageProfile || currentContentProfile || null;
+  const userPrompt = (document.getElementById('edit-input') || {}).value || '';
+  const hasMask = hasPaintedMask();
+  const hasRef  = hasRefImageLoaded();
+  const recommended = pickWatchEngineClient(profile, userPrompt.trim(), hasMask, hasRef);
+
+  // Clear prior badges on pills.
+  document.querySelectorAll('.engine-pill.engine-recommended')
+    .forEach((el) => el.classList.remove('engine-recommended'));
+  // Clear prior " (Watch pick)" suffixes on options.
+  const sel = document.getElementById('edit-engine-select');
+  if (sel) {
+    for (const opt of sel.options) {
+      if (opt.dataset.recommendedSuffix === '1') {
+        // Decorated label may have a verdict glyph prefix; the base label
+        // is in opt.dataset.baseLabel (set by decorateEngineOptions).
+        const base = opt.dataset.baseLabel || opt.text.replace(/ \(Watch pick\)$/, '');
+        opt.text = base;
+        opt.dataset.recommendedSuffix = '0';
+      }
+    }
+  }
+
+  if (!recommended) return;
+
+  // Badge the matching pill in #compat-row.
+  const pill = document.querySelector(`.engine-pill[data-engine-key="${recommended}"]`);
+  if (pill) pill.classList.add('engine-recommended');
+
+  // Suffix the matching <option> so users see it inside the dropdown too.
+  if (sel) {
+    for (const opt of sel.options) {
+      if (opt.dataset.engineKey === recommended) {
+        const base = opt.dataset.baseLabel || opt.text;
+        if (!opt.dataset.baseLabel) opt.dataset.baseLabel = base;
+        // decorateEngineOptions also rewrites opt.text; the suffix has to
+        // sit AFTER any glyph it added. Re-read decorated text and append.
+        opt.text = opt.text + ' (Watch pick)';
+        opt.dataset.recommendedSuffix = '1';
+      }
+    }
+  }
 }
 
 function updateCompatCaption() {
@@ -1635,6 +1751,7 @@ async function analyzeCurrentImage(opts = {}) {
   const url = (opts.url || currentUrl || '').trim();
   if (!url) {
     currentContentProfile = null;
+    window._currentImageProfile = null;
     currentAnalysisCacheKey = null;
     renderEngineCompatDots();
     return null;
@@ -1646,6 +1763,7 @@ async function analyzeCurrentImage(opts = {}) {
     if (cached) {
       const profile = JSON.parse(cached);
       currentContentProfile = profile;
+      window._currentImageProfile = profile;
       currentAnalysisCacheKey = cacheKey;
       renderEngineCompatDots();
       return profile;
@@ -1657,6 +1775,7 @@ async function analyzeCurrentImage(opts = {}) {
   }
   // Show loading dots while we wait.
   currentContentProfile = null;
+  window._currentImageProfile = null;
   currentAnalysisCacheKey = null;
   renderEngineCompatDots();
   const promise = (async () => {
@@ -1674,6 +1793,7 @@ async function analyzeCurrentImage(opts = {}) {
       // Only commit if the URL hasn't changed underneath us.
       if (url === currentUrl) {
         currentContentProfile = profile;
+        window._currentImageProfile = profile;
         currentAnalysisCacheKey = cacheKey;
         renderEngineCompatDots();
       }
@@ -1682,6 +1802,7 @@ async function analyzeCurrentImage(opts = {}) {
       // Graceful degrade — leave content_profile null so dots fall to "may-refuse".
       if (url === currentUrl) {
         currentContentProfile = { nudity_level: 'none' /* fallback assume sfw */ };
+        window._currentImageProfile = currentContentProfile;
         renderEngineCompatDots();
       }
       return null;
@@ -1707,6 +1828,23 @@ setInterval(() => {
     onCurrentImageChanged();
   }
 }, 400);
+
+// Refresh the Watch-pick badge on prompt edits + as a background catch-all
+// for state we don't have a direct hook for (mask painter open/closed,
+// garment-ref strip changes). 1500ms is the budget the spec calls for —
+// fast enough that toggling a mask feels live, slow enough to stay quiet.
+setInterval(() => {
+  try { updateRecommendedEngineBadge(); } catch (_) { /* never throw */ }
+}, 1500);
+
+document.addEventListener('DOMContentLoaded', () => {
+  const editInput = document.getElementById('edit-input');
+  if (editInput) {
+    editInput.addEventListener('input', () => {
+      try { updateRecommendedEngineBadge(); } catch (_) { /* swallow */ }
+    });
+  }
+});
 // --- /Smart routing ---------------------------------------------------------
 // Darkroom Polish — engine-conditional realism stanza. Default ON; stored in
 // localStorage as '0' / '1'. Read via getPolish() and threaded into request
