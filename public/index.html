@@ -317,6 +317,64 @@
   .crop-btn.reset { background: #1a1a1a; border: 1px solid #333; color: #888; }
   .crop-hint { color: #555; font-size: 0.75rem; margin-top: 8px; }
 
+  /* Full-screen crop workspace (darkroom.crop.fullscreen-workspace) — separate
+     from the legacy .crop-overlay used by reverse-search "Crop & Analyze".
+     The workspace uses a canvas-rendered image plus a draggable DOM frame
+     overlay with handles, an aspect-ratio pill bar, and Cancel/Apply actions. */
+  .crop-workspace {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(10, 10, 10, 0.95);
+    z-index: 1000;
+    display: none; flex-direction: column;
+  }
+  .crop-workspace.active { display: flex !important; }
+  .crop-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; background: #0a0a0a; border-bottom: 1px solid #2a2a2a;
+  }
+  .crop-aspect-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+  .crop-aspect-pill {
+    background: #1a1a1a; color: #888; border: 1px solid #2a2a2a;
+    padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 11px;
+  }
+  .crop-aspect-pill.active { background: #a78bfa; color: #fff; border-color: #a78bfa; }
+  .crop-actions { display: flex; gap: 8px; }
+  .crop-cancel, .crop-apply {
+    background: #1a1a1a; color: #fff; border: none;
+    padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+  }
+  .crop-apply { background: #a78bfa; }
+  .crop-apply:disabled { opacity: 0.6; cursor: wait; }
+  .crop-stage {
+    flex: 1; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #crop-ws-canvas {
+    max-width: 100%; max-height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .crop-frame {
+    position: absolute;
+    border: 2px solid #a78bfa;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+    cursor: move;
+    box-sizing: border-box;
+  }
+  .crop-handle {
+    position: absolute;
+    width: 16px; height: 16px;
+    background: #a78bfa;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    box-sizing: border-box;
+  }
+  .crop-handle-tl { top: -8px; left: -8px; cursor: nwse-resize; }
+  .crop-handle-tr { top: -8px; right: -8px; cursor: nesw-resize; }
+  .crop-handle-bl { bottom: -8px; left: -8px; cursor: nesw-resize; }
+  .crop-handle-br { bottom: -8px; right: -8px; cursor: nwse-resize; }
+
   /* Pinterest */
   #pinterest-results img {
     width: 100%; border-radius: 6px; cursor: pointer; border: 2px solid transparent;
@@ -1379,6 +1437,7 @@
         <button class="action-btn" data-mode="all" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
         <button class="action-btn" data-mode="all" onclick="downloadImg()" title="Download the image to your device">Download</button>
         <button class="action-btn" data-mode="all" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
+        <button class="action-btn" id="btn-crop-workspace" data-mode="all" onclick="openCropWorkspace(currentUrl)" style="border-color:#a78bfa;color:#a78bfa;" title="Open the full-screen crop workspace — pick an aspect ratio, drag to position, Apply to commit a new version.">✂ Crop</button>
         <button class="action-btn" id="btn-extract-lut" data-mode="develop" onclick="showLutExtractModal()" style="border-color:#c9842b;color:#c9842b;" title="Extract a 3D LUT cube from a before/after pair in the version stack. Useful for capturing a color grade you can reuse.">Extract LUT</button>
         <input type="file" id="upload-input" accept="image/*" style="display:none;" onchange="handleUpload(this)">
       </div>
@@ -1857,6 +1916,37 @@
     <button class="action-btn" onclick="event.stopPropagation(); lbEdit()">Edit This</button>
     <button class="action-btn" onclick="event.stopPropagation(); lbCopy()">Copy URL</button>
     <button class="action-btn" onclick="event.stopPropagation(); lbDownload()">Download</button>
+  </div>
+</div>
+
+<!-- Full-screen crop workspace — task darkroom.crop.fullscreen-workspace.
+     Triggered by the ✂ Crop button on the result image. Loads the current
+     result into a canvas, lets the user pick an aspect-ratio preset (or
+     free), drag the violet frame to position, and Apply to commit the
+     cropped pixel region back as a new version via /api/uploads. Distinct
+     from the legacy .crop-overlay used by reverse-search "Crop & Analyze". -->
+<div id="crop-workspace" class="crop-workspace" style="display:none;" aria-hidden="true">
+  <div class="crop-header">
+    <div class="crop-aspect-pills" role="toolbar" aria-label="Crop aspect ratio">
+      <button type="button" class="crop-aspect-pill active" data-ratio="free">Free</button>
+      <button type="button" class="crop-aspect-pill" data-ratio="1:1">1:1</button>
+      <button type="button" class="crop-aspect-pill" data-ratio="4:5">4:5</button>
+      <button type="button" class="crop-aspect-pill" data-ratio="9:16">9:16</button>
+      <button type="button" class="crop-aspect-pill" data-ratio="16:9">16:9</button>
+    </div>
+    <div class="crop-actions">
+      <button type="button" class="crop-cancel">Cancel</button>
+      <button type="button" class="crop-apply primary-action">Apply</button>
+    </div>
+  </div>
+  <div class="crop-stage">
+    <canvas id="crop-ws-canvas"></canvas>
+    <div id="crop-frame" class="crop-frame" style="display:none;">
+      <div class="crop-handle crop-handle-tl" data-handle="tl"></div>
+      <div class="crop-handle crop-handle-tr" data-handle="tr"></div>
+      <div class="crop-handle crop-handle-bl" data-handle="bl"></div>
+      <div class="crop-handle crop-handle-br" data-handle="br"></div>
+    </div>
   </div>
 </div>
 
@@ -7000,6 +7090,328 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+// --- Full-screen Crop Workspace (darkroom.crop.fullscreen-workspace) ---
+// Distinct from the legacy openCropTool() flow below (reverse-search crop &
+// analyze). The workspace renders the current result into a canvas, then
+// overlays a draggable violet DOM frame with corner handles. Aspect-ratio
+// pills snap the frame; Apply extracts the crop region and uploads it via
+// /api/uploads so the existing save flow registers the new asset row and
+// pushVersion() can swap currentUrl to the cropped result.
+//
+// Resize handles are wired up (top-left, top-right, bottom-left,
+// bottom-right). Aspect lock is honored when not 'free'.
+let _cropImage = null;
+let _cropFrame = { x: 0, y: 0, w: 0, h: 0 };  // image-pixel space
+let _cropAspect = null;  // null = free; else width/height ratio
+let _cropDrag = null;    // active mouse interaction state
+let _cropResizeObs = null;
+
+async function openCropWorkspace(imageUrl) {
+  const ws = document.getElementById('crop-workspace');
+  if (!ws) return;
+  if (!imageUrl) {
+    if (typeof toast === 'function') toast('No image to crop');
+    return;
+  }
+  // Default the aspect pill to "free" each open.
+  document.querySelectorAll('#crop-workspace .crop-aspect-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.ratio === 'free');
+  });
+  _cropAspect = null;
+
+  ws.classList.add('active');
+  ws.style.display = 'flex';
+  ws.setAttribute('aria-hidden', 'false');
+
+  let img;
+  try {
+    img = await loadImageNoTaint(imageUrl);
+  } catch (e) {
+    if (typeof toast === 'function') toast('Crop failed to load image: ' + (e?.message || e));
+    closeCropWorkspace();
+    return;
+  }
+  _cropImage = img;
+
+  const canvas = document.getElementById('crop-ws-canvas');
+  if (!canvas) return;
+  // Render image at native res into a hidden-drawn canvas; the CSS layer
+  // resizes it to fit the stage. getImageData / sharp work on native pixels.
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+
+  // Initial frame: 80% center of the source image.
+  const initW = canvas.width * 0.8;
+  const initH = canvas.height * 0.8;
+  _cropFrame = {
+    x: (canvas.width - initW) / 2,
+    y: (canvas.height - initH) / 2,
+    w: initW,
+    h: initH,
+  };
+
+  const frame = document.getElementById('crop-frame');
+  if (frame) frame.style.display = 'block';
+  // Defer one frame so the canvas has its final layout dimensions before
+  // we project the crop frame on top.
+  requestAnimationFrame(() => updateCropFrameDom());
+
+  // Reflow on window resize so the DOM frame stays aligned with the canvas.
+  if (!_cropResizeObs) {
+    _cropResizeObs = () => updateCropFrameDom();
+    window.addEventListener('resize', _cropResizeObs);
+  }
+}
+
+function updateCropFrameDom() {
+  const frame = document.getElementById('crop-frame');
+  if (!frame || !_cropImage) return;
+  const canvas = document.getElementById('crop-ws-canvas');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const sx = rect.width / canvas.width;
+  const sy = rect.height / canvas.height;
+  frame.style.left = (rect.left + _cropFrame.x * sx) + 'px';
+  frame.style.top = (rect.top + _cropFrame.y * sy) + 'px';
+  frame.style.width = Math.max(1, _cropFrame.w * sx) + 'px';
+  frame.style.height = Math.max(1, _cropFrame.h * sy) + 'px';
+}
+
+function setCropAspect(ratio) {
+  document.querySelectorAll('#crop-workspace .crop-aspect-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.ratio === ratio);
+  });
+  if (!_cropImage) return;
+  if (ratio === 'free') {
+    _cropAspect = null;
+    return;
+  }
+  const [a, b] = String(ratio).split(':').map(Number);
+  if (!a || !b) { _cropAspect = null; return; }
+  _cropAspect = a / b;
+  // Snap current frame to the new aspect, anchored at its current center.
+  const cx = _cropFrame.x + _cropFrame.w / 2;
+  const cy = _cropFrame.y + _cropFrame.h / 2;
+  // Pick the largest fitting rectangle of the new aspect that fits inside
+  // the image bounds AND the current frame area.
+  const maxByH = _cropFrame.h * _cropAspect;
+  const maxByW = _cropFrame.w;
+  let newW, newH;
+  if (maxByH <= maxByW) {
+    newW = maxByH;
+    newH = _cropFrame.h;
+  } else {
+    newW = maxByW;
+    newH = newW / _cropAspect;
+  }
+  // Constrain to image bounds.
+  newW = Math.min(newW, _cropImage.naturalWidth || _cropImage.width);
+  newH = Math.min(newH, _cropImage.naturalHeight || _cropImage.height);
+  if (newW / newH > _cropAspect) newW = newH * _cropAspect;
+  else newH = newW / _cropAspect;
+  _cropFrame.w = newW;
+  _cropFrame.h = newH;
+  _cropFrame.x = Math.max(0, Math.min((_cropImage.naturalWidth || _cropImage.width) - newW, cx - newW / 2));
+  _cropFrame.y = Math.max(0, Math.min((_cropImage.naturalHeight || _cropImage.height) - newH, cy - newH / 2));
+  updateCropFrameDom();
+}
+
+function _cropImagePxFromMouse(e) {
+  // Convert clientX/clientY → image-pixel delta scale. Returns (sx, sy)
+  // multipliers — multiply (delta_client_px) by these to get image px.
+  const canvas = document.getElementById('crop-ws-canvas');
+  if (!canvas || !_cropImage) return { sx: 1, sy: 1 };
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / Math.max(1, rect.width);
+  const sy = canvas.height / Math.max(1, rect.height);
+  return { sx, sy };
+}
+
+function _cropClampFrame() {
+  if (!_cropImage) return;
+  const W = _cropImage.naturalWidth || _cropImage.width;
+  const H = _cropImage.naturalHeight || _cropImage.height;
+  if (_cropFrame.w < 8) _cropFrame.w = 8;
+  if (_cropFrame.h < 8) _cropFrame.h = 8;
+  if (_cropFrame.w > W) _cropFrame.w = W;
+  if (_cropFrame.h > H) _cropFrame.h = H;
+  if (_cropFrame.x < 0) _cropFrame.x = 0;
+  if (_cropFrame.y < 0) _cropFrame.y = 0;
+  if (_cropFrame.x + _cropFrame.w > W) _cropFrame.x = W - _cropFrame.w;
+  if (_cropFrame.y + _cropFrame.h > H) _cropFrame.y = H - _cropFrame.h;
+}
+
+// Wire pill clicks once on script load.
+document.querySelectorAll('#crop-workspace .crop-aspect-pill').forEach((p) => {
+  p.addEventListener('click', () => setCropAspect(p.dataset.ratio));
+});
+
+// --- Drag interactions: move the frame body, or resize via a corner handle.
+(function wireCropDragInteractions() {
+  const frameEl = document.getElementById('crop-frame');
+  if (!frameEl) return;
+
+  frameEl.addEventListener('mousedown', (e) => {
+    if (!_cropImage) return;
+    const handle = e.target && e.target.classList && e.target.classList.contains('crop-handle')
+      ? e.target.dataset.handle
+      : null;
+    _cropDrag = handle
+      ? {
+          mode: 'resize',
+          handle,
+          x0: e.clientX, y0: e.clientY,
+          fx: _cropFrame.x, fy: _cropFrame.y,
+          fw: _cropFrame.w, fh: _cropFrame.h,
+        }
+      : {
+          mode: 'move',
+          x0: e.clientX, y0: e.clientY,
+          fx: _cropFrame.x, fy: _cropFrame.y,
+        };
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!_cropDrag || !_cropImage) return;
+    const { sx, sy } = _cropImagePxFromMouse(e);
+    const dx = (e.clientX - _cropDrag.x0) * sx;
+    const dy = (e.clientY - _cropDrag.y0) * sy;
+    if (_cropDrag.mode === 'move') {
+      _cropFrame.x = _cropDrag.fx + dx;
+      _cropFrame.y = _cropDrag.fy + dy;
+      _cropClampFrame();
+    } else if (_cropDrag.mode === 'resize') {
+      const W = _cropImage.naturalWidth || _cropImage.width;
+      const H = _cropImage.naturalHeight || _cropImage.height;
+      let nx = _cropDrag.fx, ny = _cropDrag.fy, nw = _cropDrag.fw, nh = _cropDrag.fh;
+      // Each corner anchors the opposite corner.
+      switch (_cropDrag.handle) {
+        case 'tl':
+          nx = _cropDrag.fx + dx; ny = _cropDrag.fy + dy;
+          nw = _cropDrag.fw - dx; nh = _cropDrag.fh - dy;
+          break;
+        case 'tr':
+          ny = _cropDrag.fy + dy;
+          nw = _cropDrag.fw + dx; nh = _cropDrag.fh - dy;
+          break;
+        case 'bl':
+          nx = _cropDrag.fx + dx;
+          nw = _cropDrag.fw - dx; nh = _cropDrag.fh + dy;
+          break;
+        case 'br':
+          nw = _cropDrag.fw + dx; nh = _cropDrag.fh + dy;
+          break;
+      }
+      // Aspect lock: re-derive height from width (or vice versa) and
+      // re-anchor to keep the opposite corner pinned.
+      if (_cropAspect) {
+        const right = _cropDrag.fx + _cropDrag.fw;
+        const bottom = _cropDrag.fy + _cropDrag.fh;
+        if (_cropDrag.handle === 'br' || _cropDrag.handle === 'tr') {
+          // width is authoritative
+          nh = nw / _cropAspect;
+          if (_cropDrag.handle === 'tr') ny = bottom - nh;
+        } else {
+          // width still authoritative for tl/bl, but anchor changes
+          nh = nw / _cropAspect;
+          if (_cropDrag.handle === 'tl') ny = bottom - nh;
+          if (_cropDrag.handle === 'bl' || _cropDrag.handle === 'tl') nx = right - nw;
+        }
+      }
+      // Floor / clamp so the frame stays inside the image and >= 8px.
+      if (nw < 8) { nw = 8; if (_cropDrag.handle === 'tl' || _cropDrag.handle === 'bl') nx = (_cropDrag.fx + _cropDrag.fw) - 8; }
+      if (nh < 8) { nh = 8; if (_cropDrag.handle === 'tl' || _cropDrag.handle === 'tr') ny = (_cropDrag.fy + _cropDrag.fh) - 8; }
+      if (nx < 0) { nw += nx; nx = 0; }
+      if (ny < 0) { nh += ny; ny = 0; }
+      if (nx + nw > W) nw = W - nx;
+      if (ny + nh > H) nh = H - ny;
+      _cropFrame = { x: nx, y: ny, w: nw, h: nh };
+      _cropClampFrame();
+    }
+    updateCropFrameDom();
+  });
+
+  window.addEventListener('mouseup', () => { _cropDrag = null; });
+  window.addEventListener('mouseleave', () => { _cropDrag = null; });
+})();
+
+async function applyCrop() {
+  if (!_cropImage) return;
+  const applyBtn = document.querySelector('#crop-workspace .crop-apply');
+  if (applyBtn) applyBtn.disabled = true;
+  try {
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(_cropFrame.w));
+    out.height = Math.max(1, Math.round(_cropFrame.h));
+    const octx = out.getContext('2d');
+    octx.drawImage(
+      _cropImage,
+      Math.round(_cropFrame.x), Math.round(_cropFrame.y),
+      Math.round(_cropFrame.w), Math.round(_cropFrame.h),
+      0, 0, out.width, out.height
+    );
+    const blob = await new Promise((resolve) => out.toBlob(resolve, 'image/png'));
+    if (!blob) {
+      if (typeof toast === 'function') toast('Crop failed: empty blob');
+      return;
+    }
+    const form = new FormData();
+    form.append('file', new File([blob], `crop-${Date.now()}.png`, { type: 'image/png' }));
+    form.append('folder', 'uploads');
+    const upResp = await fetch('/api/uploads', {
+      method: 'POST',
+      headers: typeof headers === 'function' ? { Authorization: headers().Authorization } : {},
+      body: form,
+    });
+    let upData = {};
+    try { upData = await upResp.json(); } catch {}
+    if (!upResp.ok || !upData.url) {
+      if (typeof toast === 'function') toast('Crop upload failed: ' + (upData.error || upResp.statusText || 'unknown'));
+      return;
+    }
+    closeCropWorkspace();
+    if (typeof pushVersion === 'function') {
+      pushVersion(upData.url, 'crop');
+    } else if (typeof setCurrentUrl === 'function') {
+      setCurrentUrl(upData.url);
+    } else {
+      try { currentUrl = upData.url; } catch {}
+      const rimg = document.getElementById('result-img');
+      if (rimg) rimg.src = upData.url;
+    }
+    if (typeof toast === 'function') toast('Crop applied');
+  } catch (err) {
+    console.error('applyCrop error', err);
+    if (typeof toast === 'function') toast('Crop error: ' + (err?.message || err));
+  } finally {
+    if (applyBtn) applyBtn.disabled = false;
+  }
+}
+
+function closeCropWorkspace() {
+  const ws = document.getElementById('crop-workspace');
+  if (ws) {
+    ws.classList.remove('active');
+    ws.style.display = 'none';
+    ws.setAttribute('aria-hidden', 'true');
+  }
+  const frame = document.getElementById('crop-frame');
+  if (frame) frame.style.display = 'none';
+  _cropImage = null;
+  _cropDrag = null;
+}
+
+document.querySelector('#crop-workspace .crop-cancel')?.addEventListener('click', closeCropWorkspace);
+document.querySelector('#crop-workspace .crop-apply')?.addEventListener('click', applyCrop);
+window.openCropWorkspace = openCropWorkspace;
+window.closeCropWorkspace = closeCropWorkspace;
 
 // --- Crop Tool ---
 let cropImage = null;
