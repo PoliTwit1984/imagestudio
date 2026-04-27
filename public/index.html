@@ -236,6 +236,32 @@
     cursor: pointer; font-weight: 600; color: #f472b6; font-size: 0.85rem;
     padding: 6px 0; user-select: none;
   }
+  /* Style preset pills — quick saved category+tag filters above the grid. */
+  .wardrobe-style-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 8px 0;
+  }
+  .wardrobe-style-preset {
+    background: #1a1a1a;
+    color: #888;
+    border: 1px solid #2a2a2a;
+    padding: 4px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 11px;
+    transition: all 0.15s;
+  }
+  .wardrobe-style-preset:hover {
+    border-color: #a78bfa55;
+  }
+  .wardrobe-style-preset.active {
+    background: #a78bfa;
+    color: #fff;
+    border-color: #a78bfa;
+  }
+  .wardrobe-quick-filter { /* alias for accessibility-focused selectors */ }
   .wardrobe-filters {
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
     margin: 8px 0; font-size: 0.82rem; color: #aaa;
@@ -889,6 +915,15 @@
            that garment URL — feeds the existing setGarmentUrl flow. -->
       <details class="wardrobe-panel" id="wardrobe-tab">
         <summary>Wardrobe <span style="font-weight:400;color:#888;font-size:0.78rem;">— curated garments for Brush refs</span></summary>
+        <!-- Style preset quick-filter pills — saved category+tag combos. Click to filter the grid below. -->
+        <div class="wardrobe-style-presets wardrobe-quick-filter" id="wardrobe-style-presets" role="toolbar" aria-label="Wardrobe style presets">
+          <button type="button" class="wardrobe-style-preset active" data-preset="all">All</button>
+          <button type="button" class="wardrobe-style-preset" data-preset="casual">Casual</button>
+          <button type="button" class="wardrobe-style-preset" data-preset="lingerie">Lingerie</button>
+          <button type="button" class="wardrobe-style-preset" data-preset="going-out">Going Out</button>
+          <button type="button" class="wardrobe-style-preset" data-preset="athletic">Athletic</button>
+          <button type="button" class="wardrobe-style-preset" data-preset="loungewear">Loungewear</button>
+        </div>
         <div class="wardrobe-filters">
           <select id="wardrobe-category-filter" title="Filter by category">
             <option value="">All categories</option>
@@ -4115,9 +4150,12 @@ async function loadWardrobeGrid({ force } = {}) {
     // Wire HTML5 drag for each card so users can drop them onto the result
     // image / mask painter canvas as a faster alternative to clicking.
     wireWardrobeDrag();
-    // Re-apply any active search filter after the grid has been re-rendered
-    // so the user's typed query keeps filtering the new card set.
-    if (typeof applyWardrobeSearch === 'function') applyWardrobeSearch();
+    // Re-apply active style preset + search filter after the grid has been
+    // re-rendered so the user's pill choice + typed query keep filtering the
+    // new card set. Falls back to legacy applyWardrobeSearch if the unified
+    // filter ever gets removed.
+    if (typeof applyWardrobeFilters === 'function') applyWardrobeFilters();
+    else if (typeof applyWardrobeSearch === 'function') applyWardrobeSearch();
     _wardrobeLoaded = true;
   } catch (e) {
     grid.innerHTML = `<div class="wardrobe-empty" style="color:#ef4444;">Failed to load wardrobe: ${escapeWardrobeHtml(e?.message || String(e))}</div>`;
@@ -4253,6 +4291,83 @@ function applyWardrobeSearch() {
   }
 }
 
+// --- Wardrobe style presets (v1) ---
+// Hardcoded category+tag combos surfaced as pills above the grid.
+// Compose AND-style with search/category filters via applyWardrobeFilters().
+// Users will be able to define their own later; this is the seed set.
+const WARDROBE_STYLE_PRESETS = {
+  all:         { categories: [],                              tags: [] },
+  casual:      { categories: ['top', 'bottom'],               tags: ['casual', 't-shirt', 'jeans', 'denim'] },
+  lingerie:    { categories: ['lingerie'],                    tags: ['lace', 'silk', 'satin'] },
+  'going-out': { categories: ['top', 'dress', 'outerwear'],   tags: ['silk', 'leather', 'sheer', 'metallic', 'sequin'] },
+  athletic:    { categories: ['top', 'bottom'],               tags: ['athletic', 'sport', 'lycra', 'spandex', 'gym'] },
+  loungewear:  { categories: ['top', 'bottom', 'dress'],      tags: ['cotton', 'sweatshirt', 'pajama', 'lounge', 'cozy'] },
+};
+
+let _activeStylePreset = 'all';
+
+// Apply a named preset: highlights the matching pill, then re-runs the
+// unified filter. Falls through to 'all' if the key is unknown.
+function applyStylePreset(presetKey) {
+  if (!WARDROBE_STYLE_PRESETS[presetKey]) presetKey = 'all';
+  _activeStylePreset = presetKey;
+  document.querySelectorAll('.wardrobe-style-preset').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.preset === presetKey);
+  });
+  applyWardrobeFilters();
+}
+
+// Unified DOM-side filter: style preset + search input. Category select +
+// featured-only still drive the API fetch (loadWardrobeGrid), so server-side
+// filtering composes with the client-side preset/search gate. AND logic — every
+// active filter must match for a card to remain visible.
+function applyWardrobeFilters() {
+  const presetDef = WARDROBE_STYLE_PRESETS[_activeStylePreset] || WARDROBE_STYLE_PRESETS.all;
+  const presetCategories = presetDef.categories || [];
+  const presetTags = (presetDef.tags || []).map(t => String(t).toLowerCase());
+
+  const searchQ = (document.getElementById('wardrobe-search-input')?.value || '').toLowerCase().trim();
+
+  document.querySelectorAll('.wardrobe-card').forEach(card => {
+    const cat = (card.dataset.cat || '').toLowerCase();
+    const name = (card.dataset.name || '').toLowerCase();
+    const tags = (card.dataset.tags || '').toLowerCase();
+
+    // Style preset gate — empty categories means no preset filter at all.
+    let stylePass = true;
+    if (presetCategories.length > 0) {
+      stylePass = presetCategories.includes(cat);
+      if (stylePass && presetTags.length > 0) {
+        // Within matching category, require at least one preset tag in card tags.
+        stylePass = presetTags.some(t => tags.includes(t));
+      }
+    }
+
+    const searchPass = !searchQ || name.includes(searchQ) || cat.includes(searchQ) || tags.includes(searchQ);
+    card.style.display = (stylePass && searchPass) ? '' : 'none';
+  });
+
+  // Empty-state message reuse — same element id as the search-only path.
+  const visibleCount = Array.from(document.querySelectorAll('.wardrobe-card'))
+    .filter(c => c.style.display !== 'none').length;
+  let emptyMsg = document.getElementById('wardrobe-search-empty');
+  const filtersActive = !!searchQ || _activeStylePreset !== 'all';
+  if (filtersActive && visibleCount === 0) {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('div');
+      emptyMsg.id = 'wardrobe-search-empty';
+      emptyMsg.style.cssText = 'color:#888;padding:12px;font-style:italic;';
+      document.getElementById('wardrobe-grid')?.appendChild(emptyMsg);
+    }
+    emptyMsg.textContent = searchQ
+      ? 'No wardrobe items match search.'
+      : 'No wardrobe items match this style preset.';
+    emptyMsg.style.display = '';
+  } else if (emptyMsg) {
+    emptyMsg.style.display = 'none';
+  }
+}
+
 function initWardrobeTab() {
   const panel = document.getElementById('wardrobe-tab');
   if (!panel) return;
@@ -4264,7 +4379,11 @@ function initWardrobeTab() {
   document.getElementById('wardrobe-featured-only')?.addEventListener('change', () => loadWardrobeGrid({ force: true }));
   document.getElementById('wardrobe-refresh-btn')?.addEventListener('click', () => loadWardrobeGrid({ force: true }));
   // Client-side search — instant filter, no API roundtrip.
-  document.getElementById('wardrobe-search-input')?.addEventListener('input', applyWardrobeSearch);
+  document.getElementById('wardrobe-search-input')?.addEventListener('input', applyWardrobeFilters);
+  // Style preset pills — wire each to applyStylePreset(<key>).
+  document.querySelectorAll('.wardrobe-style-preset').forEach(btn => {
+    btn.addEventListener('click', () => applyStylePreset(btn.dataset.preset || 'all'));
+  });
   // Forge button — opens the modal that drives /api/wardrobe/forge.
   document.getElementById('wardrobe-forge-btn')?.addEventListener('click', openForgeModal);
   initForgeModal();
