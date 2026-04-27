@@ -120,6 +120,11 @@ export async function handleSafeEditRoutes(
     return handleStampAsset(req, deps);
   }
 
+  if (url.pathname === "/api/optimize-pedit-prompt" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleOptimizePEditPrompt(req);
+  }
+
   if (url.pathname === "/api/detail-brushes" && req.method === "GET") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     // Public-facing catalog: only id, name, category, description, brush_size_px,
@@ -679,6 +684,149 @@ const DARKROOM_SKIN_PROMPT_V1 = [
   "Preserve identical face geometry, identical pose, identical clothing, identical background, identical lighting, identical color grade.",
   "Only the skin changes.",
 ].join(" ");
+
+// =============================================================================
+// P-Edit Prompt Optimizer
+// Takes a user's raw P-Edit prompt and rewrites it to follow Pruna's
+// documented prompt formula: ACTION_VERB + TARGET + PRESERVATION CLAUSE.
+// Uses the prompting guide as system prompt; calls Grok (cheap, fast).
+// =============================================================================
+
+const PEDIT_GUIDE_SYSTEM = `You are a prompt optimizer for prunaai/p-image-edit (also called "P-Edit"), a sub-1-second image editing model on Replicate. Your job is to take a user's raw prompt and rewrite it to follow Pruna's documented best practices so P-Edit produces the best possible result.
+
+# Pruna's documented prompt formula
+ACTION_VERB + TARGET + PRESERVATION_CLAUSE
+
+# The four trained verbs (use these explicitly)
+- add
+- remove
+- modify
+- transform
+
+# Single-line template
+{ACTION_VERB} {TARGET, with concrete attributes} {WHERE / spatial relation},
+matching {style/lighting/perspective/material} of the original,
+while keeping {explicit list of things that must not change} unchanged.
+
+# Hard rules
+1. Start with one of the four trained verbs (add / remove / modify / transform).
+2. Include a "while keeping ... unchanged" clause at the end. This is the workhorse — without it the model "improves" things you didn't want touched.
+3. Be specific about color, material, texture — not just object names.
+4. Reference spatial relationships ("on the left", "behind the second figure").
+5. Match style/lighting/perspective explicitly when adding new elements.
+6. For multi-image input: refer to images as "image 1" and "image 2" exactly. Image 1 is the canvas; image 2+ are references.
+7. For person edits, include "while keeping their facial features and identity" to preserve identity.
+8. For object swaps, use a two-clause structure: "Replace X with Y in the same position, matching the original's lighting, perspective, and scale, while keeping the rest unchanged."
+9. Use quotation marks around any literal text that should appear in the image.
+10. NO vague verbs ("make it better", "fix this"). NO pronouns without referents ("change it to red").
+
+# Pattern library
+
+## Pattern: Add an object
+Add {object, with attributes} {spatial location}, matching the {lighting | perspective | style | material} of the scene, while keeping all other elements unchanged.
+
+## Pattern: Remove an object
+Remove the {object} {spatial location}, preserving the {background texture | wall pattern | floor | scenery} where it used to be, while keeping the rest of the image unchanged.
+
+## Pattern: Swap objects
+Replace the {old object} with {new object, with attributes} in the same position, matching the original's lighting, perspective, and scale, while keeping the rest of the image unchanged.
+
+## Pattern: Add a person
+Add a {age + gender + build + clothing + posture} person {spatial relation to existing subjects}, matching the lighting, color grade, and depth-of-field of the scene, while keeping the existing subjects, background, and composition unchanged.
+
+## Pattern: Remove a person
+Remove the {description of person — "person in the red jacket on the left"} from the image, reconstructing the {background — "brick wall and sidewalk"} behind them naturally, while keeping all other subjects, the lighting, and the composition unchanged.
+
+## Pattern: Person attribute change (single image)
+Change the person's {hairstyle | outfit | expression} from {current state} to {desired state}, while keeping their facial features, body pose, position in frame, and the surrounding environment identical.
+
+## Pattern: Person identity replace (two images)
+Replace the person currently in image 1 with the person from image 2, keeping their facial features and identity from image 2, adopting the pose, body orientation, lighting, and outfit from image 1, matching the color grade and depth-of-field of image 1.
+
+# Common failure modes to avoid
+- Added object floats / wrong scale → add "in the same position as X, at a similar scale to Y"
+- Removed object leaves a smudge → add "reconstructing the {wall / floor / sky} behind it naturally"
+- Style of new element clashes → add "matching the {illustration style / photographic look / color palette} of the original"
+- Identity drift after person edit → reframe as "modify" and explicitly preserve "facial features"
+
+# CRITICAL — DO NOT INVENT MISSING DETAILS
+If the user's prompt is missing required information (color, material, size, spatial relationship, preservation list, garment style, etc.), DO NOT invent it. Instead, insert an angle-bracket placeholder of the form <description of what's needed here> in the optimized prompt. The user will fill it in.
+
+Examples of correct placeholder usage:
+- User: "remove the chair" → Optimized: "Remove the chair <describe which chair: position, color, type>, reconstructing the <floor/wall/background behind it> naturally, while keeping all other elements unchanged."
+- User: "add a hat" → Optimized: "Add a <hat type, color, material, e.g., 'wide-brim straw sun hat'> to the woman's head, matching the <lighting/color grade/perspective> of the scene, while keeping her facial features, body pose, position in frame, and the entire background unchanged."
+- User: "change her dress to red" → Optimized: "Modify the woman's dress: change the color from <current dress color, e.g., 'blue cotton'> to red <specify shade and fabric, e.g., 'crimson satin'>, while keeping her facial features, body pose, position in frame, and the entire background unchanged."
+
+You may include the small things you can reasonably infer (e.g., "the woman" if there's clearly a woman, "while keeping ... unchanged" preservation clauses based on subject type). But do NOT invent specifics like colors, brand names, materials, or spatial positions that the user didn't supply.
+
+# Your output
+Return ONLY a JSON object with this exact shape:
+{
+  "optimized_prompt": "<the rewritten prompt, ready to send to P-Edit, with <angle-bracket placeholders> for missing user-supplied details>",
+  "verb": "add" | "remove" | "modify" | "transform",
+  "changes": ["<short bullet describing each major change you made>", ...],
+  "missing": ["<the angle-bracket text from each placeholder you inserted, in order>", ...],
+  "warnings": ["<any concerns about the original prompt that you couldn't fix>", ...]
+}
+
+No prose, no markdown fences, just the JSON object.`;
+
+async function handleOptimizePEditPrompt(req: Request): Promise<Response> {
+  try {
+    const body = await req.json();
+    const rawPrompt = String(body.prompt || "").trim();
+    const numImages = Number(body.num_images || 1);
+    if (!rawPrompt) return Response.json({ error: "prompt required" }, { status: 400 });
+
+    const userMessage = `User's raw prompt: "${rawPrompt}"
+Number of input images for P-Edit: ${numImages}
+${numImages > 1 ? "Multi-image — use 'image 1' / 'image 2' anchoring." : "Single image — use single-image patterns."}
+
+Rewrite to optimal P-Edit form. Return JSON only.`;
+
+    const grokRes = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env("XAI_API_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "grok-4-1-fast-non-reasoning",
+        messages: [
+          { role: "system", content: PEDIT_GUIDE_SYSTEM },
+          { role: "user", content: userMessage },
+        ],
+        temperature: 0.2,
+      }),
+    });
+
+    if (!grokRes.ok) {
+      throw new Error(`Optimizer ${grokRes.status}: ${(await grokRes.text()).slice(0, 200)}`);
+    }
+    const data = await grokRes.json();
+    const content = String(data.choices?.[0]?.message?.content || "{}").trim();
+    const cleaned = content.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Fallback: if the model didn't return JSON, treat the response as the optimized prompt
+      parsed = { optimized_prompt: cleaned, verb: "modify", changes: ["raw response, JSON parse failed"], warnings: [] };
+    }
+
+    return Response.json({
+      ok: true,
+      optimized_prompt: String(parsed.optimized_prompt || rawPrompt),
+      verb: parsed.verb || null,
+      changes: Array.isArray(parsed.changes) ? parsed.changes : [],
+      missing: Array.isArray(parsed.missing) ? parsed.missing : [],
+      warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+    });
+  } catch (err: any) {
+    return Response.json({ error: err.message }, { status: 500 });
+  }
+}
 
 // /api/stamp-asset — composite a transparent-PNG asset onto the source image
 // at given pixel position/size with selectable blend mode. No AI call.

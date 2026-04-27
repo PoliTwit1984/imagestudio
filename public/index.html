@@ -973,6 +973,7 @@
             <button class="action-btn" onclick="clearMask()" style="border-color:#ef4444;color:#ef4444;">Clear</button>
             <input type="text" id="mask-prompt" class="edit-input" placeholder="What to paint inside the mask (e.g., 'a brass victorian lamp' OR 'wearing this black lace lingerie')" style="flex:1;min-width:300px;">
             <button class="action-btn" id="mask-describe-btn" onclick="autoDescribeGarment()" style="border-color:#22d3ee;color:#22d3ee;" title="Grok Vision writes a one-line prompt from the garment image. Auto-runs on Inpaint if prompt is empty.">Auto-describe</button>
+            <button class="action-btn" id="mask-pedit-optimize-btn" onclick="optimizePEditPromptInPainter()" style="border-color:#10b981;color:#10b981;" title="Rewrite the prompt to match P-Edit's documented best practices (action verb + target + preservation clause). Use this when running Wear via P-Edit.">P-Edit Optimize</button>
             <select class="edit-engine-select" id="mask-upscaler">
               <option value="none">No upscale</option>
               <option value="topaz">+Topaz</option>
@@ -1062,6 +1063,7 @@
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
           <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="Grok 4.20 rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
+          <button class="enhance-btn" id="edit-pedit-optimize-btn" onclick="optimizePEditPromptForEdit()" style="font-size:0.78rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669);" title="Rewrite your prompt to match P-Edit's documented best practices: action verb + target + preservation clause. Recommended when P-Edit is the selected engine.">P-Edit</button>
           <select class="edit-engine-select" id="edit-engine-select" title="Grok: img2img re-gen | Bria: NL edit | P-Edit: prunaai (safety off) | Nano Banana: Gemini 2.5 Flash | GPT-Image-2: OpenAI | Flux Fill: auto-mask via Grok Vision then Flux Fill Pro inpaints (NSFW-permissive, surgical)">
             <option value="grok">Grok</option>
             <option value="fal">Bria Edit</option>
@@ -1638,7 +1640,18 @@ async function enhancePrompt() {
     ta.value = data.enhanced;
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
-    toast('Prompt enhanced');
+    const placeholderCount = (data.enhanced.match(/<[^>]+>/g) || []).length;
+    if (placeholderCount > 0) {
+      const firstStart = ta.value.indexOf('<');
+      if (firstStart >= 0) {
+        const firstEnd = ta.value.indexOf('>', firstStart) + 1;
+        ta.focus();
+        ta.setSelectionRange(firstStart, firstEnd);
+      }
+      toast(`Enhanced — ${placeholderCount} placeholder${placeholderCount === 1 ? '' : 's'} to fill in`);
+    } else {
+      toast('Prompt enhanced');
+    }
   } catch (err) {
     toast('Enhance failed: ' + err.message);
   } finally {
@@ -1780,7 +1793,19 @@ async function enhanceEdit() {
     if (!res.ok || data.error) throw new Error(data.error || 'Failed');
 
     input.value = data.enhanced;
-    toast('Edit prompt enhanced');
+    // Surface placeholders if the enhancer left any
+    const placeholderCount = (data.enhanced.match(/<[^>]+>/g) || []).length;
+    if (placeholderCount > 0) {
+      const firstStart = input.value.indexOf('<');
+      if (firstStart >= 0) {
+        const firstEnd = input.value.indexOf('>', firstStart) + 1;
+        input.focus();
+        input.setSelectionRange(firstStart, firstEnd);
+      }
+      toast(`Enhanced — ${placeholderCount} placeholder${placeholderCount === 1 ? '' : 's'} to fill in`);
+    } else {
+      toast('Edit prompt enhanced');
+    }
   } catch (err) {
     toast('Enhance failed: ' + err.message);
   } finally {
@@ -1807,11 +1832,43 @@ function showEditStatus(msg, type) {
 
 async function editImage() {
   if (!currentUrl) { toast('Generate an image first'); return; }
-  const editPrompt = document.getElementById('edit-input').value.trim();
+  let editPrompt = document.getElementById('edit-input').value.trim();
   if (!editPrompt) { toast('Describe the edit'); return; }
 
   const editEngine = document.getElementById('edit-engine-select').value;
+  const editInput = document.getElementById('edit-input');
   const btn = document.getElementById('edit-btn');
+
+  // Auto-optimize prompt for P-Edit before sending. If the rewrite has unfilled
+  // angle-bracket placeholders, BLOCK the edit and surface them to the user.
+  if (editEngine === 'pedit' && !editPrompt.includes('<')) {
+    btn.disabled = true; btn.textContent = 'Optimizing for P-Edit...';
+    try {
+      const opt = await optimizePEditPrompt(editPrompt, 1);
+      editPrompt = opt.optimized_prompt;
+      editInput.value = editPrompt;
+      const missing = Array.isArray(opt.missing) ? opt.missing : [];
+      if (missing.length > 0) {
+        // User must fill placeholders before edit fires
+        const placeholderStart = editInput.value.indexOf('<');
+        if (placeholderStart >= 0) {
+          const placeholderEnd = editInput.value.indexOf('>', placeholderStart) + 1;
+          editInput.focus();
+          editInput.setSelectionRange(placeholderStart, placeholderEnd);
+        }
+        showEditStatus(`Auto-optimized — ${missing.length} placeholder${missing.length === 1 ? '' : 's'} need filling. Edit halted.\n` + missing.map(m => `  → ${m}`).join('\n'), 'error');
+        toast(`${missing.length} placeholder${missing.length === 1 ? '' : 's'} to fill — Edit halted`);
+        btn.disabled = false; btn.textContent = 'Edit';
+        return;
+      }
+      showEditStatus(`Auto-optimized for P-Edit (verb: ${opt.verb || 'modify'})`, 'loading');
+    } catch (err) {
+      // Optimizer failed — fall through with the raw prompt + warn
+      console.warn('P-Edit optimizer failed, sending raw prompt', err);
+      toast('Optimizer failed — sending raw prompt. ' + err.message);
+    }
+  }
+
   btn.disabled = true; btn.textContent = 'Editing...';
   showImgOverlay(`Editing with ${editEngine.toUpperCase()}...`);
   showEditStatus(`Editing with ${editEngine.toUpperCase()}... "${editPrompt.slice(0, 60)}"`, 'loading');
@@ -2748,6 +2805,99 @@ async function runWearGarment() {
     hideImgOverlay();
     showEditStatus(`Wear-garment failed: ${err.message}`, 'error');
     toast('Wear failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+async function optimizePEditPrompt(rawPrompt, numImages) {
+  const res = await fetch('/api/optimize-pedit-prompt', {
+    method: 'POST', headers: headers(),
+    body: JSON.stringify({ prompt: rawPrompt, num_images: numImages || 1 })
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'Optimize failed');
+  return data;
+}
+
+function summarizeOptimizeResult(data) {
+  const verb = data.verb || 'modify';
+  const missing = Array.isArray(data.missing) ? data.missing : [];
+  const lines = [`P-Edit prompt optimized (verb: ${verb})`];
+  if (missing.length) {
+    lines.push(`⚠ ${missing.length} placeholder${missing.length === 1 ? '' : 's'} need${missing.length === 1 ? 's' : ''} filling:`);
+    for (const m of missing) lines.push(`  → ${m}`);
+  }
+  if (Array.isArray(data.changes) && data.changes.length) {
+    lines.push('Changes:');
+    for (const c of data.changes) lines.push(`  • ${c}`);
+  }
+  if (Array.isArray(data.warnings) && data.warnings.length) {
+    lines.push('Warnings:');
+    for (const w of data.warnings) lines.push(`  ! ${w}`);
+  }
+  return lines.join('\n');
+}
+
+async function optimizePEditPromptForEdit() {
+  const input = document.getElementById('edit-input');
+  const raw = input.value.trim();
+  if (!raw) { toast('Type a prompt first'); return; }
+  const btn = document.getElementById('edit-pedit-optimize-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    const data = await optimizePEditPrompt(raw, 1);
+    input.value = data.optimized_prompt;
+    const missing = Array.isArray(data.missing) ? data.missing : [];
+    if (missing.length) {
+      // Move cursor to the first placeholder so user can fill it in immediately
+      const placeholderStart = input.value.indexOf('<');
+      if (placeholderStart >= 0) {
+        const placeholderEnd = input.value.indexOf('>', placeholderStart) + 1;
+        input.focus();
+        input.setSelectionRange(placeholderStart, placeholderEnd);
+      }
+      toast(`Optimized — ${missing.length} placeholder${missing.length === 1 ? '' : 's'} to fill in`);
+    } else {
+      toast(`P-Edit prompt optimized (verb: ${data.verb || 'modify'})`);
+    }
+    showEditStatus(summarizeOptimizeResult(data), missing.length ? 'loading' : 'success');
+  } catch (err) {
+    toast('Optimize failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+async function optimizePEditPromptInPainter() {
+  const input = document.getElementById('mask-prompt');
+  const raw = input.value.trim();
+  if (!raw) { toast('Type a prompt first'); return; }
+  const refs = (typeof getActiveGarmentRefsForModel === 'function')
+    ? getActiveGarmentRefsForModel()
+    : [];
+  const numImages = 1 + refs.length;
+  const btn = document.getElementById('mask-pedit-optimize-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    const data = await optimizePEditPrompt(raw, numImages);
+    input.value = data.optimized_prompt;
+    const missing = Array.isArray(data.missing) ? data.missing : [];
+    if (missing.length) {
+      const placeholderStart = input.value.indexOf('<');
+      if (placeholderStart >= 0) {
+        const placeholderEnd = input.value.indexOf('>', placeholderStart) + 1;
+        input.focus();
+        input.setSelectionRange(placeholderStart, placeholderEnd);
+      }
+      toast(`Optimized — ${missing.length} placeholder${missing.length === 1 ? '' : 's'} to fill in`);
+    } else {
+      toast(`P-Edit prompt optimized (verb: ${data.verb || 'modify'})`);
+    }
+  } catch (err) {
+    toast('Optimize failed: ' + err.message);
   } finally {
     btn.disabled = false; btn.textContent = orig;
   }

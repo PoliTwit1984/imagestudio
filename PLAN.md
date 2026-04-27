@@ -1124,6 +1124,41 @@ The library compounds: as users build and share custom brushes (Phase 16.5), the
 
 ---
 
+## ACTIVE WORK QUEUE (Next Up)
+
+> Ordered by user-visible impact. Tackle from the top. Each is small enough to ship in one session.
+
+1. **Hard Pokies — Bold asset variant** — current `asset-poke-lume-01` is too subtle on loose fabric. Mine `r/pokies` for a tighter-fabric reference (ribbed tank + visible bump), extract with luminance-only pipeline, upload as `asset-poke-bold-01`. Use as proof that intensity-tier variants work.
+
+2. **Detail Library UI** (Asset Library tab) — currently users have to paste asset URLs by hand. Build a thumbnail grid in the Result Actions area: list `/api/detail-assets` (new endpoint, returns curated asset metadata), click thumbnail → opens painter with that asset pre-loaded as the Garment Reference. Same UX as Detail Brushes modal but for Track A assets instead of Track B prompts.
+
+3. **Fix "couldn't load garment" intermittent error** — Joe hits this in the painter when pasting an asset URL. Root cause likely stale JS or auto-bg-strip race. Reproducible diagnostic via Chrome MCP needed. Possibly fix: explicit error banner inside painter (already added for Detail Brushes — extend to garment URL flow), guarantee tab refresh on each `<script>` change.
+
+4. **Brush + auto-mask end-to-end test on porch image** — Strip mauled it. Brush + Vision auto-mask should preserve everything except the masked garment region. Verify on porch image with the silk crop tank ref. Document working incantation in Detail Library docs.
+
+5. **Sandwich + GPT-2 chain on porch image** — Strip → GPT-2 → Strip pipeline. Tests whether sandwich edit successfully bypasses gpt-image-2's NSFW refusal on a topless source. If yes, this becomes a House Chain template ("NSFW source → editorial-quality edit").
+
+6. **Smart Routing MVP — Recommendation badges** (Phase 3.3 condensed) — small colored dots next to each engine card showing likely/may-refuse/will-refuse based on a one-shot Lens vision content profile of `currentUrl`. Save the profile on `assets.metadata.content_profile` so it persists. No full Smart Routing yet — just the visual recommendation layer that closes the "I have to guess which engine works on this image" UX gap.
+
+7. **Wardrobe Forge MVP** (Phase 12 condensed) — single button "Generate Garment" in the Wardrobe panel. User types prompt → Lens generates a catalog-style isolated garment shot → BiRefNet auto-cuts to transparent → saves to Wardrobe with auto-classified `garment_type`. No multi-angle yet — that's v1.5.
+
+8. **Detail Library asset population** — start the actual library from real Reddit references. Seed 20-30 assets across nipples / pokies / freckles / tan-lines / beauty-marks. Cost: ~$3 in BiRefNet + bandwidth. Time: ~2 hours of curation. The library IS the moat — every asset added increases lock-in.
+
+---
+
+## KNOWN BUGS / ROUGH EDGES
+
+- [ ] Painter "couldn't load garment" — see ACTIVE #3 above
+- [ ] Fal.ai content-mod returns black PNG instead of error on some Brush prompts (caught by `isImageBlankOrUniform` for Detail Brushes; not yet caught everywhere)
+- [ ] `loadImageNoTaint` blob fetch can fail on a tab if currentUrl was mutated mid-fetch — may need an abort controller
+- [ ] Cordon off `surgical-` filename prefix in `uploadBufferToStorage` — currently every server-side upload gets that prefix regardless of what called it (cosmetic, not functional)
+- [ ] Auto-bg-strip silently fails on already-transparent PNGs (BiRefNet returns garbage on transparent input). Skip strip when `image.alpha` is already non-uniform.
+- [ ] Detail Brush's `surgical-` upload helper hardcodes filename prefix — should be brush_id-derived
+- [ ] Edit Strength slider's debounced auto-bake races with click-outside-bar handler — possible double-bake call. Idempotent on the server but wastes credits.
+- [ ] Generation results from xAI/fal CDNs are NOT re-hosted to Supabase server-side — only edits are. URL strip works because we copy currentUrl, but on tab restart the vendor URL may have expired. Fix: re-host every result, regardless of source.
+
+---
+
 ## OPEN QUESTIONS
 
 - [ ] Final brand name confirmation (Darkroom locked? rebrand starting when?)
