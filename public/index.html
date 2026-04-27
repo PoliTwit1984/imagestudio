@@ -317,6 +317,55 @@
   .crop-btn.reset { background: #1a1a1a; border: 1px solid #333; color: #888; }
   .crop-hint { color: #555; font-size: 0.75rem; margin-top: 8px; }
 
+  /* Full-screen mask painter (darkroom.ui-polish.fullscreen-mask-painter) —
+     full-viewport overlay with brush controls + undo/redo. The base modal
+     keeps its #mask-painter id (existing JS toggles display:block) but now
+     gets the .painter-fullscreen class which forces 100vw/100vh and a
+     scrollable inner container so painting + sliders fit on any screen. */
+  #mask-painter.painter-fullscreen {
+    inset: 0 !important;
+    padding: 0 !important;
+    overflow: hidden;
+    background: rgba(10, 10, 10, 0.95);
+  }
+  #mask-painter.painter-fullscreen > div:first-child {
+    max-width: none;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 16px 24px;
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+  #mask-painter.painter-fullscreen #mask-stage {
+    max-height: calc(100vh - 240px);
+    overflow: auto;
+  }
+  #mask-painter.painter-fullscreen #mask-bg,
+  #mask-painter.painter-fullscreen #mask-fg {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+  .painter-controls {
+    display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid #2a2a2a;
+    color: #ccc; font-size: 0.82rem;
+  }
+  .painter-controls label {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .painter-controls input[type=range] { vertical-align: middle; }
+  .painter-controls .painter-readout {
+    color: #f5f5f5; font-variant-numeric: tabular-nums;
+    min-width: 2.6em; display: inline-block; text-align: right;
+  }
+  .painter-controls button {
+    background: #1a1a1a; color: #f5f5f5; border: 1px solid #333;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.82rem;
+  }
+  .painter-controls button:hover { background: #222; }
+  .painter-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+
   /* Full-screen crop workspace (darkroom.crop.fullscreen-workspace) — separate
      from the legacy .crop-overlay used by reverse-search "Crop & Analyze".
      The workspace uses a canvas-rendered image plus a draggable DOM frame
@@ -338,6 +387,27 @@
     padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 11px;
   }
   .crop-aspect-pill.active { background: #a78bfa; color: #fff; border-color: #a78bfa; }
+  /* Smart subject-aware crop (darkroom.crop.smart-subject-aware) — pulls
+     subject_count + face_visible from /api/analyze-image and reframes the
+     crop. The endpoint doesn't return bounding boxes today, so we use
+     heuristics; the padding select tunes how loose the frame is. */
+  .crop-smart-row {
+    display: flex; gap: 8px; align-items: center;
+    padding: 8px 16px;
+    background: #0a0a0a; border-bottom: 1px solid #2a2a2a;
+  }
+  .crop-smart-btn {
+    background: linear-gradient(135deg, #a78bfa, #f472b6);
+    color: #fff; border: none;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+    font-weight: 600; font-size: 0.82rem;
+  }
+  .crop-smart-btn:disabled { opacity: 0.6; cursor: wait; }
+  #crop-smart-padding {
+    background: #1a1a1a; color: #fff; border: 1px solid #2a2a2a;
+    padding: 4px 8px; border-radius: 4px; font-size: 0.82rem;
+  }
+  .crop-smart-status { color: #888; font-size: 0.78rem; font-style: italic; }
   .crop-actions { display: flex; gap: 8px; }
   .crop-cancel, .crop-apply {
     background: #1a1a1a; color: #fff; border: none;
@@ -1129,7 +1199,7 @@
     <textarea id="scene" data-mode="compose" placeholder="Build your prompt below, or just type freestyle and hit AI Enhance..."></textarea>
 
     <div class="enhance-row" data-mode="compose">
-      <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()" title="AI rewrites your prompt for maximum photorealism — adds lighting, camera, skin texture, film stock details">AI Enhance</button>
+      <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()" aria-label="AI rewrites your prompt for maximum photorealism — adds lighting, camera, skin texture, film stock details">AI Enhance</button>
       <span class="enhance-hint">AI rewrites your prompt for max realism</span>
       <button class="action-btn" style="margin-left:auto;font-size:0.75rem;" onclick="clearPrompt()">Clear</button>
     </div>
@@ -1293,27 +1363,27 @@
     </div>
 
     <div class="controls" data-mode="compose">
-      <button class="gen-btn" id="gen-btn" onclick="generate()" title="Generate image from your prompt using the selected engine and settings">Generate</button>
-      <button class="pose-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload Image</button>
+      <button class="gen-btn" id="gen-btn" onclick="generate()" aria-label="Generate image from your prompt using the selected engine and settings">Generate</button>
+      <button class="pose-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" aria-label="Upload your own image to edit, enhance, face swap, etc.">Upload Image</button>
       <input type="file" id="upload-input-main" accept="image/*" style="display:none;" onchange="handleUpload(this)">
-      <button class="pose-btn" onclick="openPoseRef()" title="Upload a reference photo to copy the pose — AI vision analyzes the body position and feeds it into generation">Pose Ref</button>
-      <button class="pose-btn" onclick="openPinterest()" style="border-color:#e60023;color:#e60023;" title="Search Pinterest for pose references — find the pose you want, click to use it">Pinterest</button>
-      <select class="edit-engine-select" id="engine-select" style="font-size:0.78rem;padding:7px 10px;min-width:120px;" title="Lens: img2img face-locked re-imagine | Flux LoRA: zero filter, character LoRA | Eye: highest fidelity, refuses NSFW" onchange="onEngineChange()">
+      <button class="pose-btn" onclick="openPoseRef()" aria-label="Upload a reference photo to copy the pose — AI vision analyzes the body position and feeds it into generation">Pose Ref</button>
+      <button class="pose-btn" onclick="openPinterest()" style="border-color:#e60023;color:#e60023;" aria-label="Search Pinterest for pose references — find the pose you want, click to use it">Pinterest</button>
+      <select class="edit-engine-select" id="engine-select" style="font-size:0.78rem;padding:7px 10px;min-width:120px;" aria-label="Lens: img2img face-locked re-imagine | Flux LoRA: zero filter, character LoRA | Eye: highest fidelity, refuses NSFW" onchange="onEngineChange()">
         <option value="grok">Lens (img2img)</option>
         <option value="fal">Flux LoRA</option>
         <option value="gpt">Eye</option>
       </select>
-      <select class="lora-select" id="lora-select" style="display:none;" title="Pick a LoRA for face consistency. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
+      <select class="lora-select" id="lora-select" style="display:none;" aria-label="Pick a LoRA for face consistency. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
         <option value="">Select LoRA...</option>
       </select>
-      <select class="edit-engine-select" id="aspect-select" style="font-size:0.75rem;padding:6px 10px;min-width:70px;" title="Aspect ratio for generated images">
+      <select class="edit-engine-select" id="aspect-select" style="font-size:0.75rem;padding:6px 10px;min-width:70px;" aria-label="Aspect ratio for generated images">
         <option value="3:4">3:4 Portrait</option>
         <option value="4:5">4:5 IG Feed</option>
         <option value="9:16">9:16 Story</option>
         <option value="1:1">1:1 Square</option>
         <option value="16:9">16:9 Landscape</option>
       </select>
-      <label class="darkroom-polish" title="Append realism polish to Lens / Glance / Brush prompts. Strip stays raw.">
+      <label class="darkroom-polish" aria-label="Append realism polish to Lens / Glance / Brush prompts. Strip stays raw.">
         <input type="checkbox" id="polish-toggle" onchange="onPolishToggle(this)">
         Darkroom Polish
       </label>
@@ -1376,9 +1446,9 @@
 
     <div class="result" id="result">
       <div class="version-strip" id="version-strip" style="display:none;">
-        <button class="version-btn" id="undo-btn" onclick="undoEdit()" title="Undo">&#8592; Undo</button>
+        <button class="version-btn" id="undo-btn" onclick="undoEdit()" aria-label="Undo">&#8592; Undo</button>
         <div class="version-thumbs" id="version-thumbs"></div>
-        <button class="version-btn" id="redo-btn" onclick="redoEdit()" title="Redo">Redo &#8594;</button>
+        <button class="version-btn" id="redo-btn" onclick="redoEdit()" aria-label="Redo">Redo &#8594;</button>
       </div>
       <div class="result-img-wrap">
         <!-- Asset toolbar — star / archive / tags. asset_id is auto-resolved
@@ -1387,10 +1457,10 @@
              resolved (no asset row → nothing to mutate). -->
         <div class="asset-toolbar disabled" id="asset-toolbar" data-asset-id="">
           <button type="button" class="asset-toolbar-btn" id="asset-toolbar-star"
-            title="Star this image" aria-label="Star this image"
+            aria-label="Star this image"
             onclick="toggleAssetStar(event)">&#9734;</button>
           <button type="button" class="asset-toolbar-btn" id="asset-toolbar-archive"
-            title="Archive this image" aria-label="Archive this image"
+            aria-label="Archive this image"
             onclick="toggleAssetArchive(event)">&#128451;</button>
           <div class="asset-toolbar-tags" id="asset-toolbar-tags"></div>
           <input type="text" class="asset-toolbar-tag-input"
@@ -1416,29 +1486,29 @@
         <div style="font-size:0.82rem;color:#c850c0;font-weight:600;white-space:nowrap;">Edit Strength</div>
         <input type="range" id="edit-strength-slider" min="0" max="100" value="100" style="flex:1;min-width:160px;" oninput="onEditStrengthInput()">
         <span id="edit-strength-val" style="color:#fff;font-weight:600;font-family:monospace;min-width:42px;text-align:right;">100%</span>
-        <button class="action-btn" onclick="bakeEditStrength()" style="border-color:#10b981;color:#10b981;" title="Save the current blended result as a new version. Then keep editing.">Bake</button>
-        <button class="action-btn" onclick="resetEditStrength()" style="border-color:#facc15;color:#facc15;" title="Snap back to 100% (full edit)">100%</button>
-        <button class="action-btn" onclick="closeEditStrength()" style="border-color:#888;color:#888;" title="Hide this slider (the current image stays)">Hide</button>
+        <button class="action-btn" onclick="bakeEditStrength()" style="border-color:#10b981;color:#10b981;" aria-label="Save the current blended result as a new version. Then keep editing.">Bake</button>
+        <button class="action-btn" onclick="resetEditStrength()" style="border-color:#facc15;color:#facc15;" aria-label="Snap back to 100% (full edit)">100%</button>
+        <button class="action-btn" onclick="closeEditStrength()" style="border-color:#888;color:#888;" aria-label="Hide this slider (the current image stays)">Hide</button>
       </div>
       <div class="result-actions">
-        <button class="action-btn upscale" id="btn-upscale" data-mode="print" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
-        <button class="action-btn" id="btn-magnific" data-mode="print" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Reveal — creative detail injection upscale. AI auto-generates a prompt, you edit it, then upscale with texture. Can change face.">Reveal</button>
-        <button class="action-btn" id="btn-topaz" data-mode="print" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Develop — face enhancement + skin texture + upscale. Click to adjust settings.">Develop</button>
-        <button class="action-btn" id="btn-enhancor" data-mode="print" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Skin — body skin enhance, level 65, face locked. Good for realistic skin texture on nudes where Develop/Reveal blur out.">Skin</button>
-        <button class="action-btn" id="btn-darkroom-skin" data-mode="develop" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
-        <button class="action-btn" id="btn-darkroom-glow" data-mode="develop" onclick="runDarkroomPreset('darkroom-glow')" style="border-color:#e8a46b;color:#e8a46b;" title="Darkroom Glow — boudoir warmth, soft golden highlights with subtle bloom and gentle halation. Color-grade only; preserves face, pose, wardrobe, composition.">Darkroom Glow</button>
-        <button class="action-btn" id="btn-detail-brush" data-mode="develop" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
-        <button class="action-btn" id="btn-faceswap" data-mode="print" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
-        <button class="action-btn tg" id="btn-tg" data-mode="print" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
-        <button class="action-btn dc" id="btn-dc" data-mode="print" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
-        <button class="action-btn" id="btn-resize" data-mode="all" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" title="Shrink image to 1200px on the long edge. Useful before Lens edits — Lens is slow on big images.">Resize 1200</button>
-        <button class="action-btn" id="btn-paint-mask" data-mode="develop" onclick="openMaskPainter()" style="border-color:#c850c0;color:#c850c0;" title="Paint a mask over the image, then inpaint with Brush (NSFW-permissive, true mask-aware inpainting).">Paint Mask</button>
-        <button class="action-btn" id="btn-sandwich" data-mode="develop" onclick="openSandwich()" style="border-color:#f472b6;color:#f472b6;" title="Sandwich edit: Strip clothes the subject → Glance / Eye edits the scene → Strip unclothes. Lets you use safe editors on NSFW source.">Sandwich Edit</button>
-        <button class="action-btn" data-mode="all" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
-        <button class="action-btn" data-mode="all" onclick="downloadImg()" title="Download the image to your device">Download</button>
-        <button class="action-btn" data-mode="all" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
-        <button class="action-btn" id="btn-crop-workspace" data-mode="all" onclick="openCropWorkspace(currentUrl)" style="border-color:#a78bfa;color:#a78bfa;" title="Open the full-screen crop workspace — pick an aspect ratio, drag to position, Apply to commit a new version.">✂ Crop</button>
-        <button class="action-btn" id="btn-extract-lut" data-mode="develop" onclick="showLutExtractModal()" style="border-color:#c9842b;color:#c9842b;" title="Extract a 3D LUT cube from a before/after pair in the version stack. Useful for capturing a color grade you can reuse.">Extract LUT</button>
+        <button class="action-btn upscale" id="btn-upscale" data-mode="print" onclick="upscaleImage('faithful')" aria-label="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
+        <button class="action-btn" id="btn-magnific" data-mode="print" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" aria-label="Reveal — creative detail injection upscale. AI auto-generates a prompt, you edit it, then upscale with texture. Can change face.">Reveal</button>
+        <button class="action-btn" id="btn-topaz" data-mode="print" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" aria-label="Develop — face enhancement + skin texture + upscale. Click to adjust settings.">Develop</button>
+        <button class="action-btn" id="btn-enhancor" data-mode="print" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" aria-label="Skin — body skin enhance, level 65, face locked. Good for realistic skin texture on nudes where Develop/Reveal blur out.">Skin</button>
+        <button class="action-btn" id="btn-darkroom-skin" data-mode="develop" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" aria-label="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
+        <button class="action-btn" id="btn-darkroom-glow" data-mode="develop" onclick="runDarkroomPreset('darkroom-glow')" style="border-color:#e8a46b;color:#e8a46b;" aria-label="Darkroom Glow — boudoir warmth, soft golden highlights with subtle bloom and gentle halation. Color-grade only; preserves face, pose, wardrobe, composition.">Darkroom Glow</button>
+        <button class="action-btn" id="btn-detail-brush" data-mode="develop" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" aria-label="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
+        <button class="action-btn" id="btn-faceswap" data-mode="print" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" aria-label="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
+        <button class="action-btn tg" id="btn-tg" data-mode="print" onclick="sendTelegram()" aria-label="Send image to Telegram (Manifesto Talk group)">Telegram</button>
+        <button class="action-btn dc" id="btn-dc" data-mode="print" onclick="sendDiscord()" aria-label="Send image to Discord (#joe-direct channel)">Discord</button>
+        <button class="action-btn" id="btn-resize" data-mode="all" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" aria-label="Shrink image to 1200px on the long edge. Useful before Lens edits — Lens is slow on big images.">Resize 1200</button>
+        <button class="action-btn" id="btn-paint-mask" data-mode="develop" onclick="openMaskPainter()" style="border-color:#c850c0;color:#c850c0;" aria-label="Paint a mask over the image, then inpaint with Brush (NSFW-permissive, true mask-aware inpainting).">Paint Mask</button>
+        <button class="action-btn" id="btn-sandwich" data-mode="develop" onclick="openSandwich()" style="border-color:#f472b6;color:#f472b6;" aria-label="Sandwich edit: Strip clothes the subject → Glance / Eye edits the scene → Strip unclothes. Lets you use safe editors on NSFW source.">Sandwich Edit</button>
+        <button class="action-btn" data-mode="all" onclick="copyUrl()" aria-label="Copy the image URL to clipboard">Copy URL</button>
+        <button class="action-btn" data-mode="all" onclick="downloadImg()" aria-label="Download the image to your device">Download</button>
+        <button class="action-btn" data-mode="all" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" aria-label="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
+        <button class="action-btn" id="btn-crop-workspace" data-mode="all" onclick="openCropWorkspace(currentUrl)" style="border-color:#a78bfa;color:#a78bfa;" aria-label="Open the full-screen crop workspace — pick an aspect ratio, drag to position, Apply to commit a new version.">✂ Crop</button>
+        <button class="action-btn" id="btn-extract-lut" data-mode="develop" onclick="showLutExtractModal()" style="border-color:#c9842b;color:#c9842b;" aria-label="Extract a 3D LUT cube from a before/after pair in the version stack. Useful for capturing a color grade you can reuse.">Extract LUT</button>
         <input type="file" id="upload-input" accept="image/*" style="display:none;" onchange="handleUpload(this)">
       </div>
 
@@ -1471,7 +1541,7 @@
           <button type="button" class="wardrobe-style-preset" data-preset="loungewear">Loungewear</button>
         </div>
         <div class="wardrobe-filters">
-          <select id="wardrobe-category-filter" title="Filter by category">
+          <select id="wardrobe-category-filter" aria-label="Filter by category">
             <option value="">All categories</option>
             <option value="top">Tops</option>
             <option value="bottom">Bottoms</option>
@@ -1489,10 +1559,10 @@
           <button type="button" class="action-btn" id="wardrobe-refresh-btn" style="border-color:#f472b6;color:#f472b6;font-size:0.78rem;padding:4px 10px;">Refresh</button>
           <button type="button" class="action-btn forge-btn" id="wardrobe-forge-btn"
             style="border:none;background:#a78bfa;color:#fff;font-size:0.78rem;padding:4px 10px;border-radius:4px;cursor:pointer;"
-            title="Forge a new wardrobe garment from an upload or current image">+ Forge</button>
+            aria-label="Forge a new wardrobe garment from an upload or current image">+ Forge</button>
           <button type="button" class="action-btn detail-submit-btn" id="detail-submit-open-btn"
             style="border:none;background:#f472b6;color:#fff;font-size:0.78rem;padding:4px 10px;border-radius:4px;cursor:pointer;"
-            title="Submit a custom detail brush (nipple/areola/cameltoe/etc) for operator approval">+ Detail</button>
+            aria-label="Submit a custom detail brush (nipple/areola/cameltoe/etc) for operator approval">+ Detail</button>
         </div>
         <div id="wardrobe-grid" class="wardrobe-grid"></div>
       </details>
@@ -1526,7 +1596,7 @@
             disabled
             onclick="openReplayChainDialog()"
             style="background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;border:0;border-radius:6px;padding:5px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;opacity:0.5;"
-            title="Re-run this entire chain of edits on a different source image">▶ Replay this chain on…</button>
+            aria-label="Re-run this entire chain of edits on a different source image">▶ Replay this chain on…</button>
           <span id="history-graph-replay-status" style="color:#666;font-size:0.7rem;font-style:italic;"></span>
         </div>
         <div id="history-graph-container" class="history-graph">
@@ -1633,12 +1703,20 @@
         </div>
       </div>
 
-      <!-- Mask painter modal -->
-      <div id="mask-painter" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;padding:20px;overflow:auto;">
+      <!-- Mask painter modal (fullscreen via .painter-fullscreen) -->
+      <div id="mask-painter" class="painter-fullscreen" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;padding:20px;overflow:auto;">
         <div style="max-width:1100px;margin:0 auto;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
             <div style="font-weight:600;color:#c850c0;">Paint Mask · white = repaint here</div>
             <button class="action-btn" onclick="closeMaskPainter()">Close</button>
+          </div>
+          <!-- Brush controls (darkroom.ui-polish.fullscreen-mask-painter) -->
+          <div class="painter-controls" role="toolbar" aria-label="Brush controls">
+            <label>Size <input type="range" id="brush-size-slider" min="2" max="200" value="40" /> <span id="brush-size-readout" class="painter-readout">40</span>px</label>
+            <label>Hardness <input type="range" id="brush-hardness-slider" min="0" max="100" value="80" /> <span id="brush-hardness-readout" class="painter-readout">80</span>%</label>
+            <label>Opacity <input type="range" id="brush-opacity-slider" min="10" max="100" value="100" /> <span id="brush-opacity-readout" class="painter-readout">100</span>%</label>
+            <button id="painter-undo" type="button" aria-label="Undo last stroke">↶ Undo</button>
+            <button id="painter-redo" type="button" aria-label="Redo last undone stroke">↷ Redo</button>
           </div>
           <div id="mask-stage" style="position:relative;display:inline-block;background:#000;">
             <canvas id="mask-bg" style="display:block;max-width:100%;height:auto;"></canvas>
@@ -1679,29 +1757,29 @@
             <button class="action-btn" id="mask-erase-btn" onclick="toggleMaskErase()" style="border-color:#facc15;color:#facc15;">Erase: off</button>
             <button class="action-btn" onclick="clearMask()" style="border-color:#ef4444;color:#ef4444;">Clear</button>
             <input type="text" id="mask-prompt" class="edit-input" placeholder="What to paint inside the mask (e.g., 'a brass victorian lamp' OR 'wearing this black lace lingerie')" style="flex:1;min-width:300px;">
-            <button class="action-btn" id="mask-describe-btn" onclick="autoDescribeGarment()" style="border-color:#22d3ee;color:#22d3ee;" title="AI vision writes a one-line prompt from the garment image. Auto-runs on Inpaint if prompt is empty.">Auto-describe</button>
-            <button class="action-btn" id="mask-pedit-optimize-btn" onclick="optimizePEditPromptInPainter()" style="border-color:#10b981;color:#10b981;" title="Rewrite the prompt to match Strip's documented best practices (action verb + target + preservation clause). Use this when running Wear via Strip.">Strip Optimize</button>
+            <button class="action-btn" id="mask-describe-btn" onclick="autoDescribeGarment()" style="border-color:#22d3ee;color:#22d3ee;" aria-label="AI vision writes a one-line prompt from the garment image. Auto-runs on Inpaint if prompt is empty.">Auto-describe</button>
+            <button class="action-btn" id="mask-pedit-optimize-btn" onclick="optimizePEditPromptInPainter()" style="border-color:#10b981;color:#10b981;" aria-label="Rewrite the prompt to match Strip's documented best practices (action verb + target + preservation clause). Use this when running Wear via Strip.">Strip Optimize</button>
             <select class="edit-engine-select" id="mask-upscaler">
               <option value="none">No upscale</option>
               <option value="topaz">+Develop</option>
               <option value="freepik">+Freepik</option>
             </select>
             <button class="edit-btn" id="mask-go-btn" onclick="runInpaint()" style="background:linear-gradient(135deg,#c850c0,#7e22ce);">Inpaint with Brush</button>
-            <button class="edit-btn" id="mask-wear-btn" onclick="runWearGarment()" style="background:linear-gradient(135deg,#f472b6,#dc2626);" title="Strip multi-image: skip the mask, send person + garment + prompt → Strip figures out placement. NSFW-permissive, less precise than Brush, often more natural for full-body lingerie.">Wear via Strip</button>
+            <button class="edit-btn" id="mask-wear-btn" onclick="runWearGarment()" style="background:linear-gradient(135deg,#f472b6,#dc2626);" aria-label="Strip multi-image: skip the mask, send person + garment + prompt → Strip figures out placement. NSFW-permissive, less precise than Brush, often more natural for full-body lingerie.">Wear via Strip</button>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #2a2a2a;">
             <div style="font-weight:600;color:#f472b6;font-size:0.85rem;">Garment Reference(s) <span style="font-weight:400;color:#888;">— add multiple angles for better fidelity</span></div>
             <input type="text" id="mask-garment-url" class="edit-input" placeholder="Paste image URL (front, back, side, worn shot...)" style="flex:1;min-width:280px;">
-            <button class="action-btn" id="mask-add-ref-btn" onclick="addGarmentRef()" style="border-color:#f472b6;color:#f472b6;" title="Add this URL/upload as another reference angle (front, back, side, worn shot). Strip uses all of them; Brush auto-collages them.">+ Add Angle</button>
+            <button class="action-btn" id="mask-add-ref-btn" onclick="addGarmentRef()" style="border-color:#f472b6;color:#f472b6;" aria-label="Add this URL/upload as another reference angle (front, back, side, worn shot). Strip uses all of them; Brush auto-collages them.">+ Add Angle</button>
             <button class="action-btn" onclick="document.getElementById('mask-garment-upload').click()" style="border-color:#f472b6;color:#f472b6;">Upload</button>
             <input type="file" id="mask-garment-upload" accept="image/*" style="display:none;" onchange="handleGarmentUpload(this)">
-            <button class="action-btn" id="mask-removebg-btn" onclick="removeGarmentBg()" style="border-color:#a3e635;color:#a3e635;" title="Cutout — remove background from current/most-recent garment image">Remove BG</button>
+            <button class="action-btn" id="mask-removebg-btn" onclick="removeGarmentBg()" style="border-color:#a3e635;color:#a3e635;" aria-label="Cutout — remove background from current/most-recent garment image">Remove BG</button>
             <label style="color:#aaa;font-size:0.8rem;display:flex;align-items:center;gap:4px;">
               <input type="checkbox" id="mask-auto-removebg" checked style="margin:0;"> auto
             </label>
-            <button class="action-btn" id="mask-automask-btn" onclick="runAutoMask()" style="border-color:#22d3ee;color:#22d3ee;" title="AI vision classifies the garment, then auto-paints the body region where it would go. You can refine with brush/erase.">Auto-mask from Garment</button>
-            <button class="action-btn" id="mask-place-btn" onclick="placeGarmentOverlay()" style="border-color:#f472b6;color:#f472b6;" title="Place the garment image on top so you can drag, resize, and rotate it. Then click Bake → Mask to convert its silhouette into the inpaint mask.">Place Overlay</button>
-            <button class="action-btn" id="mask-bake-btn" onclick="bakeOverlayToMask()" style="display:none;border-color:#10b981;color:#10b981;" title="Convert the placed garment silhouette into a white mask region. You can still refine with brush/erase after baking.">Bake → Mask</button>
+            <button class="action-btn" id="mask-automask-btn" onclick="runAutoMask()" style="border-color:#22d3ee;color:#22d3ee;" aria-label="AI vision classifies the garment, then auto-paints the body region where it would go. You can refine with brush/erase.">Auto-mask from Garment</button>
+            <button class="action-btn" id="mask-place-btn" onclick="placeGarmentOverlay()" style="border-color:#f472b6;color:#f472b6;" aria-label="Place the garment image on top so you can drag, resize, and rotate it. Then click Bake → Mask to convert its silhouette into the inpaint mask.">Place Overlay</button>
+            <button class="action-btn" id="mask-bake-btn" onclick="bakeOverlayToMask()" style="display:none;border-color:#10b981;color:#10b981;" aria-label="Convert the placed garment silhouette into a white mask region. You can still refine with brush/erase after baking.">Bake → Mask</button>
             <button class="action-btn" id="mask-overlay-hide-btn" onclick="hideGarmentOverlay()" style="display:none;border-color:#888;color:#888;">Hide Overlay</button>
             <label style="color:#aaa;font-size:0.85rem;">Strength
               <input type="range" id="mask-garment-strength" min="0.1" max="1" step="0.05" value="0.65" oninput="document.getElementById('mask-garment-strength-val').textContent=this.value" style="vertical-align:middle;width:120px;">
@@ -1713,7 +1791,7 @@
                  affordance that opens the existing forge modal pre-filled
                  with the cutout URL. See darkroom.wardrobe.auto-save. -->
             <button type="button" id="wardrobe-save-pill" class="save-to-wardrobe"
-              onclick="saveToWardrobe()" title="Save this transparent cutout to your wardrobe"
+              onclick="saveToWardrobe()" aria-label="Save this transparent cutout to your wardrobe"
               style="display:none;background:#a78bfa22;color:#a78bfa;border:1px solid #a78bfa;
                      padding:4px 10px;border-radius:999px;font-size:0.78rem;cursor:pointer;
                      line-height:1.2;white-space:nowrap;">
@@ -1780,9 +1858,9 @@
         <div class="edit-label">Edit this image</div>
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
-          <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="AI rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
-          <button class="enhance-btn" id="edit-pedit-optimize-btn" onclick="optimizePEditPromptForEdit()" style="font-size:0.78rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669);" title="Rewrite your prompt to match Strip's documented best practices: action verb + target + preservation clause. Recommended when Strip is the selected engine.">Strip</button>
-          <select class="edit-engine-select" id="edit-engine-select" title="Lens: img2img re-gen | Frame: composition-preserving NL edit | Strip: no filter, NSFW-permissive | Glance: fast scene swap | Eye: highest fidelity | Brush: auto-mask then surgical inpaint (NSFW-permissive)">
+          <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" aria-label="AI rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
+          <button class="enhance-btn" id="edit-pedit-optimize-btn" onclick="optimizePEditPromptForEdit()" style="font-size:0.78rem;padding:8px 12px;background:linear-gradient(135deg,#10b981,#059669);" aria-label="Rewrite your prompt to match Strip's documented best practices: action verb + target + preservation clause. Recommended when Strip is the selected engine.">Strip</button>
+          <select class="edit-engine-select" id="edit-engine-select" aria-label="Lens: img2img re-gen | Frame: composition-preserving NL edit | Strip: no filter, NSFW-permissive | Glance: fast scene swap | Eye: highest fidelity | Brush: auto-mask then surgical inpaint (NSFW-permissive)">
             <option value="grok" data-engine-key="lens">Lens</option>
             <option value="fal" data-engine-key="frame">Frame</option>
             <option value="pedit" data-engine-key="strip">Strip</option>
@@ -1791,7 +1869,7 @@
             <option value="flux" data-engine-key="brush">Brush (auto-mask)</option>
             <option value="smart">Watch (auto)</option>
           </select>
-          <button class="edit-btn" id="edit-btn" onclick="editImage()" title="Apply the edit using the selected engine">Edit</button>
+          <button class="edit-btn" id="edit-btn" onclick="editImage()" aria-label="Apply the edit using the selected engine">Edit</button>
         </div>
         <!-- Smart-routing compatibility row: per-engine green/amber/red dots
              driven by content_profile from POST /api/analyze-image and the
@@ -1799,22 +1877,22 @@
         <div class="compat-row" id="compat-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px;font-size:0.78rem;color:#bbb;"></div>
         <div class="compat-caption" id="compat-caption">Loading routing hints...</div>
         <div class="edit-row" style="margin-top:8px;">
-          <button class="edit-btn" id="make-nsfw-btn" onclick="makeNsfw()" style="background:linear-gradient(135deg,#dc2626,#9333ea);border-color:transparent;flex:1;" title="Strip transforms the image (NSFW or anything) → Develop upscaler. The Joe pipeline in one click.">🔥 Make NSFW + Upscale</button>
-          <select class="edit-engine-select" id="make-nsfw-upscaler" title="Which upscaler to run after Strip">
+          <button class="edit-btn" id="make-nsfw-btn" onclick="makeNsfw()" style="background:linear-gradient(135deg,#dc2626,#9333ea);border-color:transparent;flex:1;" aria-label="Strip transforms the image (NSFW or anything) → Develop upscaler. The Joe pipeline in one click.">🔥 Make NSFW + Upscale</button>
+          <select class="edit-engine-select" id="make-nsfw-upscaler" aria-label="Which upscaler to run after Strip">
             <option value="topaz">Develop</option>
             <option value="freepik">Freepik Skin</option>
             <option value="none">None (Strip only)</option>
           </select>
         </div>
         <div class="edit-row" style="margin-top:8px;">
-          <button class="edit-btn" id="surgical-edit-btn" onclick="surgicalEdit()" style="background:linear-gradient(135deg,#0ea5e9,#10b981);border-color:transparent;flex:1;" title="Auto-detect NSFW regions → mask them out → Eye edits everything else → composite original NSFW pixels back. Surgical preservation. Falls back to Brush if Eye refuses.">🎯 Surgical Edit (preserve subject)</button>
+          <button class="edit-btn" id="surgical-edit-btn" onclick="surgicalEdit()" style="background:linear-gradient(135deg,#0ea5e9,#10b981);border-color:transparent;flex:1;" aria-label="Auto-detect NSFW regions → mask them out → Eye edits everything else → composite original NSFW pixels back. Surgical preservation. Falls back to Brush if Eye refuses.">🎯 Surgical Edit (preserve subject)</button>
           <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:#888;">
             <input type="checkbox" id="surgical-upscale-after" />
             +Develop
           </label>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-          <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()" title="Sends the current image to the chat panel — your creative director prompt analyzes it and suggests edits as clickable tags">AI Vision: Suggest Edits</button>
+          <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()" aria-label="Sends the current image to the chat panel — your creative director prompt analyzes it and suggests edits as clickable tags">AI Vision: Suggest Edits</button>
           <span class="enhance-hint" id="analyze-hint">AI looks at the image and recommends improvements</span>
         </div>
         <div class="edit-status" id="edit-status" style="display:none;"></div>
@@ -1872,7 +1950,7 @@
           <button class="chat-quick" onclick="chatAnalyzeGenerated()">Analyze Result</button>
         </div>
         <div class="chat-input-row">
-          <button class="chat-attach" onclick="attachCurrentImage()" title="Attach current image">img</button>
+          <button class="chat-attach" onclick="attachCurrentImage()" aria-label="Attach current image">img</button>
           <input type="text" id="chat-input" class="chat-input" placeholder="Ask the Director...">
           <button class="chat-send" id="chat-send" onclick="sendChat()">Send</button>
         </div>
@@ -1938,6 +2016,20 @@
       <button type="button" class="crop-cancel">Cancel</button>
       <button type="button" class="crop-apply primary-action">Apply</button>
     </div>
+  </div>
+  <!-- Smart crop row (darkroom.crop.smart-subject-aware) — calls
+       /api/analyze-image and reframes the crop using face_visible +
+       subject_count. The padding select picks frame tightness. -->
+  <div class="crop-smart-row" role="toolbar" aria-label="Smart crop">
+    <button type="button" class="crop-smart-btn" id="crop-smart-btn" aria-label="Smart crop using AI subject detection">✨ Smart Crop</button>
+    <label style="color:#aaa;font-size:0.8rem;">Padding
+      <select id="crop-smart-padding" aria-label="Smart crop padding">
+        <option value="1.05">Tight</option>
+        <option value="1.2" selected>Standard</option>
+        <option value="1.5">Loose</option>
+      </select>
+    </label>
+    <span class="crop-smart-status" id="crop-smart-status"></span>
   </div>
   <div class="crop-stage">
     <canvas id="crop-ws-canvas"></canvas>
@@ -2230,7 +2322,7 @@
 
 <!-- Edit-history drawer (darkroom.catalog.edit-history-drawer) -->
 <button id="history-drawer-toggle" class="history-drawer-toggle"
-  title="Recent assets in this session">📚 History</button>
+  aria-label="Recent assets in this session">📚 History</button>
 <div id="history-drawer" class="history-drawer" aria-hidden="true">
   <div class="history-drawer-header">
     <h3>Recent Assets</h3>
@@ -2385,7 +2477,7 @@ function renderEngineCompatDots() {
     const v = verdictFor(key);
     const cls = dotClassForVerdict(v);
     const verdictLabel = v ? v : 'loading';
-    return `<span class="engine-pill" data-engine-key="${key}" title="${ENGINE_DISPLAY[key]}: ${verdictLabel}">`
+    return `<span class="engine-pill" data-engine-key="${key}" aria-label="${ENGINE_DISPLAY[key]}: ${verdictLabel}">`
       + `<span class="engine-dot ${cls}"></span>${ENGINE_DISPLAY[key]}</span>`;
   });
   row.innerHTML = fragments.join('');
@@ -3410,7 +3502,7 @@ async function renderActiveJobs() {
         <div class="active-job-progress-bar">
           <div class="active-job-progress-fill" style="width: ${pct}%;"></div>
         </div>
-        ${msg ? `<div class="active-job-message" title="${msg}">${msg}</div>` : ''}
+        ${msg ? `<div class="active-job-message">${msg}</div>` : ''}
         <div class="active-job-actions">
           <button class="cancel" onclick="cancelJob('${id}')">Cancel</button>
         </div>
@@ -4085,7 +4177,7 @@ function renderVersionStrip() {
   redoBtn.disabled = versionIndex >= versionStack.length - 1;
 
   thumbs.innerHTML = versionStack.map((v, i) =>
-    `<img class="version-thumb ${i === versionIndex ? 'active' : ''}" src="${v.url}" title="${v.label}" onclick="goToVersion(${i})">`
+    `<img class="version-thumb ${i === versionIndex ? 'active' : ''}" src="${v.url}" alt="${v.label}" aria-label="${v.label}" onclick="goToVersion(${i})">`
   ).join('');
 
   // Scroll to active
@@ -4252,7 +4344,7 @@ function renderHistory(gens) {
   if (!gens.length) { grid.innerHTML = '<div style="color:#555;padding:40px;text-align:center">No generations yet</div>'; return; }
   grid.innerHTML = gens.map((g, i) => `
     <div class="hist-item" onclick="openLightbox(${i})">
-      <img src="${g.image_url}" alt="${esc(g.scene)}" title="${g.character_name}: ${esc(g.scene)}">
+      <img src="${g.image_url}" alt="${esc(g.scene)}" aria-label="${g.character_name}: ${esc(g.scene)}">
       <div class="hist-char">${g.character_name}</div>
     </div>
   `).join('');
@@ -4570,8 +4662,123 @@ function closeMaskPainter() {
 
 function clearMask() {
   const fg = document.getElementById('mask-fg');
+  // Snapshot before clearing so user can undo a Clear.
+  if (typeof painterPushUndo === 'function') painterPushUndo();
   fg.getContext('2d').clearRect(0, 0, fg.width, fg.height);
 }
+
+// --- Fullscreen painter brush controls + undo/redo (darkroom.ui-polish.fullscreen-mask-painter) ---
+// State exposed at module scope so the existing stroke logic can read brush
+// size / hardness / opacity. Undo/redo stacks are size-bounded to avoid
+// memory blow-up on large canvases.
+const _painterUndoStack = [];
+const _painterRedoStack = [];
+let _painterCurrentBrushSize = 40;
+let _painterCurrentHardness = 0.8;   // 0 = soft, 1 = crisp
+let _painterCurrentOpacity = 1.0;    // 0..1
+window._painterCurrentBrushSize = _painterCurrentBrushSize;
+window._painterCurrentHardness = _painterCurrentHardness;
+window._painterCurrentOpacity = _painterCurrentOpacity;
+
+function _getPainterCanvas() {
+  // The fullscreen painter draws into #mask-fg; tests/legacy paths may use #painter-canvas.
+  return document.getElementById('mask-fg') || document.getElementById('painter-canvas') || document.getElementById('mask-canvas');
+}
+
+function painterPushUndo() {
+  const canvas = _getPainterCanvas();
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  try {
+    _painterUndoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+    if (_painterUndoStack.length > 25) _painterUndoStack.shift();
+    _painterRedoStack.length = 0;
+  } catch (e) {
+    // Tainted canvas — undo just isn't supported in that case. Ignore silently.
+  }
+}
+
+function painterUndo() {
+  const canvas = _getPainterCanvas();
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx || _painterUndoStack.length === 0) return;
+  try {
+    // Capture the CURRENT state before reverting, so redo can restore it.
+    const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    _painterRedoStack.push(current);
+    const prev = _painterUndoStack.pop();
+    ctx.putImageData(prev, 0, 0);
+  } catch (e) { /* tainted — ignore */ }
+}
+
+function painterRedo() {
+  const canvas = _getPainterCanvas();
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx || _painterRedoStack.length === 0) return;
+  try {
+    const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    _painterUndoStack.push(current);
+    const next = _painterRedoStack.pop();
+    ctx.putImageData(next, 0, 0);
+  } catch (e) { /* tainted — ignore */ }
+}
+
+(function _wirePainterControls() {
+  // Defer until DOM is ready (this script runs in <body>; sliders exist already).
+  const sizeSlider = document.getElementById('brush-size-slider');
+  const sizeReadout = document.getElementById('brush-size-readout');
+  const hardnessSlider = document.getElementById('brush-hardness-slider');
+  const hardnessReadout = document.getElementById('brush-hardness-readout');
+  const opacitySlider = document.getElementById('brush-opacity-slider');
+  const opacityReadout = document.getElementById('brush-opacity-readout');
+  const undoBtn = document.getElementById('painter-undo');
+  const redoBtn = document.getElementById('painter-redo');
+  // Legacy size slider lives in the painter footer — keep it in sync so the
+  // stroke handler reading EITHER ends up with the same value.
+  const legacySize = document.getElementById('mask-brush');
+  const legacySizeVal = document.getElementById('mask-brush-val');
+
+  if (sizeSlider) {
+    sizeSlider.addEventListener('input', (e) => {
+      const v = +e.target.value;
+      _painterCurrentBrushSize = v;
+      window._painterCurrentBrushSize = v;
+      if (sizeReadout) sizeReadout.textContent = String(v);
+      if (legacySize) legacySize.value = String(v);
+      if (legacySizeVal) legacySizeVal.textContent = String(v);
+    });
+  }
+  if (legacySize) {
+    legacySize.addEventListener('input', (e) => {
+      const v = +e.target.value;
+      _painterCurrentBrushSize = v;
+      window._painterCurrentBrushSize = v;
+      if (sizeSlider) sizeSlider.value = String(v);
+      if (sizeReadout) sizeReadout.textContent = String(v);
+    });
+  }
+  if (hardnessSlider) {
+    hardnessSlider.addEventListener('input', (e) => {
+      const v = +e.target.value;
+      _painterCurrentHardness = v / 100;
+      window._painterCurrentHardness = _painterCurrentHardness;
+      if (hardnessReadout) hardnessReadout.textContent = String(v);
+    });
+  }
+  if (opacitySlider) {
+    opacitySlider.addEventListener('input', (e) => {
+      const v = +e.target.value;
+      _painterCurrentOpacity = v / 100;
+      window._painterCurrentOpacity = _painterCurrentOpacity;
+      if (opacityReadout) opacityReadout.textContent = String(v);
+    });
+  }
+  undoBtn?.addEventListener('click', painterUndo);
+  redoBtn?.addEventListener('click', painterRedo);
+})();
 
 function toggleMaskErase() {
   maskEraseMode = !maskEraseMode;
@@ -4597,8 +4804,20 @@ function attachMaskHandlers(canvas) {
   };
   const stroke = (a, b) => {
     const ctx = canvas.getContext('2d');
-    const size = Number(document.getElementById('mask-brush').value);
+    // Prefer the new fullscreen-painter size slider; fall back to legacy mask-brush.
+    const fsSize = (typeof _painterCurrentBrushSize === 'number') ? _painterCurrentBrushSize : null;
+    const legacySize = Number(document.getElementById('mask-brush')?.value || 0);
+    const size = fsSize || legacySize || 40;
+    const opacity = (typeof _painterCurrentOpacity === 'number') ? _painterCurrentOpacity : 1;
+    const hardness = (typeof _painterCurrentHardness === 'number') ? _painterCurrentHardness : 0.8;
+    ctx.save();
     ctx.globalCompositeOperation = maskEraseMode ? 'destination-out' : 'source-over';
+    ctx.globalAlpha = Math.max(0.05, Math.min(1, opacity));
+    // Hardness 1.0 = crisp edge, 0.0 = soft. Use shadowBlur for soft falloff.
+    if (hardness < 1) {
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = (1 - hardness) * size * 0.5;
+    }
     ctx.strokeStyle = '#ffffff';
     ctx.fillStyle = '#ffffff';
     ctx.lineWidth = size;
@@ -4614,9 +4833,12 @@ function attachMaskHandlers(canvas) {
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
     }
+    ctx.restore();
   };
   const start = (ev) => {
     ev.preventDefault();
+    // Snapshot the canvas BEFORE this stroke so undo can restore it.
+    if (typeof painterPushUndo === 'function') painterPushUndo();
     maskDrawing = true;
     maskLastPt = getPt(ev);
     stroke(maskLastPt, maskLastPt);
@@ -4904,7 +5126,7 @@ function renderGarmentStrip() {
   strip.style.display = 'flex';
   strip.innerHTML = garmentRefs.map((url, i) => `
     <div style="position:relative;display:inline-block;">
-      <img src="${url}" style="height:80px;border-radius:6px;border:2px solid ${i === 0 ? '#f472b6' : '#444'};display:block;cursor:pointer;" onclick="setPrimaryGarment(${i})" title="${i === 0 ? 'Primary (used by overlay placer)' : 'Click to make primary'}">
+      <img src="${url}" alt="garment reference ${i + 1}" style="height:80px;border-radius:6px;border:2px solid ${i === 0 ? '#f472b6' : '#444'};display:block;cursor:pointer;" onclick="setPrimaryGarment(${i})" aria-label="${i === 0 ? 'Primary (used by overlay placer)' : 'Click to make primary'}">
       <button onclick="removeGarmentRef(${i})" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:1px solid #fff;background:#dc2626;color:#fff;font-size:0.75rem;line-height:18px;padding:0;cursor:pointer;">×</button>
       ${i === 0 ? '<div style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);background:#f472b6;color:#fff;font-size:0.6rem;padding:1px 6px;border-radius:4px;">PRIMARY</div>' : ''}
     </div>
@@ -6180,7 +6402,7 @@ function renderPresetGrid() {
   const grid = document.getElementById('preset-grid');
   if (!grid) return;
   grid.innerHTML = DARKROOM_PRESETS_UI.map(p => `
-    <div class="preset-tile" data-slug="${p.slug}" title="${p.desc}">
+    <div class="preset-tile" data-slug="${p.slug}" aria-label="${p.desc}">
       <div class="preset-tile-name">${p.name}</div>
       <div class="preset-tile-desc">${p.desc}</div>
     </div>
@@ -6283,18 +6505,18 @@ async function loadWardrobeGrid({ force } = {}) {
       if (angleEntries.length > 0) {
         const chips = [];
         if (url) {
-          chips.push(`<button type="button" class="wardrobe-angle-btn" data-angle="front" data-url="${safeUrl}" title="front"><img src="${safeUrl}" alt="front" draggable="false"></button>`);
+          chips.push(`<button type="button" class="wardrobe-angle-btn" data-angle="front" data-url="${safeUrl}" aria-label="front"><img src="${safeUrl}" alt="front" draggable="false"></button>`);
         }
         for (const [angleName, angleUrl] of angleEntries) {
           const safeAngleName = escapeWardrobeHtml(angleName);
           const safeAngleUrl = escapeWardrobeHtml(angleUrl);
-          chips.push(`<button type="button" class="wardrobe-angle-btn" data-angle="${safeAngleName}" data-url="${safeAngleUrl}" title="${safeAngleName}"><img src="${safeAngleUrl}" alt="${safeAngleName}" draggable="false"></button>`);
+          chips.push(`<button type="button" class="wardrobe-angle-btn" data-angle="${safeAngleName}" data-url="${safeAngleUrl}" aria-label="${safeAngleName}"><img src="${safeAngleUrl}" alt="${safeAngleName}" draggable="false"></button>`);
         }
         angleRowHtml = `<div class="wardrobe-angles">${chips.join('')}</div>`;
       }
 
       return `
-        <div class="wardrobe-card" draggable="true" data-url="${safeUrl}" data-name="${safeName}" data-cat="${safeCat}" data-tags="${safeTags}" title="${safeName} — ${safeCat}">
+        <div class="wardrobe-card" draggable="true" data-url="${safeUrl}" data-name="${safeName}" data-cat="${safeCat}" data-tags="${safeTags}" aria-label="${safeName} — ${safeCat}">
           ${url
             ? `<img class="wardrobe-card-img" src="${safeUrl}" alt="${safeName}" loading="lazy" onerror="this.style.display='none'" draggable="false">`
             : `<div class="wardrobe-card-img" style="display:flex;align-items:center;justify-content:center;color:#555;font-size:10px;">no image</div>`}
@@ -7056,7 +7278,7 @@ async function searchPinterest() {
 
     if (data.pins && data.pins.length > 0) {
       results.innerHTML = data.pins.map(pin =>
-        `<img src="${pin.thumbnail}" alt="${pin.description}" title="${pin.description}" onclick="usePinterestPose('${pin.image}')" loading="lazy">`
+        `<img src="${pin.thumbnail}" alt="${pin.description}" aria-label="${pin.description}" onclick="usePinterestPose('${pin.image}')" loading="lazy">`
       ).join('');
       status.textContent = `${data.pins.length} poses found — click one to use as reference`;
     } else {
@@ -7413,6 +7635,97 @@ document.querySelector('#crop-workspace .crop-apply')?.addEventListener('click',
 window.openCropWorkspace = openCropWorkspace;
 window.closeCropWorkspace = closeCropWorkspace;
 
+// --- Smart subject-aware crop (darkroom.crop.smart-subject-aware) ---
+// /api/analyze-image returns { nudity_level, face_visible, scene_type,
+// subject_count, ... } but no bounding boxes today. We approximate a
+// smart crop by:
+//   - face_visible → bias the frame upward (face usually in top half)
+//                    and constrain to a 4:5 portrait-friendly aspect
+//   - subject_count >= 2 → keep a wider frame, constrain to 4:5
+//   - else → padded center crop
+// Future: extend /api/analyze-image to return real bounding boxes for
+// pixel-perfect smart-cropping. For now this is "smart-aware" not
+// "smart-precise" — see darkroom.crop.smart-subject-aware in the plan.
+async function runSmartCrop() {
+  if (!_cropImage) {
+    if (typeof toast === 'function') toast('Open a crop session first');
+    return;
+  }
+  const btn = document.getElementById('crop-smart-btn');
+  const status = document.getElementById('crop-smart-status');
+  const sourceUrl = (typeof currentUrl !== 'undefined' && currentUrl) ? currentUrl : null;
+  if (!sourceUrl) {
+    if (typeof toast === 'function') toast('Smart crop needs a current image URL');
+    return;
+  }
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Analyzing subject...';
+  try {
+    const hdrs = (typeof headers === 'function')
+      ? { ...headers(), 'Content-Type': 'application/json' }
+      : { 'Content-Type': 'application/json' };
+    const resp = await fetch('/api/analyze-image', {
+      method: 'POST',
+      headers: hdrs,
+      body: JSON.stringify({ image_url: sourceUrl }),
+    });
+    let data = null;
+    try { data = await resp.json(); } catch (_) {}
+    if (!resp.ok || !data) {
+      const msg = (data && data.error) || resp.statusText || 'analyze failed';
+      if (typeof toast === 'function') toast('Smart crop unavailable: ' + msg);
+      if (status) status.textContent = 'Failed: ' + msg;
+      return;
+    }
+    const padding = parseFloat(document.getElementById('crop-smart-padding')?.value || '1.2');
+    const W = _cropImage.naturalWidth || _cropImage.width;
+    const H = _cropImage.naturalHeight || _cropImage.height;
+    let cx = W / 2;
+    let cy = H / 2;
+    let cw = W / padding;
+    let ch = H / padding;
+
+    if (data.face_visible) {
+      // Bias center upward — face is typically in the top 40%.
+      cy = H * 0.4;
+      const targetAspect = 4 / 5;
+      if (cw / ch > targetAspect) cw = ch * targetAspect;
+      else ch = cw / targetAspect;
+    }
+    if ((data.subject_count || 0) >= 2) {
+      const targetAspect = 4 / 5;
+      if (cw / ch > targetAspect) cw = ch * targetAspect;
+      else ch = cw / targetAspect;
+    }
+
+    _cropFrame = {
+      x: Math.max(0, cx - cw / 2),
+      y: Math.max(0, cy - ch / 2),
+      w: Math.min(cw, W),
+      h: Math.min(ch, H),
+    };
+    // Clamp into image bounds in case bias pushed us out.
+    if (_cropFrame.x + _cropFrame.w > W) _cropFrame.x = W - _cropFrame.w;
+    if (_cropFrame.y + _cropFrame.h > H) _cropFrame.y = H - _cropFrame.h;
+    if (typeof updateCropFrameDom === 'function') updateCropFrameDom();
+
+    const verdict = data.face_visible
+      ? 'face-aware'
+      : ((data.subject_count || 0) >= 2 ? 'multi-subject' : 'centered');
+    if (typeof toast === 'function') toast('Smart crop: ' + verdict);
+    if (status) status.textContent = verdict
+      + (typeof data.subject_count === 'number' ? ' (' + data.subject_count + ' subj)' : '');
+  } catch (e) {
+    if (typeof toast === 'function') toast('Smart crop failed: ' + (e?.message || e));
+    if (status) status.textContent = 'Error: ' + (e?.message || e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+document.getElementById('crop-smart-btn')?.addEventListener('click', runSmartCrop);
+window.runSmartCrop = runSmartCrop;
+window.smartCrop = runSmartCrop;
+
 // --- Crop Tool ---
 let cropImage = null;
 let cropCallback = null;
@@ -7736,7 +8049,7 @@ function openFaceSwap() {
   // Populate with character ref images
   const container = document.getElementById('faceswap-chars');
   container.innerHTML = characters.map(c =>
-    `<img class="faceswap-face" src="${c.ref_image_url}" title="${c.display_name}" onclick="selectFace('${c.ref_image_url}', this)">`
+    `<img class="faceswap-face" src="${c.ref_image_url}" alt="${c.display_name}" aria-label="${c.display_name}" onclick="selectFace('${c.ref_image_url}', this)">`
   ).join('');
   document.getElementById('faceswap-upload').value = '';
   document.getElementById('faceswap-panel').style.display = 'block';
