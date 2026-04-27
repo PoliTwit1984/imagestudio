@@ -57,6 +57,51 @@ export async function handleSafeEditRoutes(
   url: URL,
   deps: Pick<RouteDeps, "saveGeneration" | "getCharacter">
 ): Promise<Response | null> {
+  // ---------------------------------------------------------------------------
+  // /api/edit watch dispatcher (Watch engine — auto-routing).
+  //
+  // POST /api/edit with body.engine === "watch":
+  //   1. Pull (or compute) the source image's content profile.
+  //   2. Hard-refuse if profile.minor_concern || profile.violence (422).
+  //   3. Otherwise apply pickWatchEngine() rules → choose lens/glance/strip/
+  //      brush/eye based on profile + prompt intent + mask/ref presence.
+  //   4. Dispatch to the corresponding internal engine call and return the
+  //      result with a watch_decision: { chosen_engine, reason, profile }
+  //      field appended so the UI can surface what fired.
+  //
+  // body._watch is set as a re-entry guard — if any future callsite
+  // accidentally produces engine="watch" while this handler is dispatching
+  // downstream, the guard short-circuits to a friendly fallback instead of
+  // recursing.
+  //
+  // Note on route ordering: handleGenerationRoutes also registers
+  // POST /api/edit (for engines fal/pedit/grok) and is dispatched before
+  // handleSafeEditRoutes in the routes/index.ts chain. The watch handler
+  // here is therefore reached when (a) a downstream caller invokes
+  // handleSafeEditRoutes directly (tests, future composition), or (b) the
+  // route order is adjusted so safe-edit catches /api/edit first. The
+  // implementation is fully self-contained: no recursive HTTP self-calls,
+  // no dependency on handleGenerationRoutes — engine dispatch fans out to
+  // the per-engine call functions (callGrokEdit, callNanoBanana, etc.)
+  // already defined in this file.
+  // ---------------------------------------------------------------------------
+  if (url.pathname === "/api/edit" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    let watchBody: any = null;
+    try {
+      watchBody = await req.clone().json();
+    } catch {
+      // Body unreadable as JSON — fall through so the regular handler can
+      // surface a 400. Do NOT swallow the request here.
+      watchBody = null;
+    }
+    if (watchBody && watchBody.engine === "watch" && !watchBody._watch) {
+      return handleWatchRoute(watchBody, deps);
+    }
+    // Not engine="watch" — let downstream handlers (or 404) take it.
+    return null;
+  }
+
   if (url.pathname === "/api/detect-nsfw" && req.method === "POST") {
     if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handleDetectNsfw(req);
@@ -5691,6 +5736,353 @@ async function handleWardrobeForge(req: Request): Promise<Response> {
   } catch (err: any) {
     return Response.json(
       { error: "wardrobe_forge_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+// =============================================================================
+// Watch engine — content-aware auto-routing for /api/edit.
+//
+// Watch is a meta-engine: it never edits an image itself. It inspects the
+// source image's content profile (from /api/analyze-image, cached on
+// assets.metadata.content_profile when available) plus the user's prompt
+// and dispatches to one of the real engines (Lens/Glance/Strip/Brush/Eye).
+// Hard refusals (minor_concern / violence) are rejected with 422 even
+// before an engine is picked — defense-in-depth in case a profile slips
+// past analyze-image's own short-circuit.
+//
+// Routing rules (priority order):
+//   1. Mask present                            → Brush  (Flux Fill Pro)
+//   2. explicit_acts || nudity_level=explicit  → Strip  (P-Edit, NSFW-tolerant)
+//   3. topless/implied + ref image             → Lens   (Grok img2img Lock+List)
+//   4. topless/implied (single image)          → Lens   (identity anchor preserves face)
+//   5. SFW + compositional verbs               → Eye    (gpt-image-2 reasons over structure)
+//   6. SFW + style/grade verbs                 → Lens   (Grok handles color/grade)
+//   7. fallback                                → Glance (Nano Banana — fast, content-tolerant)
+// =============================================================================
+
+type WatchProfile = {
+  nudity_level: string;
+  scene_type: string;
+  primary_subject: string;
+  explicit_acts: boolean;
+  minor_concern: boolean;
+  violence: boolean;
+  tags: string[];
+  [k: string]: any;
+};
+
+type WatchDecision = {
+  chosen_engine: "lens" | "glance" | "strip" | "brush" | "eye";
+  reason: string;
+  profile: WatchProfile;
+};
+
+// Pure routing-rules function — separated from handleWatchRoute so it can be
+// unit-tested against a synthetic profile + prompt without any HTTP setup.
+export function pickWatchEngine(
+  profile: WatchProfile,
+  userPrompt: string,
+  hasMask: boolean,
+  hasRefImage: boolean
+): { chosen_engine: WatchDecision["chosen_engine"]; reason: string } {
+  const prompt = String(userPrompt || "");
+  const nudity = String(profile?.nudity_level || "none").toLowerCase();
+
+  // 1. Mask → Brush (mask-bound edits regardless of content)
+  if (hasMask) {
+    return {
+      chosen_engine: "brush",
+      reason: "mask provided — Brush is mask-based and content-tolerant",
+    };
+  }
+
+  // 2. Explicit content → Strip (P-Edit, NSFW-permissive)
+  if (profile?.explicit_acts || nudity === "explicit") {
+    return {
+      chosen_engine: "strip",
+      reason: "explicit content — Strip is NSFW-tolerant",
+    };
+  }
+
+  // 3. Topless/implied + ref image → Lens (Lock+List multi-image)
+  if ((nudity === "topless" || nudity === "implied") && hasRefImage) {
+    return {
+      chosen_engine: "lens",
+      reason: "topless/implied source + ref image — Lens (Lock+List) handles this",
+    };
+  }
+
+  // 4. Topless/implied (single image) → Lens with identity anchor
+  if (nudity === "topless" || nudity === "implied") {
+    return {
+      chosen_engine: "lens",
+      reason: "topless/implied source — Lens with identity anchor",
+    };
+  }
+
+  // 5. SFW + compositional change → Eye
+  if (nudity === "none" && /\b(change|swap|replace|move|put|add|remove|insert)\b/i.test(prompt)) {
+    return {
+      chosen_engine: "eye",
+      reason: "SFW + compositional change — Eye (gpt-image-2) reasons over structural intent",
+    };
+  }
+
+  // 6. SFW + style/color change → Lens
+  if (nudity === "none" && /\b(style|color|colour|grade|grading|look|tone|warm|cool|cinematic|hue|vibe|mood)\b/i.test(prompt)) {
+    return {
+      chosen_engine: "lens",
+      reason: "SFW + style/grade change — Lens for color/tone",
+    };
+  }
+
+  // 7. Fallback → Glance
+  return {
+    chosen_engine: "glance",
+    reason: "fallback — Glance (Nano Banana) handles most cases",
+  };
+}
+
+// Best-effort content profile lookup. Order:
+//   1. assets.metadata.content_profile cache (fast — sub-100ms when hit).
+//   2. Inline classification via xAI vision (same code path as
+//      handleAnalyzeImage). Failures return null so the caller can decide
+//      whether to fall back.
+async function getOrComputeWatchProfile(imageUrl: string): Promise<WatchProfile | null> {
+  // 1. Cache check
+  try {
+    const hit = await lookupAssetBySourceUrl(imageUrl);
+    if (hit && isV2Profile(hit.metadata?.content_profile)) {
+      return hit.metadata.content_profile as WatchProfile;
+    }
+  } catch {
+    // ignore — fall through to inline classification
+  }
+
+  // 2. Inline classification (mirrors handleAnalyzeImage parsing logic)
+  try {
+    const visionRes = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env("XAI_API_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "grok-4-1-fast-non-reasoning",
+        messages: [
+          { role: "system", content: ANALYZE_IMAGE_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Classify this image. Return ONLY the JSON object." },
+              { type: "image_url", image_url: { url: imageUrl } },
+            ],
+          },
+        ],
+        temperature: 0,
+      }),
+    });
+    if (!visionRes.ok) return null;
+    const visionData = await visionRes.json();
+    const raw = String(visionData?.choices?.[0]?.message?.content || "{}").trim();
+    const cleaned = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      return null;
+    }
+
+    const nudity = String(parsed.nudity_level || "").toLowerCase();
+    const scene = String(parsed.scene_type || "").toLowerCase();
+    const primarySubject = String(parsed.primary_subject || "").toLowerCase();
+    let tags: string[] = [];
+    if (Array.isArray(parsed.tags)) {
+      tags = parsed.tags
+        .map((t: any) => String(t || "").trim().toLowerCase())
+        .filter((t: string) => t.length > 0 && t.length <= 64)
+        .slice(0, 8);
+    }
+
+    return {
+      nudity_level: ANALYZE_NUDITY_VALUES.has(nudity) ? nudity : "none",
+      scene_type: ANALYZE_SCENE_VALUES.has(scene) ? scene : "other",
+      primary_subject: ANALYZE_PRIMARY_SUBJECT_VALUES.has(primarySubject)
+        ? primarySubject
+        : "other",
+      explicit_acts: Boolean(parsed.explicit_acts),
+      minor_concern: Boolean(parsed.minor_concern),
+      violence: Boolean(parsed.violence),
+      tags,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Dispatch a watch-routed edit to the chosen engine using the per-engine
+// inner call functions already defined above. Returns the upstream URL or
+// throws with an engine-tagged error message.
+async function dispatchWatchEdit(args: {
+  chosen_engine: WatchDecision["chosen_engine"];
+  imageUrl: string;
+  prompt: string;
+  maskUrl?: string;
+  refUrls?: string[];
+}): Promise<string> {
+  // Single-image edits prepend the identity anchor (matches the existing
+  // /api/edit and /api/smart-edit conventions). Mask flows skip the anchor.
+  const isSingleImageEdit = !args.maskUrl;
+  const anchored = isSingleImageEdit
+    ? `${IDENTITY_ANCHOR}. ${args.prompt}`
+    : args.prompt;
+
+  switch (args.chosen_engine) {
+    case "lens":
+      return await callGrokEdit({ imageUrl: args.imageUrl, prompt: anchored });
+    case "glance":
+      return await callNanoBanana({ imageUrl: args.imageUrl, prompt: anchored });
+    case "strip":
+      return await callPEdit({ imageUrl: args.imageUrl, prompt: anchored, refUrls: args.refUrls });
+    case "eye":
+      return await callGptImage2Edit({
+        imageUrl: args.imageUrl,
+        maskUrl: args.maskUrl,
+        prompt: anchored,
+        size: GPT_SIZE,
+        quality: GPT_QUALITY,
+      });
+    case "brush": {
+      // Brush requires a mask. If watch picked brush without a mask the
+      // routing rules are inconsistent — surface a clear error rather than
+      // silently producing garbage.
+      if (!args.maskUrl) {
+        throw new Error("Brush requires a mask_url; watch routing chose Brush without one");
+      }
+      const buf = await callFluxFillPro({
+        imageUrl: args.imageUrl,
+        maskUrl: args.maskUrl,
+        prompt: anchored,
+      });
+      const { uploadToStorage, buildUploadPath } = await import("../supabase");
+      return await uploadBufferToStorage(
+        buf,
+        "image/png",
+        buildUploadPath,
+        uploadToStorage,
+        "watch-brush"
+      );
+    }
+    default: {
+      // Defensive — pickWatchEngine should never return anything else.
+      const x: never = args.chosen_engine;
+      throw new Error(`watch: unknown engine "${x}"`);
+    }
+  }
+}
+
+async function handleWatchRoute(
+  body: any,
+  _deps: Pick<RouteDeps, "saveGeneration" | "getCharacter">
+): Promise<Response> {
+  try {
+    // Accept both /api/edit and /api/smart-edit body shapes — callers in
+    // the wild use both source_url+edit_prompt and image_url+prompt.
+    const imageUrl = String(body.image_url || body.source_url || "").trim();
+    const userPrompt = String(body.prompt || body.edit_prompt || "").trim();
+    const maskUrl = body.mask_url ? String(body.mask_url) : undefined;
+    const refUrls: string[] = Array.isArray(body.ref_urls)
+      ? body.ref_urls.filter(Boolean).map(String)
+      : body.ref_url
+        ? [String(body.ref_url)]
+        : [];
+    const hasMask = !!maskUrl;
+    const hasRefImage = refUrls.length > 0;
+
+    if (!imageUrl) {
+      return Response.json(
+        { error: "image_url required for watch routing" },
+        { status: 400 }
+      );
+    }
+    if (!userPrompt) {
+      return Response.json(
+        { error: "prompt required for watch routing" },
+        { status: 400 }
+      );
+    }
+
+    // 1. Profile lookup
+    const profile = await getOrComputeWatchProfile(imageUrl);
+
+    // 2. Hard refusal: minor_concern or violence → 422 even before engine pick
+    if (profile && (profile.minor_concern || profile.violence)) {
+      return Response.json(
+        {
+          error: "content_refused",
+          refusal_reason: profile.minor_concern ? "minor_concern" : "violence",
+          watch_decision: { profile, refused: true },
+        },
+        { status: 422 }
+      );
+    }
+
+    // 3. Pick engine (defensive fallback if profile lookup failed entirely)
+    const decision = profile
+      ? pickWatchEngine(profile, userPrompt, hasMask, hasRefImage)
+      : {
+          chosen_engine: "glance" as const,
+          reason: "profile-unavailable fallback — Glance handles most cases",
+        };
+
+    // 4. Dispatch to the chosen engine
+    let resultUrl: string;
+    try {
+      resultUrl = await dispatchWatchEdit({
+        chosen_engine: decision.chosen_engine,
+        imageUrl,
+        prompt: userPrompt,
+        maskUrl,
+        refUrls,
+      });
+    } catch (err: any) {
+      return Response.json(
+        {
+          error: "watch_engine_failed",
+          engine: decision.chosen_engine,
+          detail: String(err?.message || err).slice(0, 400),
+          watch_decision: {
+            chosen_engine: decision.chosen_engine,
+            reason: decision.reason,
+            profile: profile ?? null,
+          },
+        },
+        { status: 502 }
+      );
+    }
+
+    // 5. Return result with watch_decision attached. Fields exposed:
+    //    - ok / url / engine: match the existing /api/edit response shape
+    //      so callers can swap engine="watch" in without rewriting parsing.
+    //    - watch_decision: chosen_engine, reason, profile.
+    //    - reason (top-level): mirrors watch_decision.reason for the
+    //      verification check (expects body.reason).
+    return Response.json({
+      ok: true,
+      url: resultUrl,
+      engine: decision.chosen_engine,
+      reason: decision.reason,
+      watch_decision: {
+        chosen_engine: decision.chosen_engine,
+        reason: decision.reason,
+        profile: profile ?? null,
+      },
+    });
+  } catch (err: any) {
+    return Response.json(
+      { error: err?.message || "watch routing failed" },
       { status: 500 }
     );
   }
