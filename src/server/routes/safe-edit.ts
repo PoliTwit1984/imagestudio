@@ -1841,6 +1841,647 @@ export async function handleSafeEditRoutes(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // GET /api/lunas/:id/messages?cursor=&limit= — paginated messages list
+  //
+  // Accepts: optional query params cursor (ISO created_at + ',' + id) and limit
+  //          (default 50, max 100). Cursor-based pagination: returns messages
+  //          created_at < cursor, newest-first within the page.
+  // Returns: { messages: LunaMessage[], next_cursor?: string }
+  //
+  // Flow:
+  //   1. Auth + ownership check.
+  //   2. Parse cursor / limit from query params.
+  //   3. Fetch from darkroom_luna_messages ordered created_at.desc.
+  //   4. If returned rows === limit, synthesise next_cursor from last row.
+  //   5. Return { messages, next_cursor? }.
+  //
+  // Quota: free for all tiers.
+  // ---------------------------------------------------------------------------
+  {
+    const msgListMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/messages$/);
+    if (msgListMatch && req.method === "GET") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = msgListMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Ownership check
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Parse limit — cap at 100
+      const rawLimit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 50 : rawLimit), 100);
+
+      // Parse cursor — format: "<created_at>,<id>" where created_at is ISO 8601
+      // We use created_at for ordering and id as a tiebreaker when timestamps collide.
+      const cursorParam = url.searchParams.get("cursor") || "";
+      const cursorParts = cursorParam ? cursorParam.split(",") : [];
+      const cursorCreatedAt = cursorParts[0] || null;
+
+      // Build PostgREST URL
+      let msgsUrl =
+        `${SUPABASE_URL}/rest/v1/darkroom_luna_messages` +
+        `?luna_id=eq.${encodeFilterValue(lunaId)}` +
+        `&order=created_at.desc,id.desc` +
+        `&limit=${limit}`;
+
+      if (cursorCreatedAt) {
+        // Return rows older than the cursor position (exclusive)
+        msgsUrl += `&created_at=lt.${encodeURIComponent(cursorCreatedAt)}`;
+      }
+
+      let messages: import("../lunaCompanion").LunaMessage[] = [];
+      try {
+        const msgsRes = await fetch(msgsUrl, { headers: supaHeaders() });
+        if (!msgsRes.ok) {
+          const errText = await msgsRes.text().catch(() => "");
+          return Response.json(
+            { error: `messages fetch failed: ${msgsRes.status}`, detail: errText.slice(0, 200) },
+            { status: 502 },
+          );
+        }
+        messages = await msgsRes.json() as import("../lunaCompanion").LunaMessage[];
+      } catch (e: any) {
+        console.error("[api/lunas/:id/messages GET] fetch error:", e);
+        return Response.json({ error: e?.message || "messages_fetch_failed" }, { status: 500 });
+      }
+
+      // Build next_cursor from the last row if we hit the page limit
+      let next_cursor: string | undefined;
+      if (messages.length === limit) {
+        const last = messages[messages.length - 1];
+        if (last) {
+          next_cursor = `${last.created_at},${last.id}`;
+        }
+      }
+
+      return Response.json({ messages, ...(next_cursor ? { next_cursor } : {}) });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /api/lunas/:id/memories?type=&limit= — memory log (optionally by type)
+  //
+  // Accepts: optional query params type (one of fact|preference|event|kink|reference)
+  //          and limit (default 50, max 200).
+  // Returns: { memories: LunaMemory[] } (grouped by type when no filter, or
+  //          filtered array when type is specified). Only active memories
+  //          (invalidated_at IS NULL) are returned.
+  //
+  // POST /api/lunas/:id/memories/:mid/invalidate — set invalidated_at to now
+  //
+  // Returns: { memory: LunaMemory } — the updated row.
+  //
+  // Both routes require Auth + ownership check.
+  // ---------------------------------------------------------------------------
+  {
+    // GET /api/lunas/:id/memories
+    const memoriesGetMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/memories$/);
+    if (memoriesGetMatch && req.method === "GET") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = memoriesGetMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Ownership check
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Parse query params
+      const typeFilter = url.searchParams.get("type") || "";
+      const validTypes = new Set(["fact", "preference", "event", "kink", "reference"]);
+      const rawLimit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 50 : rawLimit), 200);
+
+      // Build PostgREST URL — active memories only (invalidated_at IS NULL)
+      let memoriesUrl =
+        `${SUPABASE_URL}/rest/v1/darkroom_luna_memories` +
+        `?luna_id=eq.${encodeFilterValue(lunaId)}` +
+        `&invalidated_at=is.null` +
+        `&order=created_at.desc` +
+        `&limit=${limit}`;
+
+      if (typeFilter && validTypes.has(typeFilter)) {
+        memoriesUrl += `&type=eq.${encodeURIComponent(typeFilter)}`;
+      }
+
+      let memories: import("../lunaCompanion").LunaMemory[] = [];
+      try {
+        const memRes = await fetch(memoriesUrl, { headers: supaHeaders() });
+        if (!memRes.ok) {
+          const errText = await memRes.text().catch(() => "");
+          return Response.json(
+            { error: `memories fetch failed: ${memRes.status}`, detail: errText.slice(0, 200) },
+            { status: 502 },
+          );
+        }
+        memories = await memRes.json() as import("../lunaCompanion").LunaMemory[];
+      } catch (e: any) {
+        console.error("[api/lunas/:id/memories GET] fetch error:", e);
+        return Response.json({ error: e?.message || "memories_fetch_failed" }, { status: 500 });
+      }
+
+      return Response.json({ memories });
+    }
+  }
+
+  // POST /api/lunas/:id/memories/:mid/invalidate
+  {
+    const invalidateMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/memories\/([^/]+)\/invalidate$/);
+    if (invalidateMatch && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = invalidateMatch[1];
+      const memoryId = invalidateMatch[2];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Ownership check — verify the luna belongs to the requesting user
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Fetch the memory row to verify it belongs to this luna
+      let memory: import("../lunaCompanion").LunaMemory | null = null;
+      try {
+        const memLookup = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_memories?id=eq.${encodeFilterValue(memoryId)}&luna_id=eq.${encodeFilterValue(lunaId)}&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!memLookup.ok) {
+          return Response.json({ error: `memory lookup failed: ${memLookup.status}` }, { status: 502 });
+        }
+        const rows = await memLookup.json() as import("../lunaCompanion").LunaMemory[];
+        memory = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "memory_lookup_failed" }, { status: 500 });
+      }
+
+      if (!memory) return Response.json({ error: "memory not found" }, { status: 404 });
+
+      // Set invalidated_at = now
+      let updatedMemory: import("../lunaCompanion").LunaMemory;
+      try {
+        const patchRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_luna_memories?id=eq.${encodeFilterValue(memoryId)}&luna_id=eq.${encodeFilterValue(lunaId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              ...supaHeaders(),
+              Prefer: "return=representation",
+            },
+            body: JSON.stringify({ invalidated_at: new Date().toISOString() }),
+          },
+        );
+        if (!patchRes.ok) {
+          const errText = await patchRes.text().catch(() => "");
+          return Response.json(
+            { error: `memory invalidate failed: ${patchRes.status}`, detail: errText.slice(0, 200) },
+            { status: 502 },
+          );
+        }
+        const rows = await patchRes.json() as import("../lunaCompanion").LunaMemory[];
+        if (!rows[0]) throw new Error("empty response from memory PATCH");
+        updatedMemory = rows[0];
+      } catch (e: any) {
+        console.error("[api/lunas/:id/memories/:mid/invalidate] patch error:", e);
+        return Response.json({ error: e?.message || "memory_invalidate_failed" }, { status: 500 });
+      }
+
+      return Response.json({ memory: updatedMemory });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /api/lunas/:id/voice — generate ElevenLabs voice note
+  //
+  // Accepts: JSON body { text: string, intimate?: boolean }
+  // Returns: { voice_url: string } — public URL of the generated mp3 in storage
+  //
+  // Flow:
+  //   1. Auth + ownership check.
+  //   2. Devotion-tier gate — 402 if not Devotion.
+  //   3. Parse body: text (required), intimate (optional, default false).
+  //   4. Resolve voice_id: luna.voice_id || default Ivanna (tQ4MEZFJOzsahSEEZtHK).
+  //   5. Call ElevenLabs TTS endpoint with model eleven_flash_v2_5.
+  //      intimate=true  → stability 0.10, style 1.0, speed 1.0
+  //      intimate=false → stability 0.18, style 0.95, speed 1.1
+  //   6. Upload mp3 buffer to storage at luna-voice/{lunaId}/{uuid}.mp3.
+  //   7. Return { voice_url }.
+  //
+  // Requires ELEVENLABS_API_KEY env var.
+  // ---------------------------------------------------------------------------
+  {
+    const voiceMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/voice$/);
+    if (voiceMatch && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = voiceMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Devotion-tier gate — query subscriptions table directly since getUserTier
+      // only returns BillingTier (no 'devotion'); we need a raw check here.
+      try {
+        const subUrl =
+          `${SUPABASE_URL}/rest/v1/subscriptions` +
+          `?user_id=eq.${encodeFilterValue(userId)}` +
+          `&status=in.(trialing,active)` +
+          `&tier=eq.devotion` +
+          `&select=id&limit=1`;
+        const subRes = await fetch(subUrl, { headers: supaHeaders() });
+        const subRows = subRes.ok ? await subRes.json() as Array<{ id: string }> : [];
+        if (!subRows.length) {
+          return Response.json(
+            {
+              error: "Voice notes require Devotion tier. Upgrade at /settings/billing.",
+              upgrade_required: true,
+              required_tier: "devotion",
+            },
+            { status: 402 },
+          );
+        }
+      } catch (e: any) {
+        // Non-fatal tier check failure — deny rather than silently allow
+        console.error("[api/lunas/:id/voice] tier check failed:", e);
+        return Response.json({ error: "tier_check_failed" }, { status: 503 });
+      }
+
+      // Ownership check — load the luna row
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Parse body
+      let body: Record<string, unknown> = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "invalid_json_body" }, { status: 400 });
+      }
+
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (!text) {
+        return Response.json({ error: "text is required" }, { status: 400 });
+      }
+
+      const intimate = body.intimate === true;
+
+      // Resolve voice_id — use luna's custom voice or default Ivanna
+      const DEFAULT_VOICE_ID = "tQ4MEZFJOzsahSEEZtHK";
+      const voiceId = luna.voice_id || DEFAULT_VOICE_ID;
+
+      // Resolve ElevenLabs API key
+      const elevenLabsKey = env("ELEVENLABS_API_KEY");
+      if (!elevenLabsKey) {
+        return Response.json({ error: "ELEVENLABS_API_KEY not configured" }, { status: 503 });
+      }
+
+      // Voice settings by mode
+      const voiceSettings = intimate
+        ? { stability: 0.10, similarity_boost: 0.75, style: 1.0, use_speaker_boost: true, speed: 1.0 }
+        : { stability: 0.18, similarity_boost: 0.75, style: 0.95, use_speaker_boost: true, speed: 1.1 };
+
+      // Call ElevenLabs TTS
+      let audioBuffer: ArrayBuffer;
+      try {
+        const ttsRes = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": elevenLabsKey,
+              "Content-Type": "application/json",
+              Accept: "audio/mpeg",
+            },
+            body: JSON.stringify({
+              text,
+              model_id: "eleven_flash_v2_5",
+              voice_settings: voiceSettings,
+            }),
+          },
+        );
+
+        if (!ttsRes.ok) {
+          const errText = await ttsRes.text().catch(() => "");
+          console.error(`[api/lunas/:id/voice] ElevenLabs error ${ttsRes.status}: ${errText}`);
+          return Response.json(
+            { error: `elevenlabs_error: ${ttsRes.status}`, detail: errText.slice(0, 200) },
+            { status: 502 },
+          );
+        }
+
+        audioBuffer = await ttsRes.arrayBuffer();
+      } catch (e: any) {
+        console.error("[api/lunas/:id/voice] ElevenLabs fetch failed:", e);
+        return Response.json({ error: e?.message || "tts_fetch_failed" }, { status: 502 });
+      }
+
+      if (!audioBuffer || audioBuffer.byteLength === 0) {
+        return Response.json({ error: "elevenlabs returned empty audio" }, { status: 502 });
+      }
+
+      // Upload mp3 to storage under luna-voice/{lunaId}/{uuid}.mp3
+      const { uploadToStorage } = await import("../supabase");
+      const fileUuid = crypto.randomUUID();
+      const storagePath = `luna-voice/${lunaId}/${fileUuid}.mp3`;
+      let voiceUrl: string;
+      try {
+        voiceUrl = await uploadToStorage(storagePath, audioBuffer, "audio/mpeg");
+      } catch (e: any) {
+        console.error("[api/lunas/:id/voice] storage upload failed:", e);
+        return Response.json(
+          { error: `storage_upload_failed: ${e?.message || "unknown"}` },
+          { status: 502 },
+        );
+      }
+
+      return Response.json({ voice_url: voiceUrl });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /api/lunas/:id/face/train — kick off fal.ai LoRA training
+  //
+  // Accepts: no body required (reads face_ref_url from luna row)
+  // Returns: { job_id: string, fal_request_id: string }
+  //
+  // Flow:
+  //   1. Auth + ownership check.
+  //   2. Devotion-tier gate — 402 if not Devotion.
+  //   3. Return 400 if luna.face_ref_url is null (no reference image uploaded).
+  //   4. Submit fal.ai LoRA training job to the queue endpoint.
+  //      trigger_word = "luna_" + lunaId.slice(0, 8)
+  //      images_data_url = luna.face_ref_url (single image for v1)
+  //   5. Insert a jobs row with vendor='fal', kind='lora_training', status='pending'.
+  //   6. Return { job_id, fal_request_id } immediately (async — webhook completes it).
+  //
+  // Requires FAL_API_KEY env var.
+  // On webhook completion (separate handler), face_lora_url is written to the luna row.
+  // ---------------------------------------------------------------------------
+  {
+    const faceTrainMatch = url.pathname.match(/^\/api\/lunas\/([^/]+)\/face\/train$/);
+    if (faceTrainMatch && req.method === "POST") {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+      const lunaId = faceTrainMatch[1];
+      const userId = extractUserId(req);
+      if (!userId) {
+        return Response.json(
+          { error: "x-user-id header required (auth not yet wired)" },
+          { status: 401 },
+        );
+      }
+
+      if (!SUPABASE_URL) return Response.json({ error: "supabase not configured" }, { status: 503 });
+
+      // Devotion-tier gate — query subscriptions table directly
+      try {
+        const subUrl =
+          `${SUPABASE_URL}/rest/v1/subscriptions` +
+          `?user_id=eq.${encodeFilterValue(userId)}` +
+          `&status=in.(trialing,active)` +
+          `&tier=eq.devotion` +
+          `&select=id&limit=1`;
+        const subRes = await fetch(subUrl, { headers: supaHeaders() });
+        const subRows = subRes.ok ? await subRes.json() as Array<{ id: string }> : [];
+        if (!subRows.length) {
+          return Response.json(
+            {
+              error: "Face LoRA training requires Devotion tier. Upgrade at /settings/billing.",
+              upgrade_required: true,
+              required_tier: "devotion",
+            },
+            { status: 402 },
+          );
+        }
+      } catch (e: any) {
+        console.error("[api/lunas/:id/face/train] tier check failed:", e);
+        return Response.json({ error: "tier_check_failed" }, { status: 503 });
+      }
+
+      // Ownership check — load the luna row
+      let luna: import("../lunaCompanion").Luna | null = null;
+      try {
+        const lookupRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/darkroom_lunas?id=eq.${encodeFilterValue(lunaId)}&deleted_at=is.null&limit=1`,
+          { headers: supaHeaders() },
+        );
+        if (!lookupRes.ok) {
+          return Response.json({ error: `luna lookup failed: ${lookupRes.status}` }, { status: 502 });
+        }
+        const rows = await lookupRes.json() as import("../lunaCompanion").Luna[];
+        luna = rows[0] ?? null;
+      } catch (e: any) {
+        return Response.json({ error: e?.message || "luna_lookup_failed" }, { status: 500 });
+      }
+
+      if (!luna) return Response.json({ error: "luna not found" }, { status: 404 });
+      if (luna.user_id !== userId) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+
+      // Require face_ref_url — must upload a reference image before training
+      if (!luna.face_ref_url) {
+        return Response.json(
+          { error: "face_ref_url is required before training — upload a reference image first via POST /api/lunas/:id/face/upload-ref" },
+          { status: 400 },
+        );
+      }
+
+      // Resolve fal.ai API key
+      const falApiKey = env("FAL_API_KEY");
+      if (!falApiKey) {
+        return Response.json({ error: "FAL_API_KEY not configured" }, { status: 503 });
+      }
+
+      const triggerWord = `luna_${lunaId.slice(0, 8)}`;
+
+      // Submit fal.ai LoRA training job to the queue endpoint.
+      // NOTE: images_data_url normally expects multiple images for best LoRA quality.
+      // TODO: augmented dataset (multiple crops/angles from the reference image)
+      //       to improve LoRA fidelity — will be a separate enhancement.
+      let falRequestId: string;
+      try {
+        const falRes = await fetch("https://queue.fal.run/fal-ai/flux-lora-fast-training", {
+          method: "POST",
+          headers: {
+            Authorization: `Key ${falApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            images_data_url: luna.face_ref_url,
+            trigger_word: triggerWord,
+            iter_multiplier: 1.0,
+          }),
+        });
+
+        if (!falRes.ok) {
+          const errText = await falRes.text().catch(() => "");
+          console.error(`[api/lunas/:id/face/train] fal.ai submit error ${falRes.status}: ${errText}`);
+          return Response.json(
+            { error: `fal_submit_error: ${falRes.status}`, detail: errText.slice(0, 200) },
+            { status: 502 },
+          );
+        }
+
+        const falData = await falRes.json() as { request_id?: string; [key: string]: unknown };
+        falRequestId = typeof falData.request_id === "string" ? falData.request_id : "";
+        if (!falRequestId) {
+          console.error("[api/lunas/:id/face/train] fal.ai returned no request_id:", JSON.stringify(falData).slice(0, 300));
+          return Response.json({ error: "fal_no_request_id" }, { status: 502 });
+        }
+      } catch (e: any) {
+        console.error("[api/lunas/:id/face/train] fal.ai fetch failed:", e);
+        return Response.json({ error: e?.message || "fal_fetch_failed" }, { status: 502 });
+      }
+
+      // Insert a jobs row for tracking
+      let jobId: string;
+      try {
+        const jobInsertRes = await fetch(`${SUPABASE_URL}/rest/v1/jobs`, {
+          method: "POST",
+          headers: { ...supaHeaders(), Prefer: "return=representation" },
+          body: JSON.stringify({
+            vendor: "fal",
+            vendor_request_id: falRequestId,
+            kind: "lora_training",
+            status: "pending",
+            engine: "fal-lora",
+            job_type: "lora_training",
+            user_id: userId,
+            params: {
+              luna_id: lunaId,
+              trigger_word: triggerWord,
+              face_ref_url: luna.face_ref_url,
+            },
+            progress: 0,
+          }),
+        });
+        if (!jobInsertRes.ok) {
+          const errText = await jobInsertRes.text().catch(() => "");
+          console.error(`[api/lunas/:id/face/train] jobs insert failed ${jobInsertRes.status}: ${errText}`);
+          return Response.json(
+            { error: `jobs_insert_failed: ${jobInsertRes.status}`, detail: errText.slice(0, 200) },
+            { status: 502 },
+          );
+        }
+        const jobRows = await jobInsertRes.json() as Array<{ id: string }>;
+        jobId = jobRows[0]?.id ?? "";
+        if (!jobId) {
+          throw new Error("jobs insert returned no id");
+        }
+      } catch (e: any) {
+        console.error("[api/lunas/:id/face/train] jobs insert error:", e);
+        return Response.json({ error: e?.message || "jobs_insert_failed" }, { status: 500 });
+      }
+
+      console.log(
+        `[api/lunas/:id/face/train] luna=${lunaId} fal_request_id=${falRequestId} job_id=${jobId}`,
+      );
+
+      return Response.json({ job_id: jobId, fal_request_id: falRequestId });
+    }
+  }
+
   return null;
 }
 
