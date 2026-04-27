@@ -1381,6 +1381,116 @@
     font-size: 14px;
   }
   .chain-load-refresh:hover { color: #a78bfa; }
+
+  /* Upgrade CTA + tier-comparison modal (darkroom.billing.upgrade-cta-ui) */
+  .upgrade-cta {
+    position: fixed;
+    top: 8px;
+    right: 90px;
+    z-index: 200;
+    background: linear-gradient(135deg, #a78bfa, #f472b6);
+    color: #fff;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .upgrade-cta:hover { filter: brightness(1.1); }
+
+  .upgrade-modal {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 1100;
+    display: none;
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .upgrade-modal.active { display: flex; }
+  .upgrade-modal-inner {
+    background: #0a0a0a;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    width: 100%; max-width: 920px;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .upgrade-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 16px;
+  }
+  .upgrade-modal-header h2 { color: #f5f5f5; margin: 0; font-size: 22px; }
+  .upgrade-modal-close {
+    background: transparent; border: none; color: #888;
+    font-size: 28px; cursor: pointer;
+  }
+  .upgrade-modal-banner {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid #f59e0b;
+    color: #f59e0b;
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .upgrade-tier-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .upgrade-tier-card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 18px;
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+  .upgrade-tier-card.featured {
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 1px #a78bfa55;
+  }
+  .upgrade-tier-name { color: #a78bfa; font-weight: 700; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .upgrade-tier-price { color: #f5f5f5; font-size: 28px; font-weight: 700; margin: 8px 0; }
+  .upgrade-tier-price-suffix { color: #888; font-size: 13px; font-weight: 400; }
+  .upgrade-tier-desc { color: #888; font-size: 12px; margin-bottom: 12px; line-height: 1.4; }
+  .upgrade-tier-limits {
+    list-style: none; padding: 0; margin: 12px 0;
+    flex: 1;
+  }
+  .upgrade-tier-limits li {
+    font-size: 12px; color: #ccc;
+    padding: 4px 0;
+    border-bottom: 1px solid #2a2a2a;
+    display: flex; justify-content: space-between;
+  }
+  .upgrade-tier-limits li.hit-metric {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
+    font-weight: 600;
+    padding: 4px 6px;
+    border-radius: 3px;
+    border-bottom: none;
+  }
+  .upgrade-tier-pick {
+    background: #a78bfa;
+    color: #fff;
+    border: none;
+    padding: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    margin-top: 12px;
+  }
+  .upgrade-tier-pick.current {
+    background: #2a2a2a;
+    color: #888;
+    cursor: default;
+  }
+  .upgrade-loading { color: #888; font-size: 13px; padding: 24px; text-align: center; }
 </style>
 </head>
 <body>
@@ -2565,6 +2675,21 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Upgrade CTA + tier-comparison modal (darkroom.billing.upgrade-cta-ui) -->
+<button id="upgrade-cta" class="upgrade-cta" aria-label="Upgrade to Pro or Team">⚡ Upgrade</button>
+<div id="upgrade-modal" class="upgrade-modal" style="display:none;">
+  <div class="upgrade-modal-inner">
+    <div class="upgrade-modal-header">
+      <h2>Pick a Plan</h2>
+      <button class="upgrade-modal-close" type="button" aria-label="Close">×</button>
+    </div>
+    <div id="upgrade-modal-banner" class="upgrade-modal-banner" style="display:none;"></div>
+    <div id="upgrade-tier-grid" class="upgrade-tier-grid">
+      <div class="upgrade-loading">Loading tiers…</div>
+    </div>
+  </div>
+</div>
 
 <!-- Edit-history drawer (darkroom.catalog.edit-history-drawer) -->
 <button id="history-drawer-toggle" class="history-drawer-toggle"
@@ -9269,6 +9394,152 @@ document.querySelector('.chain-builder-panel')?.addEventListener('toggle', (e) =
 
 // Initial render on app boot
 renderChainCanvas();
+
+// =============================================================================
+// Upgrade CTA + tier-comparison modal (darkroom.billing.upgrade-cta-ui)
+// =============================================================================
+let _upgradeTiersCache = null;
+
+const UPGRADE_METRIC_LABELS = {
+  generations_per_month: 'Generations',
+  edits_per_month: 'Edits',
+  upscales_per_month: 'Upscales (Reveal)',
+  jobs_per_month: 'Jobs',
+  chains_runs_per_month: 'Chain runs',
+  lut_extracts_per_month: 'LUT extracts',
+};
+
+async function loadUpgradeTiers() {
+  if (_upgradeTiersCache) return _upgradeTiersCache;
+  try {
+    const r = await fetch('/api/billing/tiers', { headers: headers() });
+    if (!r.ok) return null;
+    const d = await r.json();
+    _upgradeTiersCache = d.tiers || null;
+    return _upgradeTiersCache;
+  } catch { return null; }
+}
+
+async function loadUpgradeMe() {
+  try {
+    const r = await fetch('/api/billing/me', { headers: headers() });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+function fmtUpgradePrice(cents) {
+  if (cents === 0) return 'Free';
+  return '$' + (cents / 100).toFixed(0);
+}
+
+async function openUpgradeModal(opts = {}) {
+  const modal = document.getElementById('upgrade-modal');
+  if (!modal) return;
+  modal.classList.add('active');
+  modal.style.display = 'flex';
+
+  const banner = document.getElementById('upgrade-modal-banner');
+  if (opts.hitMetric) {
+    const labelKey = opts.hitMetric.endsWith('_per_month')
+      ? opts.hitMetric
+      : opts.hitMetric + '_per_month';
+    const label = UPGRADE_METRIC_LABELS[labelKey] || opts.hitMetric;
+    banner.textContent = `You've hit your ${label} limit (${opts.used ?? '?'}/${opts.limit ?? '?'}) this month on the ${opts.tier || 'free'} tier.`;
+    banner.style.display = '';
+  } else {
+    banner.style.display = 'none';
+  }
+
+  const grid = document.getElementById('upgrade-tier-grid');
+  grid.innerHTML = '<div class="upgrade-loading">Loading tiers…</div>';
+
+  const [tiers, me] = await Promise.all([loadUpgradeTiers(), loadUpgradeMe()]);
+  if (!tiers) {
+    grid.innerHTML = '<div class="upgrade-loading">Tiers unavailable.</div>';
+    return;
+  }
+
+  const currentTier = me?.tier || 'free';
+  const order = ['free', 'pro', 'team'];
+  const hitKey = opts.hitMetric
+    ? (opts.hitMetric.endsWith('_per_month') ? opts.hitMetric : opts.hitMetric + '_per_month')
+    : null;
+
+  grid.innerHTML = order.map(key => {
+    const t = tiers[key];
+    if (!t) return '';
+    const isCurrent = key === currentTier;
+    const featured = key === 'pro' && !isCurrent;
+
+    const limitItems = Object.entries(t.limits || {}).map(([metricKey, limit]) => {
+      const label = UPGRADE_METRIC_LABELS[metricKey] || metricKey;
+      const cls = hitKey && metricKey === hitKey ? 'hit-metric' : '';
+      const limitStr = (typeof limit === 'number') ? limit.toLocaleString() : String(limit);
+      return `<li class="${cls}"><span>${label}</span><span>${limitStr}/mo</span></li>`;
+    }).join('');
+
+    const displayName = t.display_name || key;
+    const priceCents = t.price_cents_monthly ?? 0;
+
+    return `
+      <div class="upgrade-tier-card ${featured ? 'featured' : ''}">
+        <div class="upgrade-tier-name">${displayName}</div>
+        <div class="upgrade-tier-price">${fmtUpgradePrice(priceCents)}<span class="upgrade-tier-price-suffix">${priceCents === 0 ? '' : '/mo'}</span></div>
+        <div class="upgrade-tier-desc">${t.description || ''}</div>
+        <ul class="upgrade-tier-limits">${limitItems}</ul>
+        <button class="upgrade-tier-pick ${isCurrent ? 'current' : ''}" data-tier="${key}" ${isCurrent ? 'disabled' : ''}>
+          ${isCurrent ? 'Current Plan' : (key === 'free' ? 'Downgrade' : 'Pick ' + displayName)}
+        </button>
+      </div>
+    `;
+  }).join('');
+
+  grid.querySelectorAll('.upgrade-tier-pick:not(.current)').forEach(btn => {
+    btn.addEventListener('click', () => pickUpgradeTier(btn.dataset.tier));
+  });
+}
+
+function closeUpgradeModal() {
+  const modal = document.getElementById('upgrade-modal');
+  if (modal) { modal.classList.remove('active'); modal.style.display = 'none'; }
+}
+
+function pickUpgradeTier(tierKey) {
+  if (typeof toast === 'function') {
+    toast(`Stripe checkout for ${tierKey} tier coming soon — we'll wire it once Stripe keys land.`);
+  }
+}
+
+document.getElementById('upgrade-cta')?.addEventListener('click', () => openUpgradeModal());
+document.querySelector('.upgrade-modal-close')?.addEventListener('click', closeUpgradeModal);
+
+// Click outside modal-inner to close
+document.getElementById('upgrade-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'upgrade-modal') closeUpgradeModal();
+});
+
+// Global 402 handler — wrap fetch so any quota_exceeded response anywhere
+// in the app auto-opens the upgrade modal pre-pointed at the hit metric.
+const _originalFetchForUpgrade = window.fetch;
+window.fetch = async function(...args) {
+  const resp = await _originalFetchForUpgrade.apply(this, args);
+  if (resp.status === 402) {
+    try {
+      const clone = resp.clone();
+      const data = await clone.json();
+      if (data?.quota_exceeded) {
+        openUpgradeModal({
+          hitMetric: data.metric,
+          used: data.used,
+          limit: data.limit,
+          tier: data.tier,
+        });
+      }
+    } catch {}
+  }
+  return resp;
+};
 </script>
 </body>
 </html>
