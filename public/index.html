@@ -1491,6 +1491,167 @@
     cursor: default;
   }
   .upgrade-loading { color: #888; font-size: 13px; padding: 24px; text-align: center; }
+
+  /* Admin cost dashboard (darkroom.enhancor.cost-dashboard) — ?admin=1 only */
+  #admin-tab { display: none; }
+  #tab-admin { display: none; }
+  body.admin-mode #admin-tab { display: block; }
+  body.admin-mode #tab-admin.active { display: block; }
+
+  .admin-cost-dashboard {
+    padding: 16px 0;
+  }
+  .admin-cost-dashboard h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #a78bfa;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .admin-cost-dashboard .admin-subtitle {
+    font-size: 0.75rem;
+    color: #555;
+    margin-bottom: 16px;
+  }
+  .admin-stub-notice {
+    background: #1a1a1a;
+    border: 1px dashed #333;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 14px;
+  }
+  .admin-stub-notice span { color: #a78bfa; }
+
+  .admin-range-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .admin-range-btn {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    color: #888;
+    padding: 5px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .admin-range-btn.active, .admin-range-btn:hover {
+    border-color: #a78bfa;
+    color: #a78bfa;
+  }
+  .admin-range-custom {
+    display: none;
+    gap: 6px;
+    align-items: center;
+  }
+  .admin-range-custom.visible { display: flex; }
+  .admin-range-custom input[type="date"] {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    color: #ccc;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+  }
+  .admin-range-custom button {
+    background: #222;
+    border: 1px solid #a78bfa;
+    color: #a78bfa;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.78rem;
+  }
+
+  .admin-chart-container {
+    background: #111;
+    border: 1px solid #1e1e1e;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    overflow-x: auto;
+  }
+  .admin-chart-container h3 {
+    font-size: 0.8rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 12px;
+  }
+  .admin-chart-container svg { display: block; }
+
+  .admin-table-container {
+    background: #111;
+    border: 1px solid #1e1e1e;
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+  .admin-table-container h3 {
+    font-size: 0.8rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 12px;
+  }
+  .admin-cost-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  .admin-cost-table th {
+    text-align: left;
+    color: #555;
+    font-weight: 500;
+    padding: 6px 10px;
+    border-bottom: 1px solid #1e1e1e;
+    font-size: 0.73rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .admin-cost-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #161616;
+    color: #ccc;
+    vertical-align: middle;
+  }
+  .admin-cost-table tr:last-child td { border-bottom: none; }
+  .admin-cost-table td.cost-val { color: #ec4899; font-variant-numeric: tabular-nums; }
+  .admin-cost-table td.jobs-val { color: #a78bfa; font-variant-numeric: tabular-nums; }
+  .admin-cost-table td.avg-val { color: #50c878; font-variant-numeric: tabular-nums; }
+  .admin-cost-table tfoot td {
+    font-weight: 600;
+    color: #e0e0e0;
+    border-top: 1px solid #2a2a2a;
+    border-bottom: none;
+    padding-top: 10px;
+  }
+  .admin-model-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .admin-no-data {
+    color: #444;
+    font-size: 0.82rem;
+    text-align: center;
+    padding: 24px;
+  }
+  .admin-loading {
+    color: #555;
+    font-size: 0.82rem;
+    padding: 24px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -1521,6 +1682,7 @@
     <div class="tab active" onclick="switchTab('generate')">Generate</div>
     <div class="tab" onclick="switchTab('history')">History</div>
     <div class="tab" onclick="switchTab('settings')">Settings</div>
+    <div class="tab" id="admin-tab" onclick="switchTab('admin')">Admin</div>
   </div>
 
   <div class="main-layout">
@@ -2279,6 +2441,46 @@
     <div class="settings-container" id="settings-container">
       <div class="settings-loading">Loading settings...</div>
     </div>
+  </div>
+
+  <!-- Admin tab — Enhancor cost dashboard. Gated by ?admin=1 URL param.
+       See darkroom.enhancor.cost-dashboard. Endpoint /api/admin/enhancor-costs
+       is a TODO — falls back to seeded mock data with a stub notice. -->
+  <div class="tab-content" id="tab-admin">
+    <section id="enhancor-cost-dashboard" class="admin-cost-dashboard">
+      <h2>Enhancor Cost Dashboard</h2>
+      <p class="admin-subtitle">Vendor spend by model — sourced from jobs table (vendor_request_id + cost_credits)</p>
+
+      <div class="admin-stub-notice" id="admin-endpoint-notice" style="display:none;">
+        <span>stub:</span> endpoint coming in next task — <code>/api/admin/enhancor-costs</code> not yet wired.
+        Showing seeded mock data so the UI is testable now.
+      </div>
+
+      <!-- Date range selector -->
+      <div class="admin-range-row">
+        <button class="admin-range-btn active" data-days="7" onclick="adminSetRange(7, this)">Last 7 days</button>
+        <button class="admin-range-btn" data-days="30" onclick="adminSetRange(30, this)">Last 30 days</button>
+        <button class="admin-range-btn" data-days="custom" onclick="adminToggleCustomRange(this)">Custom</button>
+        <div class="admin-range-custom" id="admin-custom-range">
+          <input type="date" id="admin-date-from" />
+          <span style="color:#444;">to</span>
+          <input type="date" id="admin-date-to" />
+          <button onclick="adminApplyCustomRange()">Apply</button>
+        </div>
+      </div>
+
+      <!-- Bar chart: total cost per day -->
+      <div class="admin-chart-container">
+        <h3>Total Cost-per-Day (credits)</h3>
+        <div id="admin-chart-area"><div class="admin-loading">Loading…</div></div>
+      </div>
+
+      <!-- Breakdown table per model -->
+      <div class="admin-table-container">
+        <h3>Breakdown by Model</h3>
+        <div id="admin-table-area"><div class="admin-loading">Loading…</div></div>
+      </div>
+    </section>
   </div>
 
   </div><!-- end main-left -->
@@ -9518,6 +9720,264 @@ document.querySelector('.upgrade-modal-close')?.addEventListener('click', closeU
 document.getElementById('upgrade-modal')?.addEventListener('click', (e) => {
   if (e.target.id === 'upgrade-modal') closeUpgradeModal();
 });
+
+// ── Admin cost dashboard (darkroom.enhancor.cost-dashboard) ────────────────
+// Activated by ?admin=1 in the URL. Falls back to embedded mock data when
+// /api/admin/enhancor-costs is not yet wired. SVG bar chart — no lib deps.
+
+(function initAdminDashboard() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('admin') !== '1') return;
+  document.body.classList.add('admin-mode');
+
+  // ── Mock seed data — 30 days, 5 models ──────────────────────────────────
+  const MODEL_COLORS = {
+    'topaz-enhance':     '#a78bfa',
+    'freepik-magnific':  '#ec4899',
+    'replicate-esrgan':  '#50c878',
+    'fal-ccsr':          '#f59e0b',
+    'grok-img2img':      '#0ea5e9',
+  };
+  const MODEL_LABELS = {
+    'topaz-enhance':     'Topaz Enhance',
+    'freepik-magnific':  'Freepik Magnific',
+    'replicate-esrgan':  'Replicate ESRGAN',
+    'fal-ccsr':          'fal.ai CCSR',
+    'grok-img2img':      'Grok img2img',
+  };
+  const MODELS = Object.keys(MODEL_COLORS);
+
+  function buildMockData(days) {
+    const rows = [];
+    const today = new Date();
+    for (let d = days - 1; d >= 0; d--) {
+      const dt = new Date(today);
+      dt.setDate(dt.getDate() - d);
+      const dateStr = dt.toISOString().slice(0, 10);
+      MODELS.forEach(slug => {
+        // pseudo-random but deterministic enough to look realistic
+        const seed = (dt.getDate() * 17 + slug.length * 13) % 100;
+        const jobs = Math.floor(seed * 0.4 + 1);
+        const costPerJob = { 'topaz-enhance': 8, 'freepik-magnific': 12,
+                             'replicate-esrgan': 5, 'fal-ccsr': 7, 'grok-img2img': 3 }[slug];
+        rows.push({ date: dateStr, slug, jobs, cost_credits: jobs * costPerJob });
+      });
+    }
+    return rows;
+  }
+
+  // ── State ────────────────────────────────────────────────────────────────
+  let currentDays = 7;
+  let customFrom = null, customTo = null;
+  let usingMock = false;
+
+  // ── Fetch or mock ────────────────────────────────────────────────────────
+  async function fetchCostData(days, from, to) {
+    try {
+      let url = `/api/admin/enhancor-costs?days=${days}`;
+      if (from && to) url += `&from=${from}&to=${to}`;
+      const res = await fetch(url, { headers: headers() });
+      if (!res.ok) throw new Error('not ready');
+      const json = await res.json();
+      usingMock = false;
+      document.getElementById('admin-endpoint-notice').style.display = 'none';
+      return json.rows || json;
+    } catch (_) {
+      usingMock = true;
+      document.getElementById('admin-endpoint-notice').style.display = 'block';
+      const d = (from && to)
+        ? Math.round((new Date(to) - new Date(from)) / 86400000) + 1
+        : days;
+      return buildMockData(d);
+    }
+  }
+
+  // ── SVG bar chart ────────────────────────────────────────────────────────
+  function renderChart(rows, days) {
+    const container = document.getElementById('admin-chart-area');
+    if (!rows || rows.length === 0) {
+      container.innerHTML = '<div class="admin-no-data">No data for this range</div>';
+      return;
+    }
+
+    // Aggregate by date
+    const byDate = {};
+    rows.forEach(r => {
+      byDate[r.date] = (byDate[r.date] || 0) + Number(r.cost_credits);
+    });
+    const dates = Object.keys(byDate).sort();
+    const values = dates.map(d => byDate[d]);
+    const maxVal = Math.max(...values, 1);
+
+    const W = Math.min(dates.length * 38 + 60, 820);
+    const H = 140;
+    const barW = Math.max(18, Math.floor((W - 60) / dates.length) - 4);
+    const padL = 46, padR = 10, padT = 12, padB = 32;
+    const chartH = H - padT - padB;
+    const chartW = W - padL - padR;
+    const step = chartW / dates.length;
+
+    let bars = '';
+    let xLabels = '';
+    let yLines = '';
+
+    // Y grid lines + labels (0, 25%, 50%, 75%, 100%)
+    [0, 0.25, 0.5, 0.75, 1].forEach(pct => {
+      const y = padT + chartH * (1 - pct);
+      const val = Math.round(maxVal * pct);
+      yLines += `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="#1e1e1e" stroke-width="1"/>`;
+      yLines += `<text x="${padL - 4}" y="${y + 4}" text-anchor="end" font-size="9" fill="#444">${val}</text>`;
+    });
+
+    dates.forEach((date, i) => {
+      const barH = Math.max(2, (values[i] / maxVal) * chartH);
+      const x = padL + i * step + (step - barW) / 2;
+      const y = padT + chartH - barH;
+      const gradId = `bar-grad-${i}`;
+      bars += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}"
+                     fill="#a78bfa" rx="2" opacity="0.85">
+                 <title>${date}: ${values[i]} credits</title>
+               </rect>`;
+
+      // X labels — skip if too crowded
+      const skipInterval = dates.length > 14 ? 7 : dates.length > 7 ? 2 : 1;
+      if (i % skipInterval === 0) {
+        const label = date.slice(5); // MM-DD
+        xLabels += `<text x="${x + barW / 2}" y="${H - 6}" text-anchor="middle"
+                          font-size="9" fill="#555">${label}</text>`;
+      }
+    });
+
+    container.innerHTML = `
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
+           style="font-family:-apple-system,sans-serif;max-width:100%;">
+        ${yLines}
+        ${bars}
+        ${xLabels}
+        <line x1="${padL}" x2="${padL}" y1="${padT}" y2="${padT + chartH}" stroke="#2a2a2a" stroke-width="1"/>
+        <line x1="${padL}" x2="${W - padR}" y1="${padT + chartH}" y2="${padT + chartH}" stroke="#2a2a2a" stroke-width="1"/>
+        <text x="${padL / 2 - 4}" y="${padT + chartH / 2}" text-anchor="middle"
+              font-size="9" fill="#444" transform="rotate(-90,${padL / 2 - 4},${padT + chartH / 2})">credits</text>
+      </svg>`;
+  }
+
+  // ── Breakdown table ──────────────────────────────────────────────────────
+  function renderTable(rows) {
+    const area = document.getElementById('admin-table-area');
+    if (!rows || rows.length === 0) {
+      area.innerHTML = '<div class="admin-no-data">No data for this range</div>';
+      return;
+    }
+
+    // Aggregate by slug
+    const bySlug = {};
+    rows.forEach(r => {
+      if (!bySlug[r.slug]) bySlug[r.slug] = { slug: r.slug, jobs: 0, cost_credits: 0 };
+      bySlug[r.slug].jobs += Number(r.jobs);
+      bySlug[r.slug].cost_credits += Number(r.cost_credits);
+    });
+    const slugs = Object.values(bySlug).sort((a, b) => b.cost_credits - a.cost_credits);
+    const totalJobs = slugs.reduce((s, r) => s + r.jobs, 0);
+    const totalCost = slugs.reduce((s, r) => s + r.cost_credits, 0);
+
+    let tBody = '';
+    slugs.forEach(r => {
+      const color = MODEL_COLORS[r.slug] || '#666';
+      const label = MODEL_LABELS[r.slug] || r.slug;
+      const avg = r.jobs ? (r.cost_credits / r.jobs).toFixed(1) : '—';
+      tBody += `<tr>
+        <td><span class="admin-model-dot" style="background:${color};"></span>${label}</td>
+        <td class="cost-val">${r.cost_credits.toLocaleString()}</td>
+        <td class="jobs-val">${r.jobs.toLocaleString()}</td>
+        <td class="avg-val">${avg}</td>
+      </tr>`;
+    });
+
+    area.innerHTML = `
+      <table class="admin-cost-table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Total Credits</th>
+            <th>Jobs</th>
+            <th>Avg/Job</th>
+          </tr>
+        </thead>
+        <tbody>${tBody}</tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td class="cost-val">${totalCost.toLocaleString()}</td>
+            <td class="jobs-val">${totalJobs.toLocaleString()}</td>
+            <td class="avg-val">${totalJobs ? (totalCost / totalJobs).toFixed(1) : '—'}</td>
+          </tr>
+        </tfoot>
+      </table>`;
+  }
+
+  // ── Refresh ──────────────────────────────────────────────────────────────
+  async function adminRefresh() {
+    document.getElementById('admin-chart-area').innerHTML = '<div class="admin-loading">Loading…</div>';
+    document.getElementById('admin-table-area').innerHTML = '<div class="admin-loading">Loading…</div>';
+    const rows = await fetchCostData(currentDays, customFrom, customTo);
+    renderChart(rows, currentDays);
+    renderTable(rows);
+  }
+
+  // ── Public handlers (called from onclick attrs in HTML) ──────────────────
+  window.adminSetRange = function(days, btn) {
+    currentDays = days;
+    customFrom = null; customTo = null;
+    document.getElementById('admin-custom-range').classList.remove('visible');
+    document.querySelectorAll('.admin-range-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    adminRefresh();
+  };
+
+  window.adminToggleCustomRange = function(btn) {
+    const row = document.getElementById('admin-custom-range');
+    const open = row.classList.toggle('visible');
+    document.querySelectorAll('.admin-range-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.toggle('active', open);
+  };
+
+  window.adminApplyCustomRange = function() {
+    const from = document.getElementById('admin-date-from').value;
+    const to = document.getElementById('admin-date-to').value;
+    if (!from || !to) return;
+    customFrom = from; customTo = to;
+    currentDays = Math.round((new Date(to) - new Date(from)) / 86400000) + 1;
+    adminRefresh();
+  };
+
+  // Auto-load when admin tab is first opened
+  const origSwitchTab = window.switchTab;
+  let adminLoaded = false;
+  window.switchTab = function(name) {
+    if (typeof origSwitchTab === 'function') origSwitchTab(name);
+    if (name === 'admin' && !adminLoaded) {
+      adminLoaded = true;
+      adminRefresh();
+    }
+  };
+
+  // Pre-populate custom range inputs with sensible defaults
+  const today = new Date();
+  const weekAgo = new Date(today); weekAgo.setDate(today.getDate() - 6);
+  document.getElementById('admin-date-to').value = today.toISOString().slice(0, 10);
+  document.getElementById('admin-date-from').value = weekAgo.toISOString().slice(0, 10);
+
+  // If user lands directly on #admin tab or admin=1, auto-open
+  if (window.location.hash === '#admin') {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.getElementById('admin-tab')?.classList.add('active');
+    const adminContent = document.getElementById('tab-admin');
+    if (adminContent) adminContent.classList.add('active');
+    adminLoaded = true;
+    adminRefresh();
+  }
+})();
 
 // Global 402 handler — wrap fetch so any quota_exceeded response anywhere
 // in the app auto-opens the upgrade modal pre-pointed at the hit metric.
