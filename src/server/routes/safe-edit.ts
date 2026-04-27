@@ -354,6 +354,33 @@ export async function handleSafeEditRoutes(
     return handleWardrobeForge(req);
   }
 
+  // Multi-angle variant routes — POST to add an angle, DELETE to remove one.
+  // Path shape: /api/wardrobe/:id/angles[/:angle]. The id segment must look
+  // like a uuid so we don't shadow other /api/wardrobe/* routes.
+  //
+  //   POST   /api/wardrobe/:id/angles            body { angle, asset_url }
+  //   DELETE /api/wardrobe/:id/angles/:angle
+  {
+    const angleMatch = url.pathname.match(
+      /^\/api\/wardrobe\/([0-9a-fA-F-]{36})\/angles(?:\/([a-zA-Z0-9_-]+))?$/
+    );
+    if (angleMatch) {
+      if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+      const wardrobeId = angleMatch[1];
+      const angleSeg = angleMatch[2];
+      if (req.method === "POST" && !angleSeg) {
+        return handleWardrobeAngleAdd(req, wardrobeId);
+      }
+      if (req.method === "DELETE" && angleSeg) {
+        return handleWardrobeAngleDelete(wardrobeId, angleSeg);
+      }
+      return Response.json(
+        { error: "method_not_allowed", method: req.method, path: url.pathname },
+        { status: 405 }
+      );
+    }
+  }
+
   return null;
 }
 
@@ -5206,6 +5233,19 @@ const WARDROBE_VALID_CATEGORIES = new Set([
   "hosiery",
 ]);
 
+// Angle keys allowed in attributes.angles. 'front' is the canonical view that
+// also lives on wardrobe.asset_id. Other entries point at sibling URLs that
+// the UI can swap into the garment-ref slot.
+const WARDROBE_VALID_ANGLES = new Set([
+  "front",
+  "back",
+  "side",
+  "side_left",
+  "side_right",
+  "detail",
+  "three_quarter",
+]);
+
 async function handleWardrobeList(url: URL): Promise<Response> {
   try {
     if (!SUPABASE_URL) {
@@ -5457,13 +5497,41 @@ async function handleWardrobeForge(req: Request): Promise<Response> {
       );
     }
 
+    // Multi-angle support: caller may declare which view this forge call
+    // produces. 'front' (default) keeps the legacy behavior — create a new
+    // wardrobe row. Any non-front angle requires `wardrobe_id` and instead
+    // appends the resulting URL into attributes.angles[angle] on that row.
+    // See darkroom.wardrobe.multi-angle.
+    const angle = typeof body.angle === "string" && body.angle.trim()
+      ? body.angle.trim().toLowerCase()
+      : "front";
+    if (!WARDROBE_VALID_ANGLES.has(angle)) {
+      return Response.json(
+        {
+          error: `invalid angle '${angle}' — valid: ${[...WARDROBE_VALID_ANGLES].join(" | ")}`,
+          field: "angle",
+        },
+        { status: 400 }
+      );
+    }
+    const targetWardrobeId =
+      typeof body.wardrobe_id === "string" ? body.wardrobe_id.trim() : "";
+    if (angle !== "front" && !targetWardrobeId) {
+      return Response.json(
+        { error: "wardrobe_id required when angle is not 'front'", field: "wardrobe_id" },
+        { status: 400 }
+      );
+    }
+
+    // category is required for the front (new-row) path. For an angle append
+    // we pull category off the existing wardrobe row instead, so allow blank.
     const category = typeof body.category === "string" ? body.category.trim() : "";
-    if (!category) {
+    if (angle === "front" && !category) {
       return Response.json({ error: "category required", field: "category" }, { status: 400 });
     }
     // Soft validation — wardrobe table accepts free-text categories. We only
     // warn through the response.
-    const categoryKnown = FORGE_VALID_CATEGORIES.has(category);
+    const categoryKnown = category ? FORGE_VALID_CATEGORIES.has(category) : true;
 
     const subcategory = typeof body.subcategory === "string" ? body.subcategory.trim() : "";
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -5682,6 +5750,32 @@ async function handleWardrobeForge(req: Request): Promise<Response> {
       );
     }
 
+    // Two paths from here:
+    //   1) angle === 'front'  → insert a brand-new wardrobe row pointing at
+    //                            the asset we just created (legacy default).
+    //   2) angle !== 'front'  → leave the existing wardrobe row's primary
+    //                            asset_id alone. Just merge the new URL into
+    //                            attributes.angles[angle] on that row so the
+    //                            UI's angle picker can swap it in.
+    if (angle !== "front") {
+      const merged = await mergeWardrobeAngle(targetWardrobeId, angle, transparentUrl);
+      if (!merged.ok) {
+        return Response.json(merged.body, { status: merged.status });
+      }
+      return Response.json(
+        {
+          ok: true,
+          wardrobe: merged.row,
+          asset,
+          preview_url: transparentUrl,
+          angle,
+          bg_stripped: bgStripped,
+          bg_strip_skip_reason: bgStrippedSkipReason,
+        },
+        { status: 200 }
+      );
+    }
+
     // Insert wardrobe row pointing at the new asset.
     const wardrobeRow: Record<string, any> = {
       asset_id: asset.id,
@@ -5736,6 +5830,232 @@ async function handleWardrobeForge(req: Request): Promise<Response> {
   } catch (err: any) {
     return Response.json(
       { error: "wardrobe_forge_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+// =============================================================================
+// Multi-angle wardrobe variants (darkroom.wardrobe.multi-angle)
+//
+// A single wardrobe row's primary `asset_id` is the canonical front view. Any
+// additional viewpoints (back, side, detail, etc.) live as URL strings under
+// attributes.angles[angle]. Storing as URL strings keeps it cheap — no extra
+// table, no FK fan-out, no migration. The cost is that the angle URLs are not
+// auto-cascaded if the underlying asset row is hard-deleted, but the same
+// cascading concern doesn't apply because each angle URL points at object
+// storage directly, not at an `assets` row.
+//
+// API:
+//   POST   /api/wardrobe/:id/angles            body { angle, asset_url }
+//   DELETE /api/wardrobe/:id/angles/:angle
+//
+// Both return the updated wardrobe row.
+// =============================================================================
+
+// Pull a wardrobe row by id from PostgREST. Returns null on miss, throws on
+// other errors so the caller can surface a 5xx.
+async function fetchWardrobeRow(id: string): Promise<any | null> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/wardrobe?id=eq.${encodeFilterValue(id)}&select=*&limit=1`,
+    { headers: supaHeaders() }
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`wardrobe_lookup_failed: ${errText}`);
+  }
+  const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return rows[0];
+}
+
+// Merge a single angle URL into a wardrobe row's attributes.angles bag. PATCHes
+// the row and returns the updated row body. Used by both POST /:id/angles and
+// the angle path of /api/wardrobe/forge.
+async function mergeWardrobeAngle(
+  wardrobeId: string,
+  angle: string,
+  assetUrl: string
+): Promise<
+  | { ok: true; row: any }
+  | { ok: false; status: number; body: any }
+> {
+  if (!WARDROBE_VALID_ANGLES.has(angle)) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: `invalid angle '${angle}' — valid: ${[...WARDROBE_VALID_ANGLES].join(" | ")}`,
+        field: "angle",
+      },
+    };
+  }
+  // 'front' lives on asset_id, not in the angles bag — disallow merging it.
+  if (angle === "front") {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "front view is stored on wardrobe.asset_id, not attributes.angles. Update the row directly or re-forge to replace.",
+        field: "angle",
+      },
+    };
+  }
+
+  let row: any;
+  try {
+    row = await fetchWardrobeRow(wardrobeId);
+  } catch (err: any) {
+    return {
+      ok: false,
+      status: 500,
+      body: { error: "wardrobe_lookup_error", detail: err?.message || String(err) },
+    };
+  }
+  if (!row) {
+    return {
+      ok: false,
+      status: 404,
+      body: { error: "wardrobe_not_found", id: wardrobeId },
+    };
+  }
+
+  const existingAttrs =
+    row.attributes && typeof row.attributes === "object" && !Array.isArray(row.attributes)
+      ? row.attributes
+      : {};
+  const existingAngles =
+    existingAttrs.angles && typeof existingAttrs.angles === "object" && !Array.isArray(existingAttrs.angles)
+      ? existingAttrs.angles
+      : {};
+  const nextAngles = { ...existingAngles, [angle]: assetUrl };
+  const nextAttrs = { ...existingAttrs, angles: nextAngles };
+
+  const patchRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/wardrobe?id=eq.${encodeFilterValue(wardrobeId)}`,
+    {
+      method: "PATCH",
+      headers: supaHeaders(),
+      body: JSON.stringify({
+        attributes: nextAttrs,
+        updated_at: new Date().toISOString(),
+      }),
+    }
+  );
+  if (!patchRes.ok) {
+    const errText = await patchRes.text();
+    return {
+      ok: false,
+      status: 500,
+      body: { error: "wardrobe_angle_patch_failed", detail: errText },
+    };
+  }
+  const rows = await patchRes.json();
+  const updated = Array.isArray(rows) && rows.length > 0 ? rows[0] : { ...row, attributes: nextAttrs };
+  return { ok: true, row: updated };
+}
+
+// POST /api/wardrobe/:id/angles
+// Body: { angle: string, asset_url: string }
+async function handleWardrobeAngleAdd(req: Request, wardrobeId: string): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+    const body: any = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+    const angle = typeof body.angle === "string" ? body.angle.trim().toLowerCase() : "";
+    const assetUrl = typeof body.asset_url === "string" ? body.asset_url.trim() : "";
+    if (!angle) {
+      return Response.json({ error: "angle required", field: "angle" }, { status: 400 });
+    }
+    if (!assetUrl) {
+      return Response.json({ error: "asset_url required", field: "asset_url" }, { status: 400 });
+    }
+    const merged = await mergeWardrobeAngle(wardrobeId, angle, assetUrl);
+    if (!merged.ok) {
+      return Response.json(merged.body, { status: merged.status });
+    }
+    return Response.json({ ok: true, wardrobe: merged.row, angle }, { status: 200 });
+  } catch (err: any) {
+    return Response.json(
+      { error: "wardrobe_angle_add_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/wardrobe/:id/angles/:angle
+async function handleWardrobeAngleDelete(
+  wardrobeId: string,
+  angle: string
+): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+    const normalized = angle.trim().toLowerCase();
+    if (!WARDROBE_VALID_ANGLES.has(normalized) || normalized === "front") {
+      return Response.json(
+        { error: `invalid angle '${normalized}'`, field: "angle" },
+        { status: 400 }
+      );
+    }
+
+    let row: any;
+    try {
+      row = await fetchWardrobeRow(wardrobeId);
+    } catch (err: any) {
+      return Response.json(
+        { error: "wardrobe_lookup_error", detail: err?.message || String(err) },
+        { status: 500 }
+      );
+    }
+    if (!row) {
+      return Response.json({ error: "wardrobe_not_found", id: wardrobeId }, { status: 404 });
+    }
+
+    const existingAttrs =
+      row.attributes && typeof row.attributes === "object" && !Array.isArray(row.attributes)
+        ? row.attributes
+        : {};
+    const existingAngles =
+      existingAttrs.angles && typeof existingAttrs.angles === "object" && !Array.isArray(existingAttrs.angles)
+        ? existingAttrs.angles
+        : {};
+    if (!(normalized in existingAngles)) {
+      // Idempotent — return ok with the row unchanged.
+      return Response.json({ ok: true, wardrobe: row, angle: normalized, removed: false }, { status: 200 });
+    }
+    const { [normalized]: _drop, ...rest } = existingAngles;
+    const nextAttrs = { ...existingAttrs, angles: rest };
+
+    const patchRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/wardrobe?id=eq.${encodeFilterValue(wardrobeId)}`,
+      {
+        method: "PATCH",
+        headers: supaHeaders(),
+        body: JSON.stringify({
+          attributes: nextAttrs,
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    );
+    if (!patchRes.ok) {
+      const errText = await patchRes.text();
+      return Response.json(
+        { error: "wardrobe_angle_patch_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+    const rows = await patchRes.json();
+    const updated = Array.isArray(rows) && rows.length > 0 ? rows[0] : { ...row, attributes: nextAttrs };
+    return Response.json({ ok: true, wardrobe: updated, angle: normalized, removed: true }, { status: 200 });
+  } catch (err: any) {
+    return Response.json(
+      { error: "wardrobe_angle_delete_error", detail: err?.message || String(err) },
       { status: 500 }
     );
   }

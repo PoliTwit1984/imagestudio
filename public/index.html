@@ -300,6 +300,34 @@
     display: inline-block; background: #f472b622; color: #f472b6;
     border-radius: 3px; padding: 2px 6px; margin-top: 4px; font-size: 10px;
   }
+  /* Multi-angle picker — small thumb row under each card meta block.
+     Only rendered when attributes.angles has at least one non-front view.
+     See darkroom.wardrobe.multi-angle. */
+  .wardrobe-angles {
+    display: flex;
+    gap: 2px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+  }
+  .wardrobe-angle-btn {
+    width: 24px;
+    height: 24px;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    padding: 0;
+    cursor: pointer;
+    border-radius: 3px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+    position: relative;
+  }
+  .wardrobe-angle-btn:hover { border-color: #a78bfa; }
+  .wardrobe-angle-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
   .wardrobe-empty {
     color: #888; padding: 12px; font-size: 0.82rem; font-style: italic;
   }
@@ -4264,6 +4292,31 @@ async function loadWardrobeGrid({ force } = {}) {
       const featuredBadge = item?.featured
         ? '<span class="wardrobe-card-cat" style="background:#fbbf2422;color:#fbbf24;margin-left:4px;">featured</span>'
         : '';
+
+      // Multi-angle thumbnails. Front view always points at the canonical
+      // asset_id URL (the main thumbnail), so we render it as the first chip
+      // when at least one non-front angle is present. Empty otherwise — no
+      // visual clutter for single-view garments.
+      const anglesObj = (item?.attributes && typeof item.attributes === 'object' && item.attributes.angles
+        && typeof item.attributes.angles === 'object')
+        ? item.attributes.angles
+        : {};
+      const angleEntries = Object.entries(anglesObj)
+        .filter(([k, v]) => typeof v === 'string' && v && k !== 'front');
+      let angleRowHtml = '';
+      if (angleEntries.length > 0) {
+        const chips = [];
+        if (url) {
+          chips.push(`<button type="button" class="wardrobe-angle-btn" data-angle="front" data-url="${safeUrl}" title="front"><img src="${safeUrl}" alt="front" draggable="false"></button>`);
+        }
+        for (const [angleName, angleUrl] of angleEntries) {
+          const safeAngleName = escapeWardrobeHtml(angleName);
+          const safeAngleUrl = escapeWardrobeHtml(angleUrl);
+          chips.push(`<button type="button" class="wardrobe-angle-btn" data-angle="${safeAngleName}" data-url="${safeAngleUrl}" title="${safeAngleName}"><img src="${safeAngleUrl}" alt="${safeAngleName}" draggable="false"></button>`);
+        }
+        angleRowHtml = `<div class="wardrobe-angles">${chips.join('')}</div>`;
+      }
+
       return `
         <div class="wardrobe-card" draggable="true" data-url="${safeUrl}" data-name="${safeName}" data-cat="${safeCat}" data-tags="${safeTags}" title="${safeName} — ${safeCat}">
           ${url
@@ -4272,6 +4325,7 @@ async function loadWardrobeGrid({ force } = {}) {
           <div class="wardrobe-card-meta">
             <div class="wardrobe-card-name">${safeName}</div>
             ${safeCat ? `<span class="wardrobe-card-cat">${safeCat}</span>${featuredBadge}` : ''}
+            ${angleRowHtml}
           </div>
         </div>
       `;
@@ -4283,6 +4337,22 @@ async function loadWardrobeGrid({ force } = {}) {
         const name = card.dataset.name || '';
         if (!url) { toast('Wardrobe item has no image URL'); return; }
         useWardrobeItem(url, name);
+      });
+    });
+    // Per-angle click — pin the picked angle URL as the garment ref instead
+    // of the main front view. stopPropagation so the parent card's click
+    // handler doesn't override us with the front URL.
+    grid.querySelectorAll('.wardrobe-angle-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const angleUrl = btn.dataset.url || '';
+        const angleName = btn.dataset.angle || '';
+        if (!angleUrl) return;
+        const cardEl = btn.closest('.wardrobe-card');
+        const baseName = cardEl?.dataset.name || 'item';
+        if (typeof useWardrobeItem === 'function') {
+          useWardrobeItem(angleUrl, `${baseName} (${angleName})`);
+        }
       });
     });
     // Wire HTML5 drag for each card so users can drop them onto the result
