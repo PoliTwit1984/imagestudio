@@ -292,6 +292,29 @@ export async function handleGenerationRoutes(
         image_url: resultUrl,
         revised_prompt: revisedPrompt,
       });
+      // Dual-write: this is an edit; resolve parent_id from sourceUrl so the
+      // edit chain traces back to the original asset.
+      try {
+        const parentId = await (deps as any).lookupAssetIdByUrl?.(sourceUrl);
+        await (deps as any).saveAsset?.({
+          asset_type: "edit",
+          source_url: resultUrl,
+          engine,
+          edit_action: "edit",
+          prompt: editPrompt,
+          parent_id: parentId || null,
+          metadata: {
+            character_name: charName,
+            character_id: character?.id || null,
+            source_url: sourceUrl,
+            revised_prompt: revisedPrompt,
+            model: `${engine}/pro`,
+          },
+          tags: ["edit", engine],
+        });
+      } catch (e) {
+        console.error("[generation:/api/edit] saveAsset failed (non-fatal):", e);
+      }
 
       return Response.json({ ok: true, url: resultUrl, revisedPrompt, engine });
     } catch (err: any) {
@@ -336,6 +359,27 @@ export async function handleGenerationRoutes(
         image_url: result.url,
         revised_prompt: result.revisedPrompt,
       });
+      // Dual-write: fresh generation = root of an edit chain (no parent).
+      try {
+        await (deps as any).saveAsset?.({
+          asset_type: "generation",
+          source_url: result.url,
+          engine,
+          prompt: scene,
+          parent_id: null,
+          metadata: {
+            character_name: charName,
+            character_id: character?.id || null,
+            scene,
+            revised_prompt: result.revisedPrompt,
+            model: `${engine}/${model}`,
+            lora_name: body.lora || null,
+          },
+          tags: ["generation", engine],
+        });
+      } catch (e) {
+        console.error("[generation:/api/generate] saveAsset failed (non-fatal):", e);
+      }
 
       return Response.json({ ok: true, ...result, character: charName });
     } catch (err: any) {
@@ -493,6 +537,30 @@ RULES:
         image_url: resultUrl,
         revised_prompt: "",
       });
+      // Dual-write: pose-ref generates from a pose source — treat the pose
+      // image as the parent so the chain can trace it back if it's catalogued.
+      try {
+        const parentId = await (deps as any).lookupAssetIdByUrl?.(poseUrl);
+        await (deps as any).saveAsset?.({
+          asset_type: "generation",
+          source_url: resultUrl,
+          engine: "fal",
+          edit_action: "pose-ref",
+          prompt: scene,
+          parent_id: parentId || null,
+          metadata: {
+            character_name: charName,
+            character_id: character?.id || null,
+            pose_url: poseUrl,
+            strength,
+            model: "fal-pose-lora",
+            lora_url: loraUrl || null,
+          },
+          tags: ["generation", "pose-ref", "fal"],
+        });
+      } catch (e) {
+        console.error("[generation:/api/pose-generate] saveAsset failed (non-fatal):", e);
+      }
 
       return Response.json({ ok: true, url: resultUrl });
     } catch (err: any) {

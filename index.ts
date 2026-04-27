@@ -73,6 +73,109 @@ async function saveGeneration(gen: any) {
   });
 }
 
+// --- Assets dual-write (catalog migration 0042) ---
+//
+// `assets` is the new universe-of-artifacts table from migration 0042. Every
+// save path that writes a row into the legacy `generations` table also calls
+// saveAsset() to write a sibling row into `assets`. This is the dual-write
+// phase of the generations → assets migration: the legacy table stays the
+// source of truth for the UI's History view; assets accumulates so the
+// catalog/edit-chain features can ship against it without breaking existing
+// flows.
+//
+// Idempotency: lookupAssetIdByUrl() short-circuits if a row already exists
+// for the same source_url+asset_type. Re-running on existing data is a
+// no-op (returns the existing id).
+//
+// Failure mode: every saveAsset call is wrapped in try/catch at the call
+// site. A failure here NEVER breaks the user-facing flow — the legacy
+// generations save has already succeeded and the route returns the result
+// regardless. Errors are logged.
+
+export type SaveAssetParams = {
+  asset_type: "generation" | "upload" | "edit" | "curated" | "mask" | "overlay";
+  source_url: string;
+  storage_path?: string | null;
+  mime_type?: string;
+  width?: number | null;
+  height?: number | null;
+  engine?: string | null;
+  edit_action?: string | null;
+  prompt?: string | null;
+  parent_id?: string | null;
+  metadata?: Record<string, any>;
+  user_id?: string | null;
+  tags?: string[];
+};
+
+// Look up an existing asset row by source_url. Returns the row's id or null.
+// Used for both idempotency (skip insert if same source_url+type already
+// exists) AND edit-chain wiring (resolve parent_id from a source URL).
+export async function lookupAssetIdByUrl(
+  url: string,
+  assetType?: string,
+): Promise<string | null> {
+  if (!url) return null;
+  try {
+    const typeFilter = assetType ? `&asset_type=eq.${encodeFilterValue(assetType)}` : "";
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/assets?source_url=eq.${encodeFilterValue(url)}${typeFilter}&select=id&limit=1`,
+      { headers: supaHeaders() },
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows?.[0]?.id || null;
+  } catch (e) {
+    console.error("[lookupAssetIdByUrl] error:", e);
+    return null;
+  }
+}
+
+// Insert a row into the `assets` table. Idempotent on (source_url,
+// asset_type): if a matching row exists, returns its id without inserting.
+// Returns null on failure — caller should treat saveAsset failures as
+// non-fatal (legacy generations save still succeeds).
+export async function saveAsset(params: SaveAssetParams): Promise<string | null> {
+  if (!params.source_url) return null;
+  try {
+    // Idempotency: short-circuit if a row already exists for this URL+type.
+    const existing = await lookupAssetIdByUrl(params.source_url, params.asset_type);
+    if (existing) return existing;
+
+    const payload: Record<string, any> = {
+      asset_type: params.asset_type,
+      source_url: params.source_url,
+      storage_path: params.storage_path ?? null,
+      mime_type: params.mime_type || "image/png",
+      width: params.width ?? null,
+      height: params.height ?? null,
+      engine: params.engine ?? null,
+      edit_action: params.edit_action ?? null,
+      prompt: params.prompt ?? null,
+      parent_id: params.parent_id ?? null,
+      metadata: params.metadata || {},
+      user_id: params.user_id ?? null,
+      tags: params.tags || [],
+    };
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/assets`, {
+      method: "POST",
+      headers: { ...supaHeaders(), Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[saveAsset] insert failed ${res.status}:`, text.slice(0, 300));
+      return null;
+    }
+    const data = await res.json();
+    return data?.[0]?.id || null;
+  } catch (e) {
+    console.error("[saveAsset] error:", e);
+    return null;
+  }
+}
+
 async function getGenerations(limit = 50) {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/generations?order=created_at.desc&limit=${limit}`,
@@ -677,6 +780,13 @@ async function generateMagnificPrompt(imageUrl: string): Promise<string> {
   return data.choices[0].message.content.trim();
 }
 
+// saveAsset + lookupAssetIdByUrl are passed in via the deps bag so route
+// handlers can dual-write into the new `assets` table alongside the legacy
+// generations save. They're not declared on RouteDeps (the type lives in a
+// file outside this task's write scope); route handlers reach them via a
+// lightweight `as any` cast on deps. Runtime structural typing — the values
+// are present at call time even though the static Pick<RouteDeps,...> doesn't
+// list them.
 const apiRouteHandlers = createApiRouteHandlers({
   ALLOWED_UPLOAD_FOLDERS,
   CHAT_SYSTEM_DEFAULT,
@@ -696,7 +806,9 @@ const apiRouteHandlers = createApiRouteHandlers({
   saveGeneration,
   updateGeneration,
   updateSetting,
-});
+  saveAsset,
+  lookupAssetIdByUrl,
+} as any);
 
 // --- Static files ---
 const indexHtml = Bun.file("./public/index.html");

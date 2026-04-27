@@ -529,6 +529,27 @@ async function handleFluxEdit(
         engine: "flux-fill-pro-direct",
       } as any);
     } catch {}
+    // Dual-write: flux-edit is a brush/inpaint edit on the source image.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: resultUrl,
+        engine: "flux-fill-pro",
+        edit_action: "inpaint",
+        prompt,
+        parent_id: parentId || null,
+        metadata: {
+          source_url: imageUrl,
+          mask_url: maskUrl,
+          mask_source: maskSource,
+          garment_count: garmentUrls.length,
+        },
+        tags: ["edit", "flux-edit", "brush"],
+      });
+    } catch (e) {
+      console.error("[safe-edit:flux-edit] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,
@@ -1330,6 +1351,28 @@ async function handleApplyPreset(
         engine: `preset:${slug}`,
       } as any);
     } catch {}
+    // Dual-write: preset application is an edit relative to the source image.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: finalUrl,
+        engine: preset.engine,
+        edit_action: "preset",
+        prompt: preset.prompt,
+        parent_id: parentId || null,
+        metadata: {
+          preset_slug: slug,
+          preset_name: preset.name,
+          intensity,
+          source_url: imageUrl,
+          guidance_scale: preset.guidance_scale?.[intensity] ?? null,
+        },
+        tags: ["edit", "preset", slug],
+      });
+    } catch (e) {
+      console.error("[safe-edit:preset] saveAsset failed (non-fatal):", e);
+    }
 
     // Optional: if the caller passed ?with_lut=true AND a curated Hald-CLUT
     // exists for this slug in CURATED_LUT_REFS, blend it on top of the engine
@@ -1576,6 +1619,27 @@ async function handleStampAsset(
         engine: "darkroom-stamp",
       } as any);
     } catch {}
+    // Dual-write: stamp composites an asset onto a base image (an edit).
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: url,
+        engine: "darkroom-stamp",
+        edit_action: "stamp",
+        prompt: `[stamp:${blend}]`,
+        parent_id: parentId || null,
+        metadata: {
+          base_url: imageUrl,
+          asset_url: assetUrl,
+          blend,
+          x, y, w, h, rot,
+        },
+        tags: ["edit", "stamp", blend],
+      });
+    } catch (e) {
+      console.error("[safe-edit:stamp] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({ ok: true, url, blend });
   } catch (err: any) {
@@ -1660,6 +1724,27 @@ async function handleDetailBrush(
         engine: `darkroom-detail-brush`,
       } as any);
     } catch {}
+    // Dual-write: detail brush is an inpaint edit on the source image.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: resultUrl,
+        engine: "darkroom-detail-brush",
+        edit_action: "detail-brush",
+        prompt: brush.prompt,
+        parent_id: parentId || null,
+        metadata: {
+          source_url: imageUrl,
+          mask_url: maskUrl,
+          brush_id: brushId,
+          brush_name: brush.name,
+        },
+        tags: ["edit", "detail-brush", brushId],
+      });
+    } catch (e) {
+      console.error("[safe-edit:detail-brush] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,
@@ -1777,6 +1862,26 @@ async function handleDarkroomSkin(
         engine: "darkroom-skin-v1",
       } as any);
     } catch {}
+    // Dual-write: darkroom-skin is a skin-pass edit on the source image.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: finalUrl,
+        engine: "darkroom-skin",
+        edit_action: "skin-pass",
+        prompt: "[darkroom-skin]",
+        parent_id: parentId || null,
+        metadata: {
+          source_url: imageUrl,
+          intensity,
+          version: "v1",
+        },
+        tags: ["edit", "darkroom-skin", "skin-pass", intensity],
+      });
+    } catch (e) {
+      console.error("[safe-edit:darkroom-skin] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,
@@ -1941,6 +2046,26 @@ async function handleWearGarment(
         engine: upscaler === "none" ? "p-edit-multi" : `p-edit-multi+${upscaler}`,
       } as any);
     } catch {}
+    // Dual-write: wear-garment dresses the subject (an edit on the source).
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: resultUrl,
+        engine: upscaler === "none" ? "p-edit-multi" : `p-edit-multi+${upscaler}`,
+        edit_action: "wear",
+        prompt,
+        parent_id: parentId || null,
+        metadata: {
+          source_url: imageUrl,
+          garment_urls: garmentUrls,
+          upscaler,
+        },
+        tags: ["edit", "wear-garment", "p-edit"],
+      });
+    } catch (e) {
+      console.error("[safe-edit:wear-garment] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,
@@ -2441,6 +2566,29 @@ async function handleSandwichEdit(
         engine: `sandwich-${editEngine}${upscaler !== "none" ? "+" + upscaler : ""}`,
       } as any);
     } catch {}
+    // Dual-write: sandwich is a clothe→edit→unclothe pipeline; final is an
+    // edit relative to the original (not the intermediate clothed/edited URLs).
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: finalUrl,
+        engine: `sandwich-${editEngine}${upscaler !== "none" ? "+" + upscaler : ""}`,
+        edit_action: "sandwich",
+        prompt: editPrompt,
+        parent_id: parentId || null,
+        metadata: {
+          source_url: imageUrl,
+          edit_engine: editEngine,
+          upscaler,
+          clothed_url: clothedUrl,
+          edited_url: editedUrl,
+        },
+        tags: ["edit", "sandwich", editEngine],
+      });
+    } catch (e) {
+      console.error("[safe-edit:sandwich] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,
@@ -2596,6 +2744,28 @@ async function handleInpaint(
         engine: upscaler === "none" ? "flux-fill-pro" : `flux-fill-pro+${upscaler}`,
       } as any);
     } catch {}
+    // Dual-write: inpaint is a brush edit on the source image.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: resultUrl,
+        engine: upscaler === "none" ? "flux-fill-pro" : `flux-fill-pro+${upscaler}`,
+        edit_action: "inpaint",
+        prompt,
+        parent_id: parentId || null,
+        metadata: {
+          source_url: imageUrl,
+          mask_url: maskUrl,
+          upscaler,
+          garment_urls: garmentUrls,
+          garment_strength: garmentStrength ?? null,
+        },
+        tags: ["edit", "inpaint", "brush"],
+      });
+    } catch (e) {
+      console.error("[safe-edit:inpaint] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,
@@ -3281,6 +3451,30 @@ async function handleSmartEdit(
       image_url: resultUrl,
       revised_prompt: body.prompt,
     });
+    // Dual-write: smart-edit is an edit on the source image.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(body.image_url);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: resultUrl,
+        engine: modelUsed,
+        edit_action: "smart-edit",
+        prompt: body.prompt,
+        parent_id: parentId || null,
+        metadata: {
+          character_name: body.character || null,
+          character_id: character?.id || null,
+          source_url: body.image_url,
+          mask_url: body.mask_url || null,
+          prefer_model: preferModel,
+          fallback_reason: fallbackReason,
+          rerouted: rerouted,
+        },
+        tags: ["edit", "smart-edit", modelUsed.toLowerCase()],
+      });
+    } catch (e) {
+      console.error("[safe-edit:smart-edit] saveAsset failed (non-fatal):", e);
+    }
 
     const smartResp: any = {
       ok: true,
@@ -3454,6 +3648,28 @@ async function handleMakeNsfw(
       image_url: finalUrl,
       revised_prompt: body.prompt,
     });
+    // Dual-write: make-nsfw is a P-Edit transform → upscale on the source.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(body.image_url);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: finalUrl,
+        engine: `p-image-edit+${upscalerUsed}`,
+        edit_action: "make-nsfw",
+        prompt: body.prompt,
+        parent_id: parentId || null,
+        metadata: {
+          character_name: body.character || null,
+          character_id: character?.id || null,
+          source_url: body.image_url,
+          edited_url: editedUrl,
+          upscaler: upscalerUsed,
+        },
+        tags: ["edit", "make-nsfw", "p-edit", upscalerUsed],
+      });
+    } catch (e) {
+      console.error("[safe-edit:make-nsfw] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,
@@ -3704,6 +3920,31 @@ async function handleSurgicalEdit(
       image_url: upscaledUrl || finalUrl,
       revised_prompt: body.prompt,
     });
+    // Dual-write: surgical-edit is a multi-stage edit relative to the source.
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(body.image_url);
+      await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: upscaledUrl || finalUrl,
+        engine: modelUsed,
+        edit_action: "surgical-edit",
+        prompt: body.prompt,
+        parent_id: parentId || null,
+        metadata: {
+          character_name: body.character || null,
+          character_id: character?.id || null,
+          source_url: body.image_url,
+          manual_mask_url: body.manual_mask_url || null,
+          feather: body.feather ?? 8,
+          upscaled_url: upscaledUrl || null,
+          intermediate_url: finalUrl,
+          gpt_error: gptError,
+        },
+        tags: ["edit", "surgical-edit", modelUsed.toLowerCase()],
+      });
+    } catch (e) {
+      console.error("[safe-edit:surgical-edit] saveAsset failed (non-fatal):", e);
+    }
 
     return Response.json({
       ok: true,

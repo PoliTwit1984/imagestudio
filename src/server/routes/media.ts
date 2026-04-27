@@ -43,6 +43,22 @@ export async function handleMediaRoutes(
             revised_prompt: filename,
           } as any);
         } catch {}
+        // Dual-write: assets row for catalog (asset_type='upload', no parent).
+        try {
+          await (deps as any).saveAsset?.({
+            asset_type: "upload",
+            source_url: publicUrl,
+            storage_path: path,
+            mime_type: file.type || "image/png",
+            engine: null,
+            prompt: filename,
+            parent_id: null,
+            metadata: { folder, original_filename: filename },
+            tags: [folder],
+          });
+        } catch (e) {
+          console.error("[media:upload] saveAsset failed (non-fatal):", e);
+        }
       }
 
       return Response.json({ ok: true, folder, path, url: publicUrl });
@@ -148,6 +164,28 @@ export async function handleMediaRoutes(
         image_url: resultUrl,
         revised_prompt: "",
       });
+      // Dual-write: face-swap is an edit. Parent = the base image asset.
+      try {
+        const parentId = await (deps as any).lookupAssetIdByUrl?.(baseUrl);
+        await (deps as any).saveAsset?.({
+          asset_type: "edit",
+          source_url: resultUrl,
+          engine: modelUsed,
+          edit_action: "face-swap",
+          prompt: `[face-swap:${engine}]`,
+          parent_id: parentId || null,
+          metadata: {
+            character_name: charName,
+            character_id: character?.id || null,
+            face_url: faceUrl,
+            base_url: baseUrl,
+            engine: modelUsed,
+          },
+          tags: ["face-swap", engine],
+        });
+      } catch (e) {
+        console.error("[media:face-swap] saveAsset failed (non-fatal):", e);
+      }
 
       return Response.json({ ok: true, url: resultUrl, engine, model: modelUsed });
     } catch (err: any) {
@@ -237,6 +275,32 @@ export async function handleMediaRoutes(
             image_url: resultUrl,
             revised_prompt: "",
           });
+          // Dual-write: Topaz is an edit pass on the source image.
+          try {
+            const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+            await (deps as any).saveAsset?.({
+              asset_type: "edit",
+              source_url: resultUrl,
+              engine: "topaz",
+              edit_action: "upscale",
+              prompt: "[topaz-bloom-realism]",
+              parent_id: parentId || null,
+              metadata: {
+                character_name: charName,
+                character_id: character?.id || null,
+                topaz_model: topazModel,
+                creativity,
+                texture,
+                sharpen,
+                denoise,
+                face_strength: faceStrength,
+                face_creativity: faceCreativity,
+              },
+              tags: ["topaz", "develop"],
+            });
+          } catch (e) {
+            console.error("[media:topaz] saveAsset failed (non-fatal):", e);
+          }
 
           return Response.json({ ok: true, url: resultUrl });
         }
@@ -323,6 +387,31 @@ export async function handleMediaRoutes(
             image_url: statusData.result,
             revised_prompt: "",
           });
+          // Dual-write: Enhancor skin pass = edit relative to source.
+          try {
+            const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+            await (deps as any).saveAsset?.({
+              asset_type: "edit",
+              source_url: statusData.result,
+              engine: "enhancor",
+              edit_action: "skin-pass",
+              prompt: `[enhancor-v3-${enhancementType}]`,
+              parent_id: parentId || null,
+              metadata: {
+                character_name: charName,
+                character_id: character?.id || null,
+                enhancement_type: enhancementType,
+                refinement_level: refinementLevel,
+                realism_level: realismLevel,
+                portrait_depth: portraitDepth,
+                output_resolution: outputResolution,
+                cost: statusData.cost,
+              },
+              tags: ["enhancor", "skin"],
+            });
+          } catch (e) {
+            console.error("[media:enhancor] saveAsset failed (non-fatal):", e);
+          }
           return Response.json({ ok: true, url: statusData.result, cost: statusData.cost });
         }
 
@@ -472,6 +561,27 @@ export async function handleMediaRoutes(
         image_url: resultUrl,
         revised_prompt: "",
       });
+      // Dual-write: upscale is an edit pass on the source image.
+      try {
+        const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+        await (deps as any).saveAsset?.({
+          asset_type: "edit",
+          source_url: resultUrl,
+          engine: "magnific",
+          edit_action: "upscale",
+          prompt: magnificPrompt || `[upscale ${scale}x]`,
+          parent_id: parentId || null,
+          metadata: {
+            character_name: charName,
+            character_id: character?.id || null,
+            scale,
+            mode,
+          },
+          tags: ["upscale", "magnific", mode],
+        });
+      } catch (e) {
+        console.error("[media:upscale] saveAsset failed (non-fatal):", e);
+      }
 
       return Response.json({ ok: true, url: resultUrl, scale, magnificPrompt });
     } catch (err: any) {
