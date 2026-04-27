@@ -106,6 +106,58 @@ export function getTierLimits(tier: BillingTier): TierLimits {
   return BILLING_TIERS[tier]?.limits || BILLING_TIERS.free.limits;
 }
 
+// =============================================================================
+// Enhancor engine → quota metric mapping
+//
+// Each entry declares which BillingMetric counter is charged when that engine
+// is invoked, and how many units (which may be fractional) to deduct per call.
+// Keep this const adjacent to BILLING_TIERS so limits and costs stay in sync.
+// =============================================================================
+
+export type EnhancorEngineId =
+  | "skin-pro"
+  | "lens-pro"
+  | "lens-cinema"
+  | "lens-reality"
+  | "develop"
+  | "sharpen-portrait"
+  | "sharpen";
+
+export interface EngineCost {
+  metric: "edits" | "generations" | "upscales";
+  units: number;
+}
+
+export const ENHANCOR_QUOTA_MAP: Record<EnhancorEngineId, EngineCost> = {
+  "skin-pro":        { metric: "edits",       units: 1   },
+  "lens-pro":        { metric: "generations", units: 1   },
+  "lens-cinema":     { metric: "generations", units: 1   },
+  "lens-reality":    { metric: "generations", units: 1   },
+  "develop":         { metric: "upscales",    units: 1   },
+  "sharpen-portrait":{ metric: "upscales",    units: 1   },
+  "sharpen":         { metric: "upscales",    units: 0.5 },
+};
+
+/**
+ * Returns the billing metric and unit cost for a given Enhancor engine.
+ *
+ * @param engineId  - one of the 7 recognised Enhancor engine ids
+ * @param _params   - reserved for future per-call overrides (e.g. resolution
+ *                    multipliers); unused in v1
+ * @throws          if engineId is not in ENHANCOR_QUOTA_MAP
+ */
+export function getEngineCost(
+  engineId: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _params?: Record<string, unknown>
+): EngineCost {
+  const entry = ENHANCOR_QUOTA_MAP[engineId as EnhancorEngineId];
+  if (!entry) {
+    throw new Error(`[billing] Unknown Enhancor engine: "${engineId}"`);
+  }
+  return entry;
+}
+
 // Default tier when user not logged in / not in subscriptions table.
 const DEFAULT_TIER: BillingTier = "free";
 
