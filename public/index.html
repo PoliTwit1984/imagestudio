@@ -748,7 +748,6 @@
         <button class="action-btn" id="btn-darkroom-skin" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
         <button class="action-btn" id="btn-detail-brush" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
-        <button class="action-btn" id="btn-kling" onclick="openKling()" style="border-color:#e879f9;color:#e879f9;" title="Kling Pro — image to video with motion. 5s or 10s. High quality cinematic motion.">Kling Video</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
         <button class="action-btn" id="btn-resize" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" title="Shrink image to 1200px on the long edge. Useful before Lens edits — Lens is slow on big images.">Resize 1200</button>
@@ -759,37 +758,6 @@
         <button class="action-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
         <input type="file" id="upload-input" accept="image/*" style="display:none;" onchange="handleUpload(this)">
       </div>
-      <!-- Kling Video panel -->
-      <div class="faceswap-panel" id="kling-panel" style="display:none;border-color:#e879f933;">
-        <div class="edit-label" style="color:#e879f9;">Kling Pro Video <span style="font-weight:400;color:#888;">— image to video with motion</span></div>
-        <div style="margin-bottom:10px;">
-          <textarea id="kling-prompt" class="edit-input" rows="2" style="font-size:0.85rem;min-height:50px;" placeholder="subtle breathing, shifts weight slowly, looks at camera with slight head tilt, warm ambient light..."></textarea>
-        </div>
-        <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;">
-          <div style="color:#888;font-size:0.75rem;">Duration:</div>
-          <select id="kling-duration" style="background:#1a1a1a;border:1px solid #333;color:#ccc;padding:6px 10px;border-radius:6px;font-size:0.8rem;">
-            <option value="5">5 seconds</option>
-            <option value="10">10 seconds</option>
-          </select>
-          <div style="color:#888;font-size:0.75rem;">Aspect:</div>
-          <select id="kling-aspect" style="background:#1a1a1a;border:1px solid #333;color:#ccc;padding:6px 10px;border-radius:6px;font-size:0.8rem;">
-            <option value="9:16">9:16 (Portrait)</option>
-            <option value="16:9">16:9 (Landscape)</option>
-            <option value="1:1">1:1 (Square)</option>
-          </select>
-          <div style="color:#888;font-size:0.75rem;">Model:</div>
-          <select id="kling-model" style="background:#1a1a1a;border:1px solid #333;color:#ccc;padding:6px 10px;border-radius:6px;font-size:0.8rem;">
-            <option value="pro">Kling Pro</option>
-            <option value="std">Kling Standard</option>
-          </select>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:10px;">
-          <button class="edit-btn" id="kling-go" onclick="runKling()" style="background:linear-gradient(135deg,#e879f9,#a855f7);">Generate Video</button>
-          <button class="action-btn" onclick="closeKling()">Cancel</button>
-        </div>
-        <div id="kling-status" style="font-size:0.72rem;color:#555;margin-top:8px;"></div>
-      </div>
-
       <!-- Face swap panel -->
       <div class="faceswap-panel" id="faceswap-panel" style="display:none;">
         <div class="edit-label">Face Swap <span style="font-weight:400;color:#888;">— pick a face to swap onto this image</span></div>
@@ -4007,19 +3975,6 @@ async function runPoseGenerate() {
   } finally {
     btn.disabled = false; btn.textContent = 'Generate with Pose';
   }
-}
-
-// --- Kling Video ---
-function openKling() {
-  toast('Kling video is not wired up on the server yet');
-}
-
-function closeKling() {
-  document.getElementById('kling-panel').style.display = 'none';
-}
-
-async function runKling() {
-  toast('Kling video is not available yet');
 }
 
 // --- Face Swap ---
