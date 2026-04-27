@@ -9,6 +9,35 @@ import type { RouteDeps } from "./types";
 // those have their own identity-preservation logic.
 const IDENTITY_ANCHOR = "keep her face, hair, body shape, pose unchanged";
 
+// Rehost a vendor-returned image URL (xAI / Replicate / fal / etc.) into
+// Supabase storage so saved generations don't break when the vendor URL
+// expires. Falls back to the original vendor URL if any step fails — never
+// breaks the user-facing flow on storage hiccups.
+async function rehostToStorage(
+  vendorUrl: string,
+  opts: { contentType?: string; filename_prefix?: string } = {},
+): Promise<string> {
+  if (!vendorUrl) return vendorUrl;
+  try {
+    const resp = await fetch(vendorUrl);
+    if (!resp.ok) throw new Error(`fetch ${resp.status}`);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const ct = opts.contentType || resp.headers.get("content-type") || "image/png";
+    const prefix = opts.filename_prefix || "gen";
+    const filename = `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.png`;
+    const path = buildUploadPath("uploads", filename, ct);
+    const url = await uploadToStorage(
+      path,
+      buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+      ct,
+    );
+    return url || vendorUrl;
+  } catch (e) {
+    console.error("[rehost] failed, using vendor URL:", e);
+    return vendorUrl;
+  }
+}
+
 export async function handleGenerationRoutes(
   req: Request,
   url: URL,
@@ -172,7 +201,8 @@ export async function handleGenerationRoutes(
         }
 
         const falData = await falRes.json();
-        resultUrl = falData.images?.[0]?.url || falData.image?.url || "";
+        const vendorUrl = falData.images?.[0]?.url || falData.image?.url || "";
+        resultUrl = await rehostToStorage(vendorUrl, { filename_prefix: "edit-fal" });
       } else if (engine === "pedit") {
         const repRes = await fetch("https://api.replicate.com/v1/models/prunaai/p-image-edit/predictions", {
           method: "POST",
@@ -203,7 +233,8 @@ export async function handleGenerationRoutes(
         }
 
         const output = repData.output;
-        resultUrl = Array.isArray(output) ? output[0] : output || "";
+        const vendorUrl = Array.isArray(output) ? output[0] : output || "";
+        resultUrl = await rehostToStorage(vendorUrl, { filename_prefix: "edit-pedit" });
       } else {
         const grokRes = await fetch("https://api.x.ai/v1/images/edits", {
           method: "POST",
@@ -232,8 +263,9 @@ export async function handleGenerationRoutes(
         }
 
         const grokData = await grokRes.json();
-        resultUrl = grokData.data[0].url;
+        const vendorUrl = grokData.data[0].url;
         revisedPrompt = grokData.data[0].revised_prompt || "";
+        resultUrl = await rehostToStorage(vendorUrl, { filename_prefix: "edit-grok" });
       }
 
       const character = await deps.getCharacter(charName);
@@ -273,6 +305,9 @@ export async function handleGenerationRoutes(
         }
       }
 
+      // Engine functions in index.ts (generateGrok / generateFal /
+      // generateGpt) self-rehost their vendor URLs into Supabase storage
+      // before returning, so result.url is already the durable URL.
       const result = await deps.generateImage(character, scene, model, engine, loraOverride);
 
       await deps.saveGeneration({
@@ -428,7 +463,8 @@ RULES:
       }
 
       const data = await res.json();
-      const resultUrl = data.images[0].url;
+      const vendorUrl = data.images[0].url;
+      const resultUrl = await rehostToStorage(vendorUrl, { filename_prefix: "pose-fal" });
 
       const character = await deps.getCharacter(charName);
       await deps.saveGeneration({

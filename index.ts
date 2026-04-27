@@ -16,6 +16,35 @@ import {
 // lets the catalog log preset applications as their own steps.
 const REALISM_TAGS = "";
 
+// Rehost a vendor-returned image URL (xAI / Replicate / fal / etc.) into
+// Supabase storage so saved generations don't break when the vendor URL
+// expires. Falls back to the vendor URL if any step fails — never breaks
+// the user-facing flow on storage hiccups.
+async function rehostToStorage(
+  vendorUrl: string,
+  opts: { contentType?: string; filename_prefix?: string } = {},
+): Promise<string> {
+  if (!vendorUrl) return vendorUrl;
+  try {
+    const resp = await fetch(vendorUrl);
+    if (!resp.ok) throw new Error(`fetch ${resp.status}`);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const ct = opts.contentType || resp.headers.get("content-type") || "image/png";
+    const prefix = opts.filename_prefix || "gen";
+    const filename = `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.png`;
+    const path = buildUploadPath("uploads", filename, ct);
+    const url = await uploadToStorage(
+      path,
+      buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+      ct,
+    );
+    return url || vendorUrl;
+  } catch (e) {
+    console.error("[rehost] failed, using vendor URL:", e);
+    return vendorUrl;
+  }
+}
+
 const ALLOWED_UPLOAD_FOLDERS = new Set(["audio", "faces", "poses", "uploads", "garments"]);
 
 // --- Supabase helpers ---
@@ -96,8 +125,10 @@ async function generateGrok(
   }
 
   const data = await res.json();
+  const vendorUrl = data.data[0].url;
+  const rehosted = await rehostToStorage(vendorUrl, { filename_prefix: "gen-grok" });
   return {
-    url: data.data[0].url,
+    url: rehosted,
     revisedPrompt: data.data[0].revised_prompt || "",
     engine: "grok",
   };
@@ -147,8 +178,10 @@ async function generateFal(
   }
 
   const data = await res.json();
+  const vendorUrl = data.images[0].url;
+  const rehosted = await rehostToStorage(vendorUrl, { filename_prefix: "gen-fal" });
   return {
-    url: data.images[0].url,
+    url: rehosted,
     revisedPrompt: "",
     engine: "fal",
   };
@@ -185,13 +218,20 @@ async function generateGpt(scene: string): Promise<{ url: string; revisedPrompt:
     const bytes = Buffer.from(b64, "base64");
     const filename = `gpt-gen-${Date.now()}.png`;
     const path = buildUploadPath("uploads", filename, "image/png");
-    publicUrl = await uploadToStorage(
-      path,
-      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
-      "image/png",
-    );
+    try {
+      publicUrl = await uploadToStorage(
+        path,
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+        "image/png",
+      );
+    } catch (e) {
+      console.error("[generateGpt] direct upload failed, will fall back to remoteUrl:", e);
+      publicUrl = remoteUrl || "";
+    }
   } else if (remoteUrl) {
-    publicUrl = remoteUrl;
+    // Rehost the OpenAI-returned URL so saved generations don't break when
+    // the vendor URL expires. Falls back to remoteUrl on failure.
+    publicUrl = await rehostToStorage(remoteUrl, { filename_prefix: "gen-gpt" });
   }
   if (!publicUrl) throw new Error("GPT-Image-2 returned no image");
   return {
