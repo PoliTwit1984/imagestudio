@@ -343,6 +343,317 @@ export function buildSystemPrompt(
   return parts.join("\n\n");
 }
 
+// =============================================================================
+// Content Safety
+// =============================================================================
+
+/**
+ * Result type returned by checkContentSafety.
+ *
+ * ok === true  → message is safe to forward to the LLM.
+ * ok === false → message must be rejected; `reason` and `category` are set.
+ *
+ * Categories:
+ *   csam                     : sexual content involving minors
+ *   real-person-without-consent : sexual or violent content targeting a named
+ *                                 real person without their consent
+ *   violence                 : explicit real-world violence instructions or
+ *                                 threats targeting a real person/group
+ *   self-harm                : instructions or encouragement for self-harm /
+ *                                 suicide
+ */
+export interface ContentSafetyResult {
+  ok: boolean;
+  reason?: string;
+  category?: "csam" | "real-person-without-consent" | "violence" | "self-harm";
+}
+
+// ---------------------------------------------------------------------------
+// Keyword sets — v1 heuristic implementation.
+// TODO(v2): Replace with an ML-based classifier (e.g. OpenAI Moderation API
+//           or a fine-tuned Claude call) for higher recall/precision.
+// ---------------------------------------------------------------------------
+
+/** Terms that unambiguously reference minors. */
+const MINOR_TERMS = [
+  "minor",
+  "minors",
+  "child",
+  "children",
+  "underage",
+  "under age",
+  "under-age",
+  "preteen",
+  "pre-teen",
+  "prepubescent",
+  "juvenile",
+  "kid",
+  "kids",
+  "teen",
+  "teenage",
+  "teenager",
+  "adolescent",
+  "infant",
+  "toddler",
+  "baby",
+  "years old",          // catches "12 years old"
+  "year-old",           // catches "12-year-old"
+  "yo ",                // "12yo " — trailing space to reduce false positives
+  "yo,",
+  "yo.",
+];
+
+/** Sexual terms that, combined with minor terms, constitute CSAM signals. */
+const SEXUAL_TERMS = [
+  "sex",
+  "sexual",
+  "nude",
+  "naked",
+  "nsfw",
+  "explicit",
+  "porn",
+  "erotic",
+  "genital",
+  "penis",
+  "vagina",
+  "breast",
+  "orgasm",
+  "masturbat",
+  "fuck",
+  "rape",
+  "molest",
+  "abuse",
+  "fondl",
+  "loli",
+  "shota",
+  "cp",          // child porn abbreviation
+];
+
+/**
+ * High-risk real names. This is a curated starter list; it should be extended
+ * via an external config/DB rather than hard-coded (TODO for v2).
+ * Names are stored lowercased for case-insensitive comparison.
+ */
+const HIGH_RISK_NAMES = [
+  "taylor swift",
+  "ariana grande",
+  "billie eilish",
+  "olivia rodrigo",
+  "selena gomez",
+  "beyoncé",
+  "beyonce",
+  "rihanna",
+  "kim kardashian",
+  "kendall jenner",
+  "kylie jenner",
+  "emma watson",
+  "jennifer lawrence",
+  "scarlett johansson",
+  "margot robbie",
+  "zendaya",
+  "dua lipa",
+  "lady gaga",
+  "miley cyrus",
+  "sabrina carpenter",
+  "joe biden",
+  "donald trump",
+  "barack obama",
+  "elon musk",
+  "mark zuckerberg",
+  "jeff bezos",
+];
+
+/**
+ * Actions that, when paired with a real person's name, constitute a
+ * real-person-without-consent violation.
+ */
+const NON_CONSENT_ACTIONS = [
+  "nude",
+  "naked",
+  "sex",
+  "rape",
+  "fuck",
+  "porn",
+  "nsfw",
+  "explicit",
+  "erotic",
+  "strip",
+  "masturbat",
+  "kill",
+  "murder",
+  "shoot",
+  "stab",
+  "bomb",
+  "attack",
+  "assault",
+  "torture",
+];
+
+/** Violence terms that signal real-world harm intent. */
+const VIOLENCE_TERMS = [
+  "how to kill",
+  "how to murder",
+  "how to shoot",
+  "how to stab",
+  "how to bomb",
+  "how to make a bomb",
+  "how to build a bomb",
+  "how to make explosives",
+  "step by step kill",
+  "step-by-step kill",
+  "instructions to kill",
+  "instructions for killing",
+  "want to kill",
+  "going to kill",
+  "will kill",
+  "planning to kill",
+  "planning to shoot",
+  "planning to attack",
+  "i will shoot",
+  "i will bomb",
+  "i will murder",
+  "i want to murder",
+  "massacre",
+  "mass shooting",
+  "school shooting",
+  "shooting spree",
+];
+
+/** Self-harm terms. */
+const SELF_HARM_TERMS = [
+  "how to kill myself",
+  "how to commit suicide",
+  "how to end my life",
+  "ways to kill myself",
+  "methods of suicide",
+  "suicide methods",
+  "best way to die",
+  "want to kill myself",
+  "going to kill myself",
+  "want to die",
+  "want to end my life",
+  "planning to kill myself",
+  "plan to commit suicide",
+  "self harm instructions",
+  "how to self harm",
+  "overdose instructions",
+  "how to overdose",
+  "cut myself instructions",
+  "cutting instructions",
+];
+
+// ---------------------------------------------------------------------------
+// Internal matchers
+// ---------------------------------------------------------------------------
+
+function normalize(text: string): string {
+  return text.toLowerCase();
+}
+
+function containsAny(text: string, terms: string[]): boolean {
+  return terms.some((t) => text.includes(t));
+}
+
+/**
+ * CSAM check: minor term + sexual term present in the same message.
+ */
+function isCsam(normalized: string): boolean {
+  return containsAny(normalized, MINOR_TERMS) && containsAny(normalized, SEXUAL_TERMS);
+}
+
+/**
+ * Real-person-without-consent check: a high-risk name + non-consent action.
+ */
+function isRealPersonWithoutConsent(normalized: string): boolean {
+  const nameHit = HIGH_RISK_NAMES.some((name) => normalized.includes(name));
+  if (!nameHit) return false;
+  return containsAny(normalized, NON_CONSENT_ACTIONS);
+}
+
+/**
+ * Violence check: explicit harm-instruction phrase present.
+ */
+function isViolence(normalized: string): boolean {
+  return containsAny(normalized, VIOLENCE_TERMS);
+}
+
+/**
+ * Self-harm check: explicit self-harm instruction phrase present.
+ */
+function isSelfHarm(normalized: string): boolean {
+  return containsAny(normalized, SELF_HARM_TERMS);
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Check a user message for prohibited content categories.
+ *
+ * This is a v1 heuristic implementation using regex/keyword matching.
+ * It is intentionally conservative — some legitimate messages may be
+ * flagged. A v2 ML-based implementation should be used for production
+ * traffic above moderate scale.
+ *
+ * The chat endpoint MUST call this BEFORE forwarding the message to the LLM.
+ * Example integration point:
+ *
+ *   // TODO: wire into chat handler — call before LLM send
+ *   const safety = checkContentSafety(userMessage);
+ *   if (!safety.ok) {
+ *     return res.status(422).json({ error: safety.reason, category: safety.category });
+ *   }
+ *
+ * @param message  The raw user message string.
+ * @returns        { ok: true } if safe, or { ok: false, reason, category } if not.
+ */
+export function checkContentSafety(message: string): ContentSafetyResult {
+  const normalized = normalize(message);
+
+  // Order matters: CSAM is checked first (highest severity).
+  if (isCsam(normalized)) {
+    return {
+      ok: false,
+      reason: "Content involving minors in a sexual context is not permitted.",
+      category: "csam",
+    };
+  }
+
+  if (isSelfHarm(normalized)) {
+    return {
+      ok: false,
+      reason:
+        "Content providing self-harm or suicide instructions is not permitted. " +
+        "If you are in crisis, please contact a crisis helpline.",
+      category: "self-harm",
+    };
+  }
+
+  if (isRealPersonWithoutConsent(normalized)) {
+    return {
+      ok: false,
+      reason:
+        "Generating sexual or violent content targeting a real named person without their consent is not permitted.",
+      category: "real-person-without-consent",
+    };
+  }
+
+  if (isViolence(normalized)) {
+    return {
+      ok: false,
+      reason: "Content providing instructions for real-world violence or threats is not permitted.",
+      category: "violence",
+    };
+  }
+
+  return { ok: true };
+}
+
+// =============================================================================
+// Memory Classification
+// =============================================================================
+
 /**
  * Classify memories that should be extracted from a conversation turn.
  *
