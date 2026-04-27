@@ -233,23 +233,134 @@ export async function getStatus(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Webhook-grace types
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of a jobs-table row as seen by pollUntilDone.
+ *
+ * Only the fields needed for the webhook-grace check are required here.
+ * The callback may return any superset; extra fields are ignored.
+ */
+export interface EnhancorJobRow {
+  /** ISO timestamp set by the webhook handler once it fires, or null. */
+  webhook_received_at: string | null;
+  /** Final result URL/data persisted by the webhook handler, or null. */
+  result: string | null;
+  /** Cost value persisted by the webhook handler, or null. */
+  cost?: number | null;
+}
+
+/**
+ * Optional callback that resolves the current jobs-table row for a
+ * given vendor_request_id (= the Enhancor requestId).
+ *
+ * Pass this to pollUntilDone so it can:
+ *   1. Detect whether the webhook has already fired (webhook_received_at != null).
+ *   2. Return the persisted result directly instead of polling the API.
+ *
+ * Returning null means "row not found yet" — polling continues.
+ */
+export type JobsRowCallback = (
+  vendorRequestId: string
+) => Promise<EnhancorJobRow | null>;
+
 /**
  * Poll a job until it reaches COMPLETED or FAILED, or until timeout.
  *
- * @param slug      - The Enhancor model slug used when the job was submitted.
- * @param requestId - The requestId returned by submitJob.
- * @param opts.intervalMs  - How often to poll (default: 8000 ms)
- * @param opts.timeoutMs   - Maximum wait time (default: 600000 ms / 10 min)
+ * ### Dual-path resolution (webhook + polling fallback)
+ *
+ * **Path A — webhook fires on time:**
+ *   If a `getJobsRow` callback is provided, pollUntilDone first enters a
+ *   "webhook grace window" (default 60 s).  During this window it checks the
+ *   jobs table every `intervalMs` ms.  If `webhook_received_at` becomes
+ *   non-null before the grace window expires, the persisted result is returned
+ *   immediately — no Enhancor status API call is ever made.
+ *
+ * **Path B — webhook is late or absent:**
+ *   Once the grace window expires (or if no `getJobsRow` was provided), the
+ *   function falls back to polling the Enhancor `/status` endpoint every
+ *   `intervalMs` ms until COMPLETED, FAILED, or the overall `timeoutMs` cap.
+ *
+ * **Backward compatibility:**
+ *   If opts.getJobsRow is omitted the function behaves exactly as before —
+ *   straight to polling, no webhook-grace window.
+ *
+ * @param slug        - The Enhancor model slug used when the job was submitted.
+ * @param requestId   - The requestId returned by submitJob.
+ * @param opts.webhookGraceMs - How long to wait for the webhook before polling
+ *                              (default: 60 000 ms / 1 min). Ignored when
+ *                              getJobsRow is not provided.
+ * @param opts.intervalMs     - How often to poll in both phases (default: 8 000 ms).
+ * @param opts.timeoutMs      - Maximum total wait time (default: 600 000 ms / 10 min).
+ * @param opts.getJobsRow     - Optional callback to look up the jobs-table row
+ *                              by vendor_request_id.  When provided, enables
+ *                              the webhook-grace path (Path A).
  */
 export async function pollUntilDone(
   slug: EnhancorModelSlug,
   requestId: string,
-  opts?: { intervalMs?: number; timeoutMs?: number }
+  opts?: {
+    webhookGraceMs?: number;
+    intervalMs?: number;
+    timeoutMs?: number;
+    getJobsRow?: JobsRowCallback;
+  }
 ): Promise<{ result: string; cost?: number }> {
-  const intervalMs = opts?.intervalMs ?? 8000;
+  const webhookGraceMs = opts?.webhookGraceMs ?? 60_000;
+  const intervalMs = opts?.intervalMs ?? 8_000;
   const timeoutMs = opts?.timeoutMs ?? 600_000;
-  const deadline = Date.now() + timeoutMs;
+  const getJobsRow = opts?.getJobsRow;
 
+  const start = Date.now();
+  const deadline = start + timeoutMs;
+
+  // -------------------------------------------------------------------------
+  // Path A — webhook-grace window (only when a jobs-row callback is provided)
+  // -------------------------------------------------------------------------
+  if (getJobsRow) {
+    const graceDeadline = start + webhookGraceMs;
+
+    // Poll the jobs table (not the Enhancor API) during the grace window.
+    // As soon as webhook_received_at is set we have a persisted result —
+    // return it directly without ever hitting the Enhancor status endpoint.
+    while (Date.now() < graceDeadline && Date.now() < deadline) {
+      const row = await getJobsRow(requestId);
+
+      if (row?.webhook_received_at) {
+        // Webhook fired — use the persisted result.
+        if (!row.result) {
+          throw new Error(
+            `[enhancor] pollUntilDone (${slug}/${requestId}): webhook fired but result is empty`
+          );
+        }
+        return { result: row.result, cost: row.cost ?? undefined };
+      }
+
+      // Webhook hasn't fired yet — wait before checking again.
+      const remaining = Math.min(graceDeadline, deadline) - Date.now();
+      if (remaining <= 0) break;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(intervalMs, remaining))
+      );
+    }
+
+    // Grace window expired and webhook never fired.
+    // Check one last time — a row may have appeared in the final ms.
+    const finalRow = await getJobsRow(requestId);
+    if (finalRow?.webhook_received_at && finalRow.result) {
+      return { result: finalRow.result, cost: finalRow.cost ?? undefined };
+    }
+
+    // Fall through to Path B — poll the Enhancor status endpoint directly.
+  }
+
+  // -------------------------------------------------------------------------
+  // Path B — polling fallback (Enhancor status API)
+  // -------------------------------------------------------------------------
+  // Entered immediately when no getJobsRow callback is provided (backward-
+  // compatible), or after the webhook-grace window expires without a result.
   while (Date.now() < deadline) {
     const { status, result, cost } = await getStatus(slug, requestId);
 
@@ -271,7 +382,9 @@ export async function pollUntilDone(
     // PENDING | IN_QUEUE | IN_PROGRESS — keep waiting
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, remaining)));
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(intervalMs, remaining))
+    );
   }
 
   throw new Error(
