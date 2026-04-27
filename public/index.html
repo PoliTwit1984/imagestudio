@@ -1323,6 +1323,250 @@
   }
   .luna-stub-section-label { color: #444; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }
 
+  /* ── Task 1: Persona Editor (darkroom.luna.ui-persona-editor) ── */
+  .luna-persona-editor { padding: 12px 14px; border-top: 1px solid #1a1a1a; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
+  .luna-persona-editor-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: #666; }
+  .luna-persona-name-input {
+    background: #111; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 7px 10px; border-radius: 6px; font-size: 13px; width: 100%; box-sizing: border-box;
+  }
+  .luna-persona-name-input:focus { outline: none; border-color: #c850c0; }
+  .luna-persona-textarea-wrap { position: relative; }
+  .luna-persona-textarea {
+    background: #111; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 8px 10px; border-radius: 6px; font-size: 12px;
+    width: 100%; box-sizing: border-box; resize: vertical; min-height: 72px; font-family: inherit; line-height: 1.5;
+  }
+  .luna-persona-textarea:focus { outline: none; border-color: #c850c0; }
+  .luna-persona-char-counter { position: absolute; bottom: 6px; right: 8px; font-size: 10px; color: #555; pointer-events: none; }
+  .luna-persona-char-counter.warn { color: #f59e0b; }
+  .luna-voice-picker {
+    background: #111; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 7px 10px; border-radius: 6px; font-size: 12px; width: 100%;
+  }
+  .luna-voice-picker:focus { outline: none; border-color: #c850c0; }
+  .luna-tone-presets { display: flex; flex-wrap: wrap; gap: 5px; }
+  .luna-tone-btn {
+    background: #1a1a1a; border: 1px solid #2a2a2a; color: #aaa;
+    padding: 4px 10px; border-radius: 20px; font-size: 11px; cursor: pointer;
+    transition: all 0.15s; text-transform: capitalize;
+  }
+  .luna-tone-btn:hover { border-color: #c850c0; color: #c850c0; }
+  .luna-tone-btn.active { background: #2a1535; border-color: #c850c0; color: #e879f9; }
+
+  /* ── Task 2: Memory Drawer (darkroom.luna.ui-memory-drawer) ── */
+  .luna-memory-section { padding: 12px 14px; border-top: 1px solid #1a1a1a; flex-shrink: 0; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .luna-memory-section::-webkit-scrollbar { width: 3px; }
+  .luna-memory-section::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+  .luna-memory-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: #666; flex-shrink: 0; }
+  .luna-memory-group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #5a5a5a; margin-top: 4px; }
+  .luna-memory-item {
+    background: #111; border: 1px solid #1e1e1e; border-radius: 5px;
+    padding: 6px 8px; display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: #ccc; line-height: 1.4;
+  }
+  .luna-memory-item.invalidated { opacity: 0.38; }
+  .luna-memory-item.invalidated .luna-memory-text { text-decoration: line-through; color: #666; }
+  .luna-memory-text { flex: 1; }
+  .luna-memory-invalidate-btn {
+    background: none; border: 1px solid #333; color: #666;
+    padding: 2px 6px; border-radius: 4px; font-size: 10px; cursor: pointer;
+    white-space: nowrap; transition: all 0.15s; flex-shrink: 0;
+  }
+  .luna-memory-invalidate-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+  .luna-memory-loading { color: #555; font-size: 11px; text-align: center; padding: 10px; }
+  .luna-memory-empty { color: #444; font-size: 11px; font-style: italic; text-align: center; padding: 8px; }
+
+  /* ── Task 3: Face Training (darkroom.luna.ui-face-training) ── */
+  .luna-face-section { padding: 12px 14px; border-top: 1px solid #1a1a1a; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
+  .luna-face-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: #666; }
+  .luna-face-upload-row { display: flex; align-items: center; gap: 8px; }
+  .luna-face-file-label {
+    background: #1a1a1a; border: 1px dashed #333; color: #888;
+    padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .luna-face-file-label:hover { border-color: #c850c0; color: #c850c0; }
+  #luna-face-file { display: none; }
+  .luna-face-filename { font-size: 11px; color: #777; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .luna-face-train-btn {
+    background: linear-gradient(135deg, #c850c0, #4158d0); color: #fff;
+    border: none; padding: 7px 14px; border-radius: 6px; font-size: 12px;
+    font-weight: 600; cursor: pointer; transition: opacity 0.15s; width: 100%;
+  }
+  .luna-face-train-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .luna-face-train-btn:not(:disabled):hover { opacity: 0.85; }
+  .luna-face-progress { font-size: 11px; color: #888; min-height: 16px; }
+  .luna-face-progress.running { color: #a78bfa; }
+  .luna-face-progress.done { color: #22c55e; }
+  .luna-face-progress.error { color: #e53e3e; }
+  .luna-face-generate-btn {
+    background: #1a1540; border: 1px solid #a78bfa; color: #c4b5fd;
+    padding: 7px 14px; border-radius: 6px; font-size: 12px;
+    font-weight: 600; cursor: pointer; transition: opacity 0.15s; width: 100%;
+  }
+  .luna-face-generate-btn:hover { opacity: 0.85; }
+  .luna-face-composer { display: flex; gap: 6px; flex-direction: column; }
+  .luna-face-scene-input {
+    background: #111; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 7px 10px; border-radius: 6px; font-size: 12px; width: 100%; box-sizing: border-box;
+  }
+  .luna-face-scene-input:focus { outline: none; border-color: #a78bfa; }
+  .luna-face-submit-btn {
+    background: linear-gradient(135deg, #4158d0, #c850c0); color: #fff;
+    border: none; padding: 7px 14px; border-radius: 6px; font-size: 12px;
+    font-weight: 600; cursor: pointer; transition: opacity 0.15s; width: 100%;
+  }
+  .luna-face-submit-btn:hover { opacity: 0.85; }
+
+  /* ── Task 4: Quota Upsell (darkroom.luna.ui-quota-upsell) ── */
+  .luna-upsell-modal {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.88); z-index: 2000;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .luna-upsell-modal.active { display: flex; }
+  .luna-upsell-inner {
+    background: #0d0d0d; border: 1px solid #2a2a2a; border-radius: 12px;
+    max-width: 360px; width: 100%; padding: 28px 24px; text-align: center;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .luna-upsell-icon { font-size: 32px; line-height: 1; }
+  .luna-upsell-title { font-size: 20px; font-weight: 700; color: #f5f5f5; margin: 0; }
+  .luna-upsell-body { font-size: 13px; color: #aaa; line-height: 1.6; margin: 0; }
+  .luna-upsell-cta {
+    background: linear-gradient(135deg, #c850c0, #4158d0); color: #fff;
+    border: none; padding: 12px 28px; border-radius: 8px;
+    font-size: 14px; font-weight: 700; cursor: pointer; transition: opacity 0.15s;
+  }
+  .luna-upsell-cta:hover { opacity: 0.88; }
+  .luna-upsell-dismiss { background: none; border: none; color: #555; font-size: 12px; cursor: pointer; padding: 0; }
+  .luna-upsell-dismiss:hover { color: #888; }
+  .luna-msg-counter { font-size: 10px; color: #444; text-align: center; padding: 2px 0; flex-shrink: 0; }
+
+  /* ── Task 5: Onboarding (darkroom.luna.ui-onboarding-flow) ── */
+  #luna-onboarding {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.95); z-index: 3000;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  #luna-onboarding.active { display: flex; }
+  .luna-onboarding-card {
+    background: #0a0a0a; border: 1px solid #2a2a2a; border-radius: 14px;
+    max-width: 480px; width: 100%; padding: 32px 28px;
+    display: flex; flex-direction: column; gap: 20px;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .luna-onboarding-card::-webkit-scrollbar { width: 3px; }
+  .luna-onboarding-card::-webkit-scrollbar-thumb { background: #2a2a2a; }
+  .luna-onboarding-header { display: flex; flex-direction: column; gap: 6px; }
+  .luna-onboarding-header h2 {
+    margin: 0; font-size: 22px; font-weight: 800;
+    background: linear-gradient(135deg, #c850c0, #a78bfa);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .luna-onboarding-header p { margin: 0; font-size: 13px; color: #888; line-height: 1.55; }
+  .luna-quiz-step { display: flex; flex-direction: column; gap: 8px; }
+  .luna-quiz-label { font-size: 12px; font-weight: 700; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; }
+  .luna-quiz-label span { color: #555; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+  .luna-quiz-input {
+    background: #111; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 10px 12px; border-radius: 8px; font-size: 14px; width: 100%; box-sizing: border-box;
+  }
+  .luna-quiz-input:focus { outline: none; border-color: #c850c0; }
+  .luna-quiz-textarea {
+    background: #111; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 10px 12px; border-radius: 8px; font-size: 13px;
+    width: 100%; box-sizing: border-box; resize: vertical; min-height: 72px; font-family: inherit;
+  }
+  .luna-quiz-textarea:focus { outline: none; border-color: #c850c0; }
+  .luna-quiz-tone-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .luna-quiz-tone-btn {
+    background: #1a1a1a; border: 1px solid #2a2a2a; color: #aaa;
+    padding: 7px 14px; border-radius: 20px; font-size: 12px; cursor: pointer;
+    transition: all 0.15s; text-transform: capitalize;
+  }
+  .luna-quiz-tone-btn:hover { border-color: #c850c0; color: #c850c0; }
+  .luna-quiz-tone-btn.selected { background: #2a1535; border-color: #c850c0; color: #e879f9; }
+  .luna-quiz-voice-picker {
+    background: #111; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 10px 12px; border-radius: 8px; font-size: 13px; width: 100%;
+  }
+  .luna-quiz-voice-picker:focus { outline: none; border-color: #c850c0; }
+  .luna-onboarding-submit {
+    background: linear-gradient(135deg, #c850c0, #4158d0); color: #fff;
+    border: none; padding: 13px 28px; border-radius: 8px;
+    font-size: 15px; font-weight: 700; cursor: pointer; transition: opacity 0.15s;
+    width: 100%;
+  }
+  .luna-onboarding-submit:hover { opacity: 0.88; }
+  .luna-onboarding-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+  .luna-onboarding-error { color: #e53e3e; font-size: 12px; text-align: center; }
+
+  /* ── Task 6: Companion Tab (darkroom.luna.ui-companion-tab) ── */
+  #luna-companion-view {
+    display: none;
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: #080808; z-index: 190;
+    flex-direction: column;
+  }
+  body[data-mode="companion"] #luna-companion-view { display: flex; }
+  .luna-companion-view-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid #1f1f1f;
+    background: #0a0a0a; flex-shrink: 0;
+  }
+  .luna-companion-view-name {
+    font-size: 18px; font-weight: 800;
+    background: linear-gradient(135deg, #c850c0, #a78bfa);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    flex: 1;
+  }
+  .luna-companion-back-btn {
+    background: #1a1a1a; border: 1px solid #2a2a2a; color: #aaa;
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.15s;
+  }
+  .luna-companion-back-btn:hover { border-color: #c850c0; color: #fff; }
+  #luna-companion-messages {
+    flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  }
+  #luna-companion-messages::-webkit-scrollbar { width: 4px; }
+  #luna-companion-messages::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 2px; }
+  .luna-companion-msg {
+    max-width: 72%; padding: 11px 15px; border-radius: 14px;
+    font-size: 14px; line-height: 1.6; word-wrap: break-word;
+  }
+  .luna-companion-msg.user {
+    align-self: flex-end; background: #1a1540; color: #c4b5fd; border-bottom-right-radius: 4px;
+  }
+  .luna-companion-msg.luna {
+    align-self: flex-start; background: #141414; color: #e0e0e0; border-bottom-left-radius: 4px;
+  }
+  .luna-companion-msg.system { align-self: center; color: #555; font-size: 12px; font-style: italic; }
+  .luna-companion-composer {
+    padding: 14px 20px; border-top: 1px solid #1f1f1f;
+    display: flex; gap: 10px; align-items: flex-end;
+    background: #0a0a0a; flex-shrink: 0;
+  }
+  #luna-companion-text {
+    flex: 1; background: #151515; border: 1px solid #2a2a2a; color: #e0e0e0;
+    padding: 11px 14px; border-radius: 10px; font-size: 14px;
+    resize: none; min-height: 44px; max-height: 160px; font-family: inherit;
+  }
+  #luna-companion-text:focus { outline: none; border-color: #c850c0; }
+  #luna-companion-text::placeholder { color: #555; }
+  #luna-companion-send {
+    background: linear-gradient(135deg, #c850c0, #4158d0);
+    color: #fff; border: none; padding: 11px 20px; border-radius: 10px;
+    font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap;
+    transition: opacity 0.15s; flex-shrink: 0;
+  }
+  #luna-companion-send:hover { opacity: 0.85; }
+  #luna-companion-send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .luna-companion-pill {
+    background: linear-gradient(135deg, #c850c0, #4158d0);
+  }
+
   /* Chain Builder — drag-drop multi-stage chain composer. Lives in
      Develop mode (data-mode="develop"). Two-column grid: 140px palette,
      1fr canvas; actions bar spans both columns. */
@@ -1821,6 +2065,7 @@
     <button type="button" class="mode-pill active" data-mode="compose">Compose</button>
     <button type="button" class="mode-pill" data-mode="develop">Develop</button>
     <button type="button" class="mode-pill" data-mode="print">Print</button>
+    <button type="button" class="mode-pill luna-companion-pill" id="companion-tab-btn" data-mode="companion">Companion</button>
   </div>
 
   <div class="tabs">
@@ -3092,26 +3337,154 @@
   <div id="luna-chat-surface" style="display:none;flex:1;flex-direction:column;min-height:0;display:flex;">
     <div id="luna-messages" role="log" aria-live="polite" aria-label="Luna chat messages"></div>
 
-    <!-- Stub placeholder sections filled in by separate tasks -->
-    <div class="luna-stub-sections">
-      <div class="luna-stub-section" data-luna-section="persona">
-        <span class="luna-stub-section-label">Persona</span>
-        <span>— editor coming soon</span>
+    <!-- Task 2: Memory drawer (darkroom.luna.ui-memory-drawer) -->
+    <div class="luna-memory-section" data-luna-section="memories" id="luna-memory-section" style="display:none;">
+      <div class="luna-memory-title">What Luna remembers about you</div>
+      <div id="luna-memory-list"><div class="luna-memory-loading">Loading…</div></div>
+    </div>
+
+    <!-- Task 3: Face training (darkroom.luna.ui-face-training) -->
+    <div class="luna-face-section" data-luna-section="face-training" id="luna-face-section" style="display:none;">
+      <div class="luna-face-title">Face Training</div>
+      <div class="luna-face-upload-row">
+        <label class="luna-face-file-label" for="luna-face-file">+ Upload ref photo</label>
+        <input type="file" id="luna-face-file" accept="image/*">
+        <span class="luna-face-filename" id="luna-face-filename">No file selected</span>
       </div>
-      <div class="luna-stub-section" data-luna-section="memories">
-        <span class="luna-stub-section-label">Memories</span>
-        <span>— drawer coming soon</span>
-      </div>
-      <div class="luna-stub-section" data-luna-section="face-training">
-        <span class="luna-stub-section-label">Face Training</span>
-        <span>— training UI coming soon</span>
+      <button type="button" class="luna-face-train-btn" id="luna-face-train-btn" disabled>Train on this photo</button>
+      <div class="luna-face-progress" id="luna-face-progress"></div>
+      <button type="button" class="luna-face-generate-btn" id="luna-face-generate-btn" style="display:none;">Generate yourself in scene</button>
+      <div class="luna-face-composer" id="luna-face-composer" style="display:none;">
+        <input type="text" class="luna-face-scene-input" id="luna-face-scene-input" placeholder="Describe the scene…">
+        <button type="button" class="luna-face-submit-btn" id="luna-face-submit-btn">Generate</button>
       </div>
     </div>
+
+    <!-- Task 1: Persona editor (darkroom.luna.ui-persona-editor) -->
+    <div class="luna-persona-editor" data-luna-section="persona" id="luna-persona-editor" style="display:none;">
+      <div class="luna-persona-editor-title">Persona</div>
+      <input type="text" class="luna-persona-name-input" id="luna-persona-name" placeholder="Luna's name…" maxlength="40">
+      <div class="luna-persona-textarea-wrap">
+        <textarea class="luna-persona-textarea" id="luna-persona-text" placeholder="Describe her personality, tone, quirks…" maxlength="2000" rows="3"></textarea>
+        <span class="luna-persona-char-counter" id="luna-persona-counter">0 / 2000</span>
+      </div>
+      <select class="luna-voice-picker" id="luna-voice-picker">
+        <option value="">— pick a voice —</option>
+        <option value="tQ4MEZFJOzsahSEEZtHK">Ivanna — warm, intimate</option>
+        <option value="EXAVITQu4vr4xnSDxMaL">Bella — soft, breathy</option>
+        <option value="21haVlAjigA0e75Yck5b">Elli — young, playful</option>
+        <option value="AZnzlk1XvdvUeBnXmlld">Domi — confident, direct</option>
+        <option value="MF3mGyEYCl7XYWbV9V6O">Elli Dark — husky, low</option>
+        <option value="oWAxZDx7w5VEj9dCyTzz">Grace — sultry, rich</option>
+        <option value="jsCqWAovK2LkecY7zXl4">Freya — crisp, sharp</option>
+        <option value="ThT5KcBeYPX3keUQqHPh">Dorothy — mature, warm</option>
+      </select>
+      <div class="luna-tone-presets" id="luna-tone-presets">
+        <button type="button" class="luna-tone-btn" data-tone="flirty">flirty</button>
+        <button type="button" class="luna-tone-btn" data-tone="snarky">snarky</button>
+        <button type="button" class="luna-tone-btn" data-tone="sweet">sweet</button>
+        <button type="button" class="luna-tone-btn" data-tone="filthy">filthy</button>
+        <button type="button" class="luna-tone-btn" data-tone="sub">sub</button>
+        <button type="button" class="luna-tone-btn" data-tone="dom">dom</button>
+      </div>
+    </div>
+
+    <!-- Task 4: Message counter for quota upsell -->
+    <div class="luna-msg-counter" id="luna-msg-counter" style="display:none;"></div>
 
     <div class="luna-composer">
       <textarea id="luna-composer-text" rows="1" placeholder="Message Luna… (Cmd+Enter to send)"></textarea>
       <button type="button" id="luna-composer-send">Send</button>
     </div>
+  </div>
+</div>
+
+<!-- Task 6: Companion full-page view (darkroom.luna.ui-companion-tab) -->
+<div id="luna-companion-view">
+  <div class="luna-companion-view-header">
+    <span class="luna-companion-view-name" id="luna-companion-view-name">Luna</span>
+    <button type="button" class="luna-companion-back-btn" id="luna-companion-back-btn">← Back</button>
+  </div>
+  <div id="luna-companion-messages" role="log" aria-live="polite" aria-label="Luna companion messages"></div>
+  <div class="luna-companion-composer">
+    <textarea id="luna-companion-text" rows="1" placeholder="Message Luna… (Cmd+Enter to send)"></textarea>
+    <button type="button" id="luna-companion-send">Send</button>
+  </div>
+</div>
+
+<!-- Task 5: Onboarding overlay (darkroom.luna.ui-onboarding-flow) -->
+<div id="luna-onboarding" role="dialog" aria-modal="true" aria-label="Create your Luna">
+  <div class="luna-onboarding-card">
+    <div class="luna-onboarding-header">
+      <h2>Create your Luna</h2>
+      <p>Answer five quick questions and we'll bring her to life.</p>
+    </div>
+    <!-- Q1: Name -->
+    <div class="luna-quiz-step">
+      <label class="luna-quiz-label" for="quiz-name">What's her name? <span>(required)</span></label>
+      <input type="text" id="quiz-name" class="luna-quiz-input" placeholder="e.g. Luna, Nova, Aria…" maxlength="40">
+    </div>
+    <!-- Q2: Tone preset -->
+    <div class="luna-quiz-step">
+      <div class="luna-quiz-label">Pick her default tone</div>
+      <div class="luna-quiz-tone-grid" id="quiz-tone-grid">
+        <button type="button" class="luna-quiz-tone-btn" data-tone="flirty">flirty</button>
+        <button type="button" class="luna-quiz-tone-btn" data-tone="snarky">snarky</button>
+        <button type="button" class="luna-quiz-tone-btn" data-tone="sweet">sweet</button>
+        <button type="button" class="luna-quiz-tone-btn" data-tone="filthy">filthy</button>
+        <button type="button" class="luna-quiz-tone-btn" data-tone="sub">sub</button>
+        <button type="button" class="luna-quiz-tone-btn" data-tone="dom">dom</button>
+      </div>
+    </div>
+    <!-- Q3: Kink free text -->
+    <div class="luna-quiz-step">
+      <label class="luna-quiz-label" for="quiz-kink">What are you into? <span>(optional)</span></label>
+      <textarea id="quiz-kink" class="luna-quiz-textarea" rows="2" placeholder="Power dynamics, praise, slow burn, rough…"></textarea>
+    </div>
+    <!-- Q4: Look free text -->
+    <div class="luna-quiz-step">
+      <label class="luna-quiz-label" for="quiz-look">Describe her look <span>(optional)</span></label>
+      <textarea id="quiz-look" class="luna-quiz-textarea" rows="2" placeholder="Dark hair, green eyes, olive skin…"></textarea>
+    </div>
+    <!-- Q5: Voice picker -->
+    <div class="luna-quiz-step">
+      <label class="luna-quiz-label" for="quiz-voice">Her voice</label>
+      <select id="quiz-voice" class="luna-quiz-voice-picker">
+        <option value="">— no voice —</option>
+        <option value="tQ4MEZFJOzsahSEEZtHK" selected>Ivanna — warm, intimate</option>
+        <option value="EXAVITQu4vr4xnSDxMaL">Bella — soft, breathy</option>
+        <option value="21haVlAjigA0e75Yck5b">Elli — young, playful</option>
+        <option value="AZnzlk1XvdvUeBnXmlld">Domi — confident, direct</option>
+        <option value="MF3mGyEYCl7XYWbV9V6O">Elli Dark — husky, low</option>
+        <option value="oWAxZDx7w5VEj9dCyTzz">Grace — sultry, rich</option>
+        <option value="jsCqWAovK2LkecY7zXl4">Freya — crisp, sharp</option>
+        <option value="ThT5KcBeYPX3keUQqHPh">Dorothy — mature, warm</option>
+      </select>
+    </div>
+    <div id="luna-onboarding-error" class="luna-onboarding-error" style="display:none;"></div>
+    <button type="button" class="luna-onboarding-submit" id="luna-onboarding-submit">Bring her to life</button>
+  </div>
+</div>
+
+<!-- Task 4: Pro upsell modal (messages) (darkroom.luna.ui-quota-upsell) -->
+<div id="luna-pro-upsell" class="luna-upsell-modal" role="dialog" aria-modal="true">
+  <div class="luna-upsell-inner">
+    <div class="luna-upsell-icon">✨</div>
+    <h3 class="luna-upsell-title">You've got chemistry</h3>
+    <p class="luna-upsell-body">You've sent 30 messages with Luna this month. Upgrade to Pro for unlimited conversations, priority responses, and memory that never fades.</p>
+    <button type="button" class="luna-upsell-cta" id="luna-pro-upsell-cta">Upgrade to Pro</button>
+    <button type="button" class="luna-upsell-dismiss" id="luna-pro-upsell-dismiss">Maybe later</button>
+  </div>
+</div>
+
+<!-- Task 4: Devotion upsell modal (voice / face) (darkroom.luna.ui-quota-upsell) -->
+<div id="luna-devotion-upsell" class="luna-upsell-modal" role="dialog" aria-modal="true">
+  <div class="luna-upsell-inner">
+    <div class="luna-upsell-icon">🔒</div>
+    <h3 class="luna-upsell-title" id="luna-devotion-upsell-title">Devotion tier required</h3>
+    <p class="luna-upsell-body" id="luna-devotion-upsell-body">Voice messages and face training are exclusive to the Devotion tier — our deepest level of Luna customisation.</p>
+    <button type="button" class="luna-upsell-cta" id="luna-devotion-upsell-cta">Unlock Devotion</button>
+    <button type="button" class="luna-upsell-dismiss" id="luna-devotion-upsell-dismiss">Not now</button>
   </div>
 </div>
 
@@ -10443,6 +10816,835 @@ window.fetch = async function(...args) {
   }
   return resp;
 };
+
+// ── Task 1: Persona Editor (darkroom.luna.ui-persona-editor) ──────────────────
+(function initPersonaEditor() {
+  const VOICE_OPTIONS = [
+    { id: 'tQ4MEZFJOzsahSEEZtHK', label: 'Ivanna' },
+    { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Bella' },
+    { id: '21haVlAjigA0e75Yck5b', label: 'Elli' },
+    { id: 'AZnzlk1XvdvUeBnXmlld', label: 'Domi' },
+    { id: 'MF3mGyEYCl7XYWbV9V6O', label: 'Elli Dark' },
+    { id: 'oWAxZDx7w5VEj9dCyTzz', label: 'Grace' },
+    { id: 'jsCqWAovK2LkecY7zXl4', label: 'Freya' },
+    { id: 'ThT5KcBeYPX3keUQqHPh', label: 'Dorothy' },
+  ];
+
+  function lunaFetchPersona(path, opts) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts && opts.headers);
+    if (typeof token !== 'undefined' && token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(path, Object.assign({}, opts, { headers }));
+  }
+
+  function getLunaId() {
+    // Reuse _lunaId from the companion panel IIFE — exposed via window if needed
+    return window._lunaCompanionId || null;
+  }
+
+  async function patchLuna(payload) {
+    const id = getLunaId();
+    if (!id) return;
+    try {
+      await lunaFetchPersona('/api/lunas/' + id, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+    } catch (_) { /* non-fatal */ }
+  }
+
+  function populatePersonaEditor(luna) {
+    const editor = document.getElementById('luna-persona-editor');
+    if (!editor) return;
+    editor.style.display = '';
+
+    const nameIn = document.getElementById('luna-persona-name');
+    const textIn = document.getElementById('luna-persona-text');
+    const voicePicker = document.getElementById('luna-voice-picker');
+
+    if (nameIn && luna.name) nameIn.value = luna.name;
+    if (textIn && luna.persona_text) {
+      textIn.value = luna.persona_text;
+      updateCounter();
+    }
+    if (voicePicker && luna.voice_id) voicePicker.value = luna.voice_id;
+
+    // Highlight matching tone preset
+    if (luna.persona_text) {
+      document.querySelectorAll('.luna-tone-btn').forEach(function(btn) {
+        btn.classList.toggle('active', luna.persona_text.trim() === btn.dataset.tone);
+      });
+    }
+  }
+
+  function updateCounter() {
+    const textIn = document.getElementById('luna-persona-text');
+    const counter = document.getElementById('luna-persona-counter');
+    if (!textIn || !counter) return;
+    const len = textIn.value.length;
+    counter.textContent = len + ' / 2000';
+    counter.classList.toggle('warn', len > 1800);
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const nameIn = document.getElementById('luna-persona-name');
+    const textIn = document.getElementById('luna-persona-text');
+    const voicePicker = document.getElementById('luna-voice-picker');
+
+    if (nameIn) {
+      nameIn.addEventListener('blur', function() {
+        patchLuna({ name: nameIn.value.trim() });
+        const drawerName = document.getElementById('luna-drawer-name');
+        const viewName = document.getElementById('luna-companion-view-name');
+        if (drawerName) drawerName.textContent = nameIn.value.trim() || 'Luna';
+        if (viewName) viewName.textContent = nameIn.value.trim() || 'Luna';
+      });
+    }
+
+    if (textIn) {
+      textIn.addEventListener('input', updateCounter);
+      textIn.addEventListener('blur', function() {
+        patchLuna({ persona_text: textIn.value });
+      });
+    }
+
+    if (voicePicker) {
+      voicePicker.addEventListener('change', function() {
+        patchLuna({ voice_id: voicePicker.value });
+      });
+    }
+
+    document.querySelectorAll('.luna-tone-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const tone = btn.dataset.tone;
+        const textEl = document.getElementById('luna-persona-text');
+        if (textEl) {
+          textEl.value = tone;
+          updateCounter();
+        }
+        document.querySelectorAll('.luna-tone-btn').forEach(function(b) {
+          b.classList.toggle('active', b === btn);
+        });
+        patchLuna({ persona_text: tone });
+      });
+    });
+  });
+
+  // Expose for companion panel to call after luna loads
+  window.populatePersonaEditor = populatePersonaEditor;
+}());
+
+// ── Task 2: Memory Drawer (darkroom.luna.ui-memory-drawer) ───────────────────
+(function initMemoryDrawer() {
+  const MEMORY_TYPE_ORDER = ['fact', 'preference', 'event', 'kink', 'reference'];
+  const MEMORY_TYPE_LABELS = {
+    fact: 'Facts',
+    preference: 'Preferences',
+    event: 'Events',
+    kink: 'Kinks',
+    reference: 'References',
+  };
+
+  function lunaFetchMem(path, opts) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts && opts.headers);
+    if (typeof token !== 'undefined' && token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(path, Object.assign({}, opts, { headers }));
+  }
+
+  async function loadMemories(lunaId) {
+    const section = document.getElementById('luna-memory-section');
+    const list = document.getElementById('luna-memory-list');
+    if (!section || !list) return;
+    section.style.display = '';
+    list.innerHTML = '<div class="luna-memory-loading">Loading memories…</div>';
+
+    try {
+      const res = await lunaFetchMem('/api/lunas/' + lunaId + '/memories');
+      if (!res.ok) { list.innerHTML = '<div class="luna-memory-empty">Couldn\'t load memories.</div>'; return; }
+      const memories = await res.json();
+      const items = Array.isArray(memories) ? memories : (memories.memories || memories.items || []);
+
+      if (!items.length) { list.innerHTML = '<div class="luna-memory-empty">No memories yet.</div>'; return; }
+
+      // Group by type
+      const groups = {};
+      items.forEach(function(m) {
+        const t = m.type || 'fact';
+        if (!groups[t]) groups[t] = [];
+        groups[t].push(m);
+      });
+
+      list.innerHTML = '';
+      const order = MEMORY_TYPE_ORDER.filter(function(t) { return groups[t]; });
+      // Append any types not in our order list
+      Object.keys(groups).forEach(function(t) { if (!order.includes(t)) order.push(t); });
+
+      order.forEach(function(type) {
+        const groupItems = groups[type];
+        if (!groupItems || !groupItems.length) return;
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'luna-memory-group-label';
+        labelEl.textContent = MEMORY_TYPE_LABELS[type] || type;
+        list.appendChild(labelEl);
+
+        groupItems.forEach(function(m) {
+          const item = document.createElement('div');
+          item.className = 'luna-memory-item' + (m.invalidated ? ' invalidated' : '');
+          item.dataset.mid = m.id;
+
+          const textSpan = document.createElement('span');
+          textSpan.className = 'luna-memory-text';
+          textSpan.textContent = m.content || m.text || '';
+          item.appendChild(textSpan);
+
+          const invalidateBtn = document.createElement('button');
+          invalidateBtn.type = 'button';
+          invalidateBtn.className = 'luna-memory-invalidate-btn';
+          invalidateBtn.textContent = m.invalidated ? 'invalidated' : 'invalidate';
+          invalidateBtn.disabled = !!m.invalidated;
+          invalidateBtn.setAttribute('aria-label', 'Invalidate memory');
+
+          invalidateBtn.addEventListener('click', async function() {
+            invalidateBtn.disabled = true;
+            invalidateBtn.textContent = '…';
+            try {
+              const r = await lunaFetchMem('/api/lunas/' + lunaId + '/memories/' + m.id + '/invalidate', { method: 'POST' });
+              if (r.ok) {
+                item.classList.add('invalidated');
+                invalidateBtn.textContent = 'invalidated';
+              } else {
+                invalidateBtn.disabled = false;
+                invalidateBtn.textContent = 'invalidate';
+              }
+            } catch (_) {
+              invalidateBtn.disabled = false;
+              invalidateBtn.textContent = 'invalidate';
+            }
+          });
+
+          item.appendChild(invalidateBtn);
+          list.appendChild(item);
+        });
+      });
+    } catch (err) {
+      list.innerHTML = '<div class="luna-memory-empty">Error loading memories.</div>';
+    }
+  }
+
+  // Expose for companion panel
+  window.loadLunaMemories = loadMemories;
+}());
+
+// ── Task 3: Face Training (darkroom.luna.ui-face-training) ───────────────────
+(function initFaceTraining() {
+  let _refUploaded = false;
+  let _pollInterval = null;
+  let _faceTrainLunaId = null;
+
+  function lunaFetchFace(path, opts) {
+    const headers = Object.assign({}, opts && opts.headers);
+    if (typeof token !== 'undefined' && token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(path, Object.assign({}, opts, { headers }));
+  }
+
+  function setProgress(msg, cls) {
+    const el = document.getElementById('luna-face-progress');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'luna-face-progress' + (cls ? ' ' + cls : '');
+  }
+
+  function stopPoll() {
+    if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
+  }
+
+  async function pollJobStatus(lunaId, jobId) {
+    stopPoll();
+    _pollInterval = setInterval(async function() {
+      try {
+        const res = await lunaFetchFace('/api/jobs/' + jobId + '/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const status = data.status || data.state;
+        if (status === 'complete' || status === 'done' || status === 'succeeded') {
+          stopPoll();
+          setProgress('Training complete!', 'done');
+          if (data.face_lora_url || data.output_url) {
+            showGenerateSelfBtn();
+          } else {
+            // Check luna directly
+            try {
+              const lr = await lunaFetchFace('/api/lunas/' + lunaId);
+              const ld = await lr.json();
+              if (ld.face_lora_url) showGenerateSelfBtn();
+            } catch (_) {}
+          }
+        } else if (status === 'failed' || status === 'error') {
+          stopPoll();
+          setProgress('Training failed. Try again.', 'error');
+          const trainBtn = document.getElementById('luna-face-train-btn');
+          if (trainBtn) trainBtn.disabled = false;
+        } else {
+          setProgress('Training… ' + (data.progress ? Math.round(data.progress * 100) + '%' : ''), 'running');
+        }
+      } catch (_) { /* non-fatal poll */ }
+    }, 3000);
+  }
+
+  function showGenerateSelfBtn() {
+    const btn = document.getElementById('luna-face-generate-btn');
+    if (btn) btn.style.display = '';
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const section = document.getElementById('luna-face-section');
+    const fileInput = document.getElementById('luna-face-file');
+    const filename = document.getElementById('luna-face-filename');
+    const trainBtn = document.getElementById('luna-face-train-btn');
+    const generateBtn = document.getElementById('luna-face-generate-btn');
+    const composer = document.getElementById('luna-face-composer');
+    const sceneInput = document.getElementById('luna-face-scene-input');
+    const submitBtn = document.getElementById('luna-face-submit-btn');
+
+    if (fileInput) {
+      fileInput.addEventListener('change', async function() {
+        const file = fileInput.files[0];
+        if (!file) return;
+        if (filename) filename.textContent = file.name;
+
+        const lunaId = window._lunaCompanionId;
+        if (!lunaId) {
+          // Show devotion upsell if no luna (shouldn't happen, but guard)
+          if (filename) filename.textContent = 'No file selected';
+          return;
+        }
+
+        // Check tier before upload
+        const tier = window._lunaUserTier || 'free';
+        if (tier !== 'devotion') {
+          showDevotionUpsell('face-training');
+          fileInput.value = '';
+          if (filename) filename.textContent = 'No file selected';
+          return;
+        }
+
+        setProgress('Uploading…', 'running');
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const res = await lunaFetchFace('/api/lunas/' + lunaId + '/face/upload-ref', {
+            method: 'POST',
+            body: formData,
+          });
+          if (res.ok) {
+            _refUploaded = true;
+            _faceTrainLunaId = lunaId;
+            if (trainBtn) trainBtn.disabled = false;
+            setProgress('Photo uploaded. Click Train to start.', '');
+          } else {
+            setProgress('Upload failed (' + res.status + ').', 'error');
+          }
+        } catch (err) {
+          setProgress('Upload error.', 'error');
+        }
+      });
+    }
+
+    if (trainBtn) {
+      trainBtn.addEventListener('click', async function() {
+        const lunaId = _faceTrainLunaId || window._lunaCompanionId;
+        if (!lunaId || !_refUploaded) return;
+        trainBtn.disabled = true;
+        setProgress('Starting training…', 'running');
+        try {
+          const res = await lunaFetchFace('/api/lunas/' + lunaId + '/face/train', { method: 'POST' });
+          if (!res.ok) {
+            setProgress('Training failed to start (' + res.status + ').', 'error');
+            trainBtn.disabled = false;
+            return;
+          }
+          const data = await res.json();
+          const jobId = data.job_id || data.id;
+          if (jobId) {
+            setProgress('Training started…', 'running');
+            pollJobStatus(lunaId, jobId);
+          } else {
+            setProgress('Training queued.', 'running');
+          }
+        } catch (err) {
+          setProgress('Network error.', 'error');
+          trainBtn.disabled = false;
+        }
+      });
+    }
+
+    if (generateBtn) {
+      generateBtn.addEventListener('click', function() {
+        if (composer) composer.style.display = '';
+        if (sceneInput) sceneInput.focus();
+      });
+    }
+
+    if (submitBtn) {
+      submitBtn.addEventListener('click', async function() {
+        const lunaId = _faceTrainLunaId || window._lunaCompanionId;
+        if (!lunaId) return;
+        const scene = sceneInput ? sceneInput.value.trim() : '';
+        submitBtn.disabled = true;
+        setProgress('Generating…', 'running');
+        try {
+          const res = await lunaFetchFace('/api/lunas/' + lunaId + '/generate-self', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene }),
+          });
+          if (!res.ok) {
+            setProgress('Generation failed (' + res.status + ').', 'error');
+          } else {
+            const data = await res.json();
+            setProgress('Done! ' + (data.url ? 'Image ready.' : ''), 'done');
+            if (data.url) {
+              // Surface the generated image in the main viewer if available
+              if (typeof setCurrentUrl === 'function') setCurrentUrl(data.url);
+            }
+          }
+        } catch (err) {
+          setProgress('Network error.', 'error');
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    }
+  });
+
+  // Expose so companion panel can show the section
+  window.showFaceTrainingSection = function() {
+    const s = document.getElementById('luna-face-section');
+    if (s) s.style.display = '';
+  };
+}());
+
+// ── Task 4: Quota Upsell (darkroom.luna.ui-quota-upsell) ─────────────────────
+(function initLunaUpsell() {
+  const PRO_UPSELL_THRESHOLD = 30;
+  let _msgCount = 0;
+  let _proUpsellShown = false;
+
+  window._lunaUserTier = 'free'; // updated by companion panel after luna loads
+
+  function updateMsgCounter(count) {
+    _msgCount = count;
+    const el = document.getElementById('luna-msg-counter');
+    if (!el) return;
+    const tier = window._lunaUserTier || 'free';
+    if (tier === 'free' || tier === 'pro') {
+      const limit = 30;
+      el.style.display = '';
+      el.textContent = _msgCount + ' / ' + limit + ' messages this month';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  function maybeShowProUpsell() {
+    if (_proUpsellShown) return;
+    const tier = window._lunaUserTier || 'free';
+    if (tier !== 'free') return;
+    if (_msgCount >= PRO_UPSELL_THRESHOLD) {
+      _proUpsellShown = true;
+      const modal = document.getElementById('luna-pro-upsell');
+      if (modal) { modal.style.display = 'flex'; modal.classList.add('active'); }
+    }
+  }
+
+  window.showDevotionUpsell = function(context) {
+    const modal = document.getElementById('luna-devotion-upsell');
+    const title = document.getElementById('luna-devotion-upsell-title');
+    const body = document.getElementById('luna-devotion-upsell-body');
+    if (!modal) return;
+    if (context === 'voice' && title) title.textContent = 'Voice requires Devotion';
+    if (context === 'voice' && body) body.textContent = 'Voice messages are an exclusive Devotion tier feature. Upgrade to hear her voice.';
+    if (context === 'face-training' && title) title.textContent = 'Face training requires Devotion';
+    if (context === 'face-training' && body) body.textContent = 'Face training is exclusive to the Devotion tier. Train Luna on your photo to generate yourself in scenes.';
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+  };
+
+  window.incrementLunaMsgCount = function() {
+    _msgCount++;
+    updateMsgCounter(_msgCount);
+    maybeShowProUpsell();
+  };
+
+  window.setLunaMsgCount = function(count) {
+    updateMsgCounter(count);
+  };
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const proModal = document.getElementById('luna-pro-upsell');
+    const devotionModal = document.getElementById('luna-devotion-upsell');
+
+    document.getElementById('luna-pro-upsell-cta')?.addEventListener('click', function() {
+      if (proModal) { proModal.classList.remove('active'); proModal.style.display = 'none'; }
+      openUpgradeModal({ hitMetric: 'luna_messages_per_month' });
+    });
+    document.getElementById('luna-pro-upsell-dismiss')?.addEventListener('click', function() {
+      if (proModal) { proModal.classList.remove('active'); proModal.style.display = 'none'; }
+    });
+    document.getElementById('luna-devotion-upsell-cta')?.addEventListener('click', function() {
+      if (devotionModal) { devotionModal.classList.remove('active'); devotionModal.style.display = 'none'; }
+      openUpgradeModal({ hitMetric: 'devotion' });
+    });
+    document.getElementById('luna-devotion-upsell-dismiss')?.addEventListener('click', function() {
+      if (devotionModal) { devotionModal.classList.remove('active'); devotionModal.style.display = 'none'; }
+    });
+
+    // Voice button upsell check
+    document.addEventListener('click', function(e) {
+      if (e.target && (e.target.id === 'luna-voice-btn' || e.target.closest('#luna-voice-btn'))) {
+        const tier = window._lunaUserTier || 'free';
+        if (tier !== 'devotion') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          window.showDevotionUpsell('voice');
+        }
+      }
+    }, true);
+  });
+}());
+
+// ── Task 5: Onboarding Flow (darkroom.luna.ui-onboarding-flow) ───────────────
+(function initLunaOnboarding() {
+  function lunaFetchOnboard(path, opts) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts && opts.headers);
+    if (typeof token !== 'undefined' && token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(path, Object.assign({}, opts, { headers }));
+  }
+
+  async function checkAndShowOnboarding() {
+    try {
+      const res = await lunaFetchOnboard('/api/lunas/me');
+      if (res.status === 404 || res.status === 204) {
+        showOnboarding();
+        return;
+      }
+      if (!res.ok) return;
+      const luna = await res.json();
+      if (!luna || !luna.id) showOnboarding();
+    } catch (_) { /* non-fatal */ }
+  }
+
+  function showOnboarding() {
+    const overlay = document.getElementById('luna-onboarding');
+    if (overlay) { overlay.style.display = 'flex'; overlay.classList.add('active'); }
+  }
+
+  function hideOnboarding() {
+    const overlay = document.getElementById('luna-onboarding');
+    if (overlay) { overlay.classList.remove('active'); overlay.style.display = 'none'; }
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    // Wire tone buttons in quiz
+    document.querySelectorAll('#quiz-tone-grid .luna-quiz-tone-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('#quiz-tone-grid .luna-quiz-tone-btn').forEach(function(b) {
+          b.classList.remove('selected');
+        });
+        btn.classList.add('selected');
+      });
+    });
+
+    const submitBtn = document.getElementById('luna-onboarding-submit');
+    const errorEl = document.getElementById('luna-onboarding-error');
+
+    if (submitBtn) {
+      submitBtn.addEventListener('click', async function() {
+        const name = (document.getElementById('quiz-name')?.value || '').trim();
+        if (!name) {
+          if (errorEl) { errorEl.textContent = 'Please give her a name.'; errorEl.style.display = ''; }
+          return;
+        }
+        if (errorEl) errorEl.style.display = 'none';
+
+        const selectedToneBtn = document.querySelector('#quiz-tone-grid .luna-quiz-tone-btn.selected');
+        const tone = selectedToneBtn ? selectedToneBtn.dataset.tone : '';
+        const kink = (document.getElementById('quiz-kink')?.value || '').trim();
+        const look = (document.getElementById('quiz-look')?.value || '').trim();
+        const voiceId = document.getElementById('quiz-voice')?.value || '';
+
+        // Build persona_text from tone + optional kink/look details
+        let personaText = tone || '';
+        if (kink) personaText += (personaText ? '. ' : '') + 'Kinks: ' + kink;
+        if (look) personaText += (personaText ? '. ' : '') + 'Look: ' + look;
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating…';
+
+        try {
+          const res = await lunaFetchOnboard('/api/lunas', {
+            method: 'POST',
+            body: JSON.stringify({ name, persona_text: personaText || undefined, voice_id: voiceId || undefined }),
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(function() { return {}; });
+            if (errorEl) {
+              errorEl.textContent = errData.error || errData.message || 'Failed to create Luna (' + res.status + ').';
+              errorEl.style.display = '';
+            }
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Bring her to life';
+            return;
+          }
+          const luna = await res.json();
+          hideOnboarding();
+
+          // Trigger companion panel to load with the new luna
+          if (typeof window._lunaReload === 'function') {
+            window._lunaReload();
+          } else {
+            // Fallback: open drawer which will auto-load
+            const drawer = document.getElementById('luna-drawer');
+            if (drawer) { drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false'); }
+          }
+
+          // Fire first message from Luna
+          if (luna && luna.id) {
+            setTimeout(async function() {
+              try {
+                const msgRes = await lunaFetchOnboard('/api/lunas/' + luna.id + '/messages?limit=5');
+                if (msgRes.ok) {
+                  const msgs = await msgRes.json();
+                  const items = Array.isArray(msgs) ? msgs : (msgs.messages || []);
+                  const firstLuna = items.find(function(m) { return m.role !== 'user'; });
+                  if (firstLuna) {
+                    // Already visible via loadLunaMessages — nothing extra needed
+                  }
+                }
+              } catch (_) {}
+            }, 800);
+          }
+        } catch (err) {
+          if (errorEl) { errorEl.textContent = 'Network error. Try again.'; errorEl.style.display = ''; }
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Bring her to life';
+        }
+      });
+    }
+  });
+
+  // Expose so companion panel create-btn can also trigger this
+  window.showLunaOnboarding = showOnboarding;
+  window.checkAndShowLunaOnboarding = checkAndShowOnboarding;
+  // Check on boot — only fires if user is logged in and has no luna
+  document.addEventListener('DOMContentLoaded', function() {
+    if (typeof token !== 'undefined' && token) {
+      checkAndShowOnboarding();
+    }
+  });
+}());
+
+// ── Task 6: Companion Tab Full View (darkroom.luna.ui-companion-tab) ──────────
+(function initCompanionTab() {
+  let _companionLunaId = null;
+
+  function lunaFetchComp(path, opts) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts && opts.headers);
+    if (typeof token !== 'undefined' && token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(path, Object.assign({}, opts, { headers }));
+  }
+
+  function appendCompanionMsg(role, text) {
+    const list = document.getElementById('luna-companion-messages');
+    if (!list) return;
+    const div = document.createElement('div');
+    div.className = 'luna-companion-msg ' + (role === 'user' ? 'user' : role === 'system' ? 'system' : 'luna');
+    div.textContent = text;
+    list.appendChild(div);
+    list.scrollTop = list.scrollHeight;
+  }
+
+  async function loadCompanionLuna() {
+    try {
+      const res = await lunaFetchComp('/api/lunas/me');
+      if (!res.ok && res.status !== 404) return;
+      const luna = res.status === 404 ? null : await res.json();
+      if (!luna || !luna.id) { appendCompanionMsg('system', 'No Luna configured yet.'); return; }
+      _companionLunaId = luna.id;
+      const nameEl = document.getElementById('luna-companion-view-name');
+      if (nameEl) nameEl.textContent = luna.name || 'Luna';
+
+      const msgRes = await lunaFetchComp('/api/lunas/' + luna.id + '/messages?limit=50');
+      if (!msgRes.ok) return;
+      const data = await msgRes.json();
+      const msgs = Array.isArray(data) ? data : (data.messages || []);
+      const list = document.getElementById('luna-companion-messages');
+      if (list) list.innerHTML = '';
+      msgs.forEach(function(m) {
+        appendCompanionMsg(m.role === 'user' ? 'user' : 'luna', m.content || m.text || '');
+      });
+    } catch (_) {}
+  }
+
+  async function sendCompanionMessage() {
+    const txt = document.getElementById('luna-companion-text');
+    if (!txt) return;
+    const message = txt.value.trim();
+    if (!message || !_companionLunaId) return;
+    txt.value = '';
+    txt.style.height = '';
+    appendCompanionMsg('user', message);
+    const sendBtn = document.getElementById('luna-companion-send');
+    if (sendBtn) sendBtn.disabled = true;
+    if (txt) txt.disabled = true;
+
+    if (typeof window.incrementLunaMsgCount === 'function') window.incrementLunaMsgCount();
+
+    try {
+      const res = await lunaFetchComp('/api/lunas/' + _companionLunaId + '/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) { appendCompanionMsg('system', 'Error (' + res.status + ').'); return; }
+      const data = await res.json();
+      const reply = data.reply || data.message || data.content || '';
+      if (reply) appendCompanionMsg('luna', reply);
+    } catch (_) {
+      appendCompanionMsg('system', 'Network error.');
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+      if (txt) { txt.disabled = false; txt.focus(); }
+    }
+  }
+
+  // Extend DARKROOM_MODES to include companion and hook into setDarkroomMode
+  document.addEventListener('DOMContentLoaded', function() {
+    // Register companion mode
+    if (typeof DARKROOM_MODES !== 'undefined' && !DARKROOM_MODES.includes('companion')) {
+      DARKROOM_MODES.push('companion');
+    }
+
+    const companionTab = document.getElementById('companion-tab-btn');
+    const backBtn = document.getElementById('luna-companion-back-btn');
+    const sendBtn = document.getElementById('luna-companion-send');
+    const txt = document.getElementById('luna-companion-text');
+
+    if (companionTab) {
+      companionTab.addEventListener('click', function() {
+        document.body.setAttribute('data-mode', 'companion');
+        document.querySelectorAll('.mode-pill').forEach(function(p) {
+          p.classList.toggle('active', p.dataset.mode === 'companion');
+        });
+        // Hide main drawer if open
+        const drawer = document.getElementById('luna-drawer');
+        if (drawer) { drawer.classList.remove('open'); drawer.setAttribute('aria-hidden', 'true'); }
+        loadCompanionLuna();
+      });
+    }
+
+    if (backBtn) {
+      backBtn.addEventListener('click', function() {
+        document.body.removeAttribute('data-mode');
+        if (typeof setDarkroomMode === 'function') {
+          setDarkroomMode('compose');
+        }
+      });
+    }
+
+    if (sendBtn) sendBtn.addEventListener('click', sendCompanionMessage);
+
+    if (txt) {
+      txt.addEventListener('input', function() {
+        this.style.height = '';
+        this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+      });
+      txt.addEventListener('keydown', function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          sendCompanionMessage();
+        }
+      });
+    }
+  });
+}());
+
+// ── Patch companion panel to expose _lunaCompanionId and wire up sub-panels ──
+// After the existing initLunaPanel IIFE loads luna, expose the id and populate
+// sub-panels (persona editor, memory, face training).
+(function patchLunaPanel() {
+  // Override showChatSurface-equivalent to wire sub-panels once luna ID is known.
+  // We do this by wrapping DOMContentLoaded to inject a MutationObserver on the
+  // luna-drawer-name element — when it changes from "Luna" to a real name,
+  // the luna has loaded and we can fire secondary loads.
+  document.addEventListener('DOMContentLoaded', function() {
+    // Create-btn now opens onboarding instead of inline message
+    const createBtn = document.getElementById('luna-create-btn');
+    if (createBtn) {
+      createBtn.addEventListener('click', function() {
+        if (typeof window.showLunaOnboarding === 'function') {
+          window.showLunaOnboarding();
+        }
+      });
+    }
+
+    // Patch luna load to expose id and populate sub-panels.
+    // We intercept /api/lunas/me responses by monkey-patching loadLuna.
+    // Since loadLuna is in a closure, we set a flag on window instead.
+    const drawerEl = document.getElementById('luna-drawer');
+    if (drawerEl) {
+      const observer = new MutationObserver(function() {
+        // When chat surface becomes visible, luna has loaded — fetch full luna for sub-panels
+        const surface = document.getElementById('luna-chat-surface');
+        if (surface && surface.style.display !== 'none') {
+          observer.disconnect();
+          fetchAndPopulateSubPanels();
+        }
+      });
+      observer.observe(document.getElementById('luna-chat-surface') || drawerEl, {
+        attributes: true, attributeFilter: ['style'], subtree: true,
+      });
+    }
+
+    async function fetchAndPopulateSubPanels() {
+      try {
+        const headers = {};
+        if (typeof token !== 'undefined' && token) headers['Authorization'] = 'Bearer ' + token;
+        const res = await fetch('/api/lunas/me', { headers });
+        if (!res.ok) return;
+        const luna = await res.json();
+        if (!luna || !luna.id) return;
+
+        window._lunaCompanionId = luna.id;
+        window._lunaUserTier = luna.tier || luna.user_tier || 'free';
+
+        // Task 1: populate persona editor
+        if (typeof window.populatePersonaEditor === 'function') {
+          window.populatePersonaEditor(luna);
+        }
+
+        // Task 2: load memories
+        if (typeof window.loadLunaMemories === 'function') {
+          window.loadLunaMemories(luna.id);
+        }
+
+        // Task 3: show face training section
+        if (typeof window.showFaceTrainingSection === 'function') {
+          window.showFaceTrainingSection();
+        }
+
+        // Task 4: set message count for quota tracking
+        if (typeof window.setLunaMsgCount === 'function' && luna.message_count) {
+          window.setLunaMsgCount(luna.message_count);
+        }
+      } catch (_) {}
+    }
+
+    window._lunaReload = function() {
+      const toggle = document.getElementById('luna-companion-toggle');
+      if (toggle) toggle.click();
+    };
+  });
+}());
 </script>
 </body>
 </html>
