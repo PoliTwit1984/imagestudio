@@ -153,6 +153,34 @@ export async function handleSafeEditRoutes(
     return handleFluxEdit(req, deps);
   }
 
+  if (url.pathname === "/api/engine-compatibility" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    // Static map of (engine × content_profile) → verdict. Frontend uses this
+    // to render the engine card strip with green/amber/red dots and to gray
+    // out hopeless engine choices for the active source's content profile.
+    //
+    // House names (PLAN.md §1.3): lens=Grok img2img, glance=Nano Banana,
+    // strip=P-Edit, brush=Flux Fill Pro, eye=gpt-image-2, frame=Bria,
+    // skin=Darkroom Skin (Grok-PRO based), blend=multi-image blend,
+    // lock=fal.ai face-swap.
+    return Response.json({
+      schema_version: 1,
+      content_profiles: ["sfw", "nsfw_topless"],
+      verdicts: ["likely", "may-refuse", "will-refuse"],
+      engines: {
+        lens:   { sfw: "likely", nsfw_topless: "may-refuse" },
+        glance: { sfw: "likely", nsfw_topless: "may-refuse" },
+        strip:  { sfw: "likely", nsfw_topless: "likely" },
+        brush:  { sfw: "likely", nsfw_topless: "likely" },
+        eye:    { sfw: "likely", nsfw_topless: "will-refuse" },
+        frame:  { sfw: "likely", nsfw_topless: "will-refuse" },
+        skin:   { sfw: "likely", nsfw_topless: "may-refuse" },
+        blend:  { sfw: "likely", nsfw_topless: "likely" },
+        lock:   { sfw: "likely", nsfw_topless: "likely" },
+      },
+    });
+  }
+
   return null;
 }
 
