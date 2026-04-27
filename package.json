@@ -5,5 +5,7 @@
     "start": "bun run index.ts",
     "dev": "bun run --watch index.ts"
   },
-  "dependencies": {}
+  "dependencies": {
+    "sharp": "^0.34.5"
+  }
 }

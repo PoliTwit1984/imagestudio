@@ -202,7 +202,9 @@ export async function handleGenerationRoutes(
           },
           body: JSON.stringify({
             model: model === "basic" ? "grok-imagine-image" : "grok-imagine-image-pro",
-            prompt: `same person same scene but ${editPrompt}, ${deps.REALISM_TAGS}, no smiling, lips parted`,
+            prompt: [`same person same scene but ${editPrompt}`, deps.REALISM_TAGS, "no smiling, lips parted"]
+              .filter((s) => s && s.trim())
+              .join(", "),
             image: { url: sourceUrl, type: "image_url" },
             n: 1,
           }),
@@ -379,7 +381,9 @@ RULES:
         trigger = character?.lora_trigger || "";
       }
 
-      const prompt = `${trigger} ${scene}, ${deps.REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
+      const prompt = [`${trigger} ${scene}`, deps.REALISM_TAGS, "no smiling, serious sultry expression, lips parted"]
+        .filter((s) => s && s.trim())
+        .join(", ");
 
       const falBody: any = {
         prompt,

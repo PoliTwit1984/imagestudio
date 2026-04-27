@@ -29,6 +29,22 @@ export async function handleMediaRoutes(
       const path = buildUploadPath(folder, filename, file.type || "application/octet-stream");
       const publicUrl = await uploadToStorage(path, bytes, file.type || "application/octet-stream");
 
+      // For image uploads to the main canvas, also log them in the catalog
+      // (generations table) so they appear in History alongside generated/edited
+      // images and carry full lifecycle metadata.
+      const isImage = (file.type || "").startsWith("image/");
+      const isCatalogFolder = folder === "uploads" || folder === "garments" || folder === "poses" || folder === "faces";
+      if (isImage && isCatalogFolder) {
+        try {
+          await deps.saveGeneration({
+            scene: `[${folder}]`,
+            model: "user-upload",
+            image_url: publicUrl,
+            revised_prompt: filename,
+          } as any);
+        } catch {}
+      }
+
       return Response.json({ ok: true, folder, path, url: publicUrl });
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });
@@ -42,41 +58,98 @@ export async function handleMediaRoutes(
       const baseUrl = body.base_image_url || "";
       const faceUrl = body.face_image_url || "";
       const charName = body.character || "unknown";
+      const engine = (body.engine || "fal") as "fal" | "nano" | "gpt";
       if (!baseUrl || !faceUrl) {
         return Response.json({ error: "base_image_url and face_image_url required" }, { status: 400 });
       }
 
-      const res = await fetch("https://fal.run/fal-ai/face-swap", {
-        method: "POST",
-        headers: {
-          Authorization: `Key ${env("FAL_API_KEY")}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          base_image_url: baseUrl,
-          swap_image_url: faceUrl,
-        }),
-      });
+      let resultUrl = "";
+      let modelUsed = "";
 
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`Face swap ${res.status}: ${err}`);
+      if (engine === "nano") {
+        const r = await fetch("https://fal.run/fal-ai/nano-banana/edit", {
+          method: "POST",
+          headers: {
+            Authorization: `Key ${env("FAL_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            image_urls: [baseUrl, faceUrl],
+            prompt: "Replace the face on the woman in the first image with the face from the second image. Keep her body, pose, outfit, hair, lighting, and the entire background of the first image identical. Only the face changes. Photorealistic, seamless skin blend at the jawline.",
+            num_images: 1,
+            output_format: "png",
+          }),
+        });
+        if (!r.ok) throw new Error(`Nano face-swap ${r.status}: ${(await r.text()).slice(0, 300)}`);
+        const d = await r.json();
+        resultUrl = d.images?.[0]?.url || d.image?.url || "";
+        modelUsed = "nano-banana";
+      } else if (engine === "gpt") {
+        // gpt-image-2 with multipart edit (person + face source)
+        const [baseDl, faceDl] = await Promise.all([fetch(baseUrl), fetch(faceUrl)]);
+        if (!baseDl.ok) throw new Error(`base fetch ${baseDl.status}`);
+        if (!faceDl.ok) throw new Error(`face fetch ${faceDl.status}`);
+        const baseBuf = Buffer.from(await baseDl.arrayBuffer());
+        const faceBuf = Buffer.from(await faceDl.arrayBuffer());
+        const form = new FormData();
+        form.append("model", "gpt-image-2");
+        form.append("image[]", new Blob([baseBuf], { type: "image/png" }), "base.png");
+        form.append("image[]", new Blob([faceBuf], { type: "image/png" }), "face.png");
+        form.append("prompt", "Replace the face on the woman in the first image with the face from the second image. Keep her body, pose, outfit, hair, lighting, and the entire background of the first image identical. Only the face changes.");
+        form.append("size", "1024x1024");
+        form.append("quality", "high");
+        const r = await fetch("https://api.openai.com/v1/images/edits", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${env("OPENAI_API_KEY")}` },
+          body: form as any,
+        });
+        if (!r.ok) throw new Error(`GPT face-swap ${r.status}: ${(await r.text()).slice(0, 300)}`);
+        const d = await r.json();
+        const b64 = d.data?.[0]?.b64_json;
+        const remoteUrl = d.data?.[0]?.url;
+        if (b64) {
+          const bytes = Buffer.from(b64, "base64");
+          const { uploadToStorage, buildUploadPath } = await import("../supabase");
+          const path = buildUploadPath("uploads", `gpt-faceswap-${Date.now()}.png`, "image/png");
+          resultUrl = await uploadToStorage(path, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, "image/png");
+        } else if (remoteUrl) {
+          resultUrl = remoteUrl;
+        }
+        modelUsed = "gpt-image-2";
+      } else {
+        const res = await fetch("https://fal.run/fal-ai/face-swap", {
+          method: "POST",
+          headers: {
+            Authorization: `Key ${env("FAL_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            base_image_url: baseUrl,
+            swap_image_url: faceUrl,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`Face swap ${res.status}: ${err}`);
+        }
+        const data = await res.json();
+        resultUrl = data.image?.url || "";
+        modelUsed = "fal-face-swap";
       }
 
-      const data = await res.json();
-      const resultUrl = data.image?.url || "";
+      if (!resultUrl) throw new Error("face-swap returned no image");
 
       const character = await deps.getCharacter(charName);
       await deps.saveGeneration({
         character_id: character?.id,
         character_name: charName,
-        scene: "[face-swap]",
-        model: "fal-face-swap",
+        scene: `[face-swap:${engine}]`,
+        model: modelUsed,
         image_url: resultUrl,
         revised_prompt: "",
       });
 
-      return Response.json({ ok: true, url: resultUrl });
+      return Response.json({ ok: true, url: resultUrl, engine, model: modelUsed });
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });
     }

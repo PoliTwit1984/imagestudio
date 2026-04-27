@@ -66,12 +66,15 @@ export async function uploadToStorage(
   contentType: string,
   upsert = true
 ): Promise<string> {
-  const key = env("SUPABASE_ANON_KEY");
-  if (!key) throw new Error("SUPABASE_ANON_KEY is missing");
+  // Storage requires a JWT-style key; prefer service-role when present so the
+  // newer sb_publishable_* anon tokens (PostgREST-only) don't break uploads.
+  const key = env("SUPABASE_SERVICE_ROLE_KEY") || env("SUPABASE_ANON_KEY");
+  if (!key) throw new Error("Supabase storage key missing (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY)");
 
   const res = await fetch(objectStorageUrl(path), {
     method: "POST",
     headers: {
+      apikey: key,
       Authorization: `Bearer ${key}`,
       "Content-Type": contentType,
       "x-upsert": upsert ? "true" : "false",
@@ -88,12 +91,13 @@ export async function uploadToStorage(
 }
 
 export async function deleteStorageObject(path: string): Promise<void> {
-  const key = env("SUPABASE_ANON_KEY");
-  if (!key) throw new Error("SUPABASE_ANON_KEY is missing");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY") || env("SUPABASE_ANON_KEY");
+  if (!key) throw new Error("Supabase storage key missing");
 
   const res = await fetch(objectStorageUrl(path), {
     method: "DELETE",
     headers: {
+      apikey: key,
       Authorization: `Bearer ${key}`,
     },
   });

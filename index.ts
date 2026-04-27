@@ -2,17 +2,21 @@ import { checkAuth, isAuthConfigured } from "./src/server/auth";
 import { PORT, SUPABASE_URL, env } from "./src/server/config";
 import { createApiRouteHandlers } from "./src/server/routes";
 import {
+  buildUploadPath,
   encodeFilterValue,
   supaHeaders,
+  uploadToStorage,
 } from "./src/server/supabase";
 
 // Image Studio — Luna & Holly image generation web app
 // Bun server with Supabase backend (storage + db)
 
-const REALISM_TAGS =
-  "raw unfiltered amateur iPhone photo, realistic skin texture with visible pores, candid r/gonewild energy, no filters";
+// Texture/skin-realism is applied post-generation via Darkroom Skin, Topaz,
+// Enhancor — NOT baked into the generation prompt. Keeps generation clean and
+// lets the catalog log preset applications as their own steps.
+const REALISM_TAGS = "";
 
-const ALLOWED_UPLOAD_FOLDERS = new Set(["audio", "faces", "poses", "uploads"]);
+const ALLOWED_UPLOAD_FOLDERS = new Set(["audio", "faces", "poses", "uploads", "garments"]);
 
 // --- Supabase helpers ---
 
@@ -68,7 +72,9 @@ async function generateGrok(
   const refUrl = character.ref_image_url;
   const prefix = character.prompt_prefix || "same face and body but";
   const suffix = character.prompt_suffix || "";
-  const prompt = `${prefix} ${scene}${suffix ? ", " + suffix : ""}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
+  const prompt = [prefix + " " + scene, suffix, REALISM_TAGS, "no smiling, serious sultry expression, lips parted"]
+    .filter((s) => s && s.trim())
+    .join(", ");
 
   const res = await fetch("https://api.x.ai/v1/images/edits", {
     method: "POST",
@@ -112,7 +118,9 @@ async function generateFal(
     throw new Error(`No LoRA selected. Pick one from the dropdown or use Grok.`);
   }
 
-  const prompt = `${trigger} ${scene}, ${REALISM_TAGS}, no smiling, serious sultry expression, lips parted`;
+  const prompt = [`${trigger} ${scene}`, REALISM_TAGS, "no smiling, serious sultry expression, lips parted"]
+    .filter((s) => s && s.trim())
+    .join(", ");
 
   const body: any = {
     prompt,
@@ -146,6 +154,53 @@ async function generateFal(
   };
 }
 
+// --- GPT-Image-2 text-to-image (OpenAI, April 2026 release) ---
+async function generateGpt(scene: string): Promise<{ url: string; revisedPrompt: string; engine: string }> {
+  const prompt = [scene, "no smiling, serious sultry expression, lips parted"]
+    .filter((s) => s && s.trim())
+    .join(", ");
+
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("OPENAI_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-image-2",
+      prompt,
+      size: "1024x1536",
+      quality: "high",
+      n: 1,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`GPT-Image-2 ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const b64 = data.data?.[0]?.b64_json;
+  const remoteUrl = data.data?.[0]?.url;
+  let publicUrl = "";
+  if (b64) {
+    const bytes = Buffer.from(b64, "base64");
+    const filename = `gpt-gen-${Date.now()}.png`;
+    const path = buildUploadPath("uploads", filename, "image/png");
+    publicUrl = await uploadToStorage(
+      path,
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      "image/png",
+    );
+  } else if (remoteUrl) {
+    publicUrl = remoteUrl;
+  }
+  if (!publicUrl) throw new Error("GPT-Image-2 returned no image");
+  return {
+    url: publicUrl,
+    revisedPrompt: data.data?.[0]?.revised_prompt || "",
+    engine: "gpt-image-2",
+  };
+}
+
 // --- Router: pick engine based on user selection ---
 
 async function generateImage(
@@ -157,6 +212,9 @@ async function generateImage(
 ): Promise<{ url: string; revisedPrompt: string; engine: string }> {
   if (engine === "fal") {
     return generateFal(character, scene, loraOverride);
+  }
+  if (engine === "gpt") {
+    return generateGpt(scene);
   }
   return generateGrok(character, scene, model);
 }

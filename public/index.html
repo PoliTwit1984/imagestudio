@@ -422,7 +422,7 @@
   .error.active { display: block; }
 
   /* Toast */
-  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222; border: 1px solid #444; color: #e0e0e0; padding: 10px 24px; border-radius: 8px; font-size: 0.9rem; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222; border: 1px solid #444; color: #e0e0e0; padding: 10px 24px; border-radius: 8px; font-size: 0.9rem; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100000; }
   .toast.show { opacity: 1; }
 
   /* Modal */
@@ -638,7 +638,11 @@
       <input type="file" id="upload-input-main" accept="image/*" style="display:none;" onchange="handleUpload(this)">
       <button class="pose-btn" onclick="openPoseRef()" title="Upload a reference photo to copy the pose — Grok analyzes the body position and feeds it into generation">Pose Ref</button>
       <button class="pose-btn" onclick="openPinterest()" style="border-color:#e60023;color:#e60023;" title="Search Pinterest for pose references — find the pose you want, click to use it">Pinterest</button>
-      <div class="engine-toggle grok" id="engine-toggle" onclick="toggleEngine()" title="GROK: img2img with face lock from character ref ($0.02-0.07/img) | FAL.AI: Flux LoRA with trained face model, zero content filter">GROK</div>
+      <select class="edit-engine-select" id="engine-select" style="font-size:0.78rem;padding:7px 10px;min-width:120px;" title="GROK: img2img face-locked re-imagine | FAL.AI: Flux LoRA, zero filter | GPT-2: highest fidelity, refuses NSFW" onchange="onEngineChange()">
+        <option value="grok">GROK (img2img)</option>
+        <option value="fal">FAL.AI (Flux LoRA)</option>
+        <option value="gpt">GPT-Image-2</option>
+      </select>
       <div class="model-toggle pro" id="model-toggle" onclick="toggleModel()" title="PRO ($0.07): grok-imagine-image-pro, has content moderation | BASIC ($0.02): grok-imagine-image, no moderation but looser face lock">PRO $0.07</div>
       <select class="lora-select" id="lora-select" style="display:none;" title="Pick a LoRA for face consistency on fal.ai. LoRA = trained face model. Luna V2 / Holly V1 available. No LoRA = text-only generation.">
         <option value="">Select LoRA...</option>
@@ -732,17 +736,38 @@
           <div class="img-overlay-text" id="img-overlay-text">Processing...</div>
         </div>
       </div>
+      <!-- Persistent URL strip — always visible when there's a current image. -->
+      <div id="url-strip" style="display:none;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:8px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:0.78rem;">
+        <span style="color:#c850c0;font-weight:600;flex-shrink:0;">URL:</span>
+        <input id="url-strip-input" type="text" readonly style="flex:1;background:transparent;border:none;color:#e0e0e0;font-family:inherit;font-size:inherit;outline:none;padding:0;min-width:0;text-overflow:ellipsis;">
+        <button class="action-btn" onclick="copyUrlStrip()" style="padding:3px 10px;font-size:0.72rem;border-color:#c850c0;color:#c850c0;flex-shrink:0;">Copy</button>
+      </div>
+
+      <!-- Post-edit strength slider (auto-shown after each edit) -->
+      <div id="edit-strength-bar" style="display:none;align-items:center;gap:10px;padding:10px 14px;margin-bottom:10px;background:linear-gradient(135deg,#1a0e1f,#0e1a1f);border:1px solid #c850c033;border-radius:10px;">
+        <div style="font-size:0.82rem;color:#c850c0;font-weight:600;white-space:nowrap;">Edit Strength</div>
+        <input type="range" id="edit-strength-slider" min="0" max="100" value="100" style="flex:1;min-width:160px;" oninput="onEditStrengthInput()">
+        <span id="edit-strength-val" style="color:#fff;font-weight:600;font-family:monospace;min-width:42px;text-align:right;">100%</span>
+        <button class="action-btn" onclick="bakeEditStrength()" style="border-color:#10b981;color:#10b981;" title="Save the current blended result as a new version. Then keep editing.">Bake</button>
+        <button class="action-btn" onclick="resetEditStrength()" style="border-color:#facc15;color:#facc15;" title="Snap back to 100% (full edit)">100%</button>
+        <button class="action-btn" onclick="closeEditStrength()" style="border-color:#888;color:#888;" title="Hide this slider (the current image stays)">Hide</button>
+      </div>
       <div class="result-actions">
         <button class="action-btn upscale" id="btn-upscale" onclick="upscaleImage('faithful')" title="Freepik Precision 2x — faithful upscale, no hallucination, preserves face exactly. 768→1536px">Upscale</button>
         <button class="action-btn" id="btn-magnific" onclick="startMagnific()" style="border-color:#f59e0b;color:#f59e0b;" title="Freepik Magnific Creative — Grok auto-generates a prompt, you edit it, then upscale with texture/detail injection. Can change face.">Magnific</button>
         <button class="action-btn" id="btn-topaz" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Topaz Bloom Realism — face enhancement + skin texture + upscale. Click to adjust settings.">Topaz</button>
         <button class="action-btn" id="btn-enhancor" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Enhancor v3 skin enhancement — body mode, level 65, face locked. Good for realistic skin texture on nudes where Topaz/Magnific blur out.">Enhancor</button>
+        <button class="action-btn" id="btn-darkroom-skin" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
+        <button class="action-btn" id="btn-detail-brush" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="fal.ai face swap — pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
         <button class="action-btn" id="btn-fabric" onclick="openFabric()" style="border-color:#ff6b6b;color:#ff6b6b;" title="VEED Fabric 1.0 — turn this image into a talking head video. Type text → ElevenLabs voice → lip-synced video. ~2-3 min processing.">Fabric Video</button>
         <button class="action-btn" id="btn-kling" onclick="openKling()" style="border-color:#e879f9;color:#e879f9;" title="Kling Pro — image to video with motion. 5s or 10s. High quality cinematic motion.">Kling Video</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
         <button class="action-btn dc" id="btn-dc" onclick="sendDiscord()" title="Send image to Discord (#joe-direct channel)">Discord</button>
         <button class="action-btn" id="btn-compare-pose" onclick="togglePoseCompare()" style="border-color:#06b6d4;color:#06b6d4;display:none;" title="Show pose reference alongside generated image for comparison">Compare Pose</button>
+        <button class="action-btn" id="btn-resize" onclick="resizeImage(1200)" style="border-color:#facc15;color:#facc15;" title="Shrink image to 1200px on the long edge. Useful before Grok edits — Grok is slow on big images.">Resize 1200</button>
+        <button class="action-btn" id="btn-paint-mask" onclick="openMaskPainter()" style="border-color:#c850c0;color:#c850c0;" title="Paint a mask over the image, then inpaint with Flux Fill Pro (NSFW-permissive, true mask-aware inpainting).">Paint Mask</button>
+        <button class="action-btn" id="btn-sandwich" onclick="openSandwich()" style="border-color:#f472b6;color:#f472b6;" title="Sandwich edit: P-Edit clothes the subject → Nano Banana / GPT-2 edits the scene → P-Edit unclothes. Lets you use safe editors on NSFW source.">Sandwich Edit</button>
         <button class="action-btn" onclick="copyUrl()" title="Copy the image URL to clipboard">Copy URL</button>
         <button class="action-btn" onclick="downloadImg()" title="Download the image to your device">Download</button>
         <button class="action-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" title="Upload your own image to edit, enhance, face swap, etc.">Upload</button>
@@ -824,10 +849,18 @@
           <div style="color:#555;font-size:0.75rem;margin:8px 0;">or upload a face:</div>
           <input type="file" id="faceswap-upload" accept="image/*" style="font-size:0.8rem;color:#888;">
         </div>
-        <div style="display:flex;gap:8px;margin-top:10px;">
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap;">
+          <label style="color:#aaa;font-size:0.85rem;">Engine:
+            <select id="faceswap-engine" class="edit-engine-select">
+              <option value="fal">Lock (fal · pixel-precise)</option>
+              <option value="nano">Glance (nano · fast, soft blend)</option>
+              <option value="gpt">Eye (gpt-2 · highest quality, refuses NSFW)</option>
+            </select>
+          </label>
           <button class="edit-btn" id="faceswap-go" onclick="runFaceSwap()" style="background:linear-gradient(135deg,#a855f7,#7c3aed);">Swap Face</button>
           <button class="action-btn" onclick="closeFaceSwap()">Cancel</button>
         </div>
+        <div style="color:#888;font-size:0.78rem;margin-top:6px;">Lock = surgical face replace (best for nudes). Glance = scene-aware swap, slight regen elsewhere. Eye = highest fidelity but refuses suggestive source.</div>
       </div>
 
       <!-- Topaz settings panel -->
@@ -881,6 +914,139 @@
         </div>
       </div>
 
+      <!-- Detail Brush picker modal -->
+      <div id="detail-brush-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;padding:20px;overflow:auto;">
+        <div style="max-width:720px;margin:60px auto 0;background:#181818;border:1px solid #fbbf24;border-radius:12px;padding:22px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:600;color:#fbbf24;">Detail Brushes <span style="color:#888;font-weight:400;font-size:0.85rem;">— surgical region edits</span></div>
+            <button class="action-btn" onclick="closeDetailBrushes()">Close</button>
+          </div>
+          <div id="detail-brush-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;"></div>
+          <div style="margin-top:14px;color:#888;font-size:0.78rem;">Pick a brush. Mask painter opens with the right brush size pre-set. Paint over the target region. Apply. Result lands in the URL strip.</div>
+        </div>
+      </div>
+
+      <!-- Mask painter modal -->
+      <div id="mask-painter" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;padding:20px;overflow:auto;">
+        <div style="max-width:1100px;margin:0 auto;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:600;color:#c850c0;">Paint Mask · white = repaint here</div>
+            <button class="action-btn" onclick="closeMaskPainter()">Close</button>
+          </div>
+          <div id="mask-stage" style="position:relative;display:inline-block;background:#000;">
+            <canvas id="mask-bg" style="display:block;max-width:100%;height:auto;"></canvas>
+            <canvas id="mask-fg" style="position:absolute;top:0;left:0;cursor:crosshair;opacity:0.55;mix-blend-mode:screen;"></canvas>
+            <div id="garment-overlay" style="display:none;position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;">
+              <div id="garment-overlay-box" style="position:absolute;left:0;top:0;width:100%;height:100%;transform-origin:center center;pointer-events:auto;cursor:move;border:2px dashed #f472b6;box-sizing:border-box;">
+                <img id="garment-overlay-img" crossorigin="anonymous" style="width:100%;height:100%;display:block;opacity:0.85;pointer-events:none;user-select:none;-webkit-user-drag:none;" draggable="false">
+                <div class="g-handle g-h-nw" data-handle="nw" style="position:absolute;left:-7px;top:-7px;width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:nwse-resize;"></div>
+                <div class="g-handle g-h-ne" data-handle="ne" style="position:absolute;right:-7px;top:-7px;width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:nesw-resize;"></div>
+                <div class="g-handle g-h-sw" data-handle="sw" style="position:absolute;left:-7px;bottom:-7px;width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:nesw-resize;"></div>
+                <div class="g-handle g-h-se" data-handle="se" style="position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:nwse-resize;"></div>
+                <div class="g-handle g-h-n"  data-handle="n"  style="position:absolute;left:50%;top:-7px;transform:translateX(-50%);width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:ns-resize;"></div>
+                <div class="g-handle g-h-s"  data-handle="s"  style="position:absolute;left:50%;bottom:-7px;transform:translateX(-50%);width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:ns-resize;"></div>
+                <div class="g-handle g-h-w"  data-handle="w"  style="position:absolute;left:-7px;top:50%;transform:translateY(-50%);width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:ew-resize;"></div>
+                <div class="g-handle g-h-e"  data-handle="e"  style="position:absolute;right:-7px;top:50%;transform:translateY(-50%);width:14px;height:14px;background:#f472b6;border:2px solid #fff;border-radius:50%;cursor:ew-resize;"></div>
+                <div class="g-handle g-h-rot" data-handle="rot" style="position:absolute;left:50%;top:-32px;transform:translateX(-50%);width:14px;height:14px;background:#22d3ee;border:2px solid #fff;border-radius:50%;cursor:grab;"></div>
+              </div>
+            </div>
+            <div id="stamp-toolbar" style="display:none;position:absolute;bottom:10px;right:10px;background:#0008;padding:8px;border-radius:8px;display:none;flex-wrap:wrap;gap:6px;align-items:center;">
+              <label style="color:#fff;font-size:0.75rem;">Blend:
+                <select id="stamp-blend" class="edit-engine-select" style="font-size:0.75rem;">
+                  <option value="overlay">Overlay (default)</option>
+                  <option value="over">Over (replace)</option>
+                  <option value="multiply">Multiply (darken)</option>
+                  <option value="soft-light">Soft Light</option>
+                  <option value="hard-light">Hard Light</option>
+                  <option value="screen">Screen (lighten)</option>
+                </select>
+              </label>
+              <button class="edit-btn" id="stamp-go-btn" onclick="stampOverlay()" style="background:linear-gradient(135deg,#10b981,#059669);">Stamp</button>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px;">
+            <label style="color:#aaa;font-size:0.85rem;">Brush
+              <input type="range" id="mask-brush" min="5" max="200" value="60" oninput="document.getElementById('mask-brush-val').textContent=this.value" style="vertical-align:middle;">
+              <span id="mask-brush-val">60</span>px
+            </label>
+            <button class="action-btn" id="mask-erase-btn" onclick="toggleMaskErase()" style="border-color:#facc15;color:#facc15;">Erase: off</button>
+            <button class="action-btn" onclick="clearMask()" style="border-color:#ef4444;color:#ef4444;">Clear</button>
+            <input type="text" id="mask-prompt" class="edit-input" placeholder="What to paint inside the mask (e.g., 'a brass victorian lamp' OR 'wearing this black lace lingerie')" style="flex:1;min-width:300px;">
+            <button class="action-btn" id="mask-describe-btn" onclick="autoDescribeGarment()" style="border-color:#22d3ee;color:#22d3ee;" title="Grok Vision writes a one-line prompt from the garment image. Auto-runs on Inpaint if prompt is empty.">Auto-describe</button>
+            <select class="edit-engine-select" id="mask-upscaler">
+              <option value="none">No upscale</option>
+              <option value="topaz">+Topaz</option>
+              <option value="freepik">+Freepik</option>
+            </select>
+            <button class="edit-btn" id="mask-go-btn" onclick="runInpaint()" style="background:linear-gradient(135deg,#c850c0,#7e22ce);">Inpaint with Flux Fill Pro</button>
+            <button class="edit-btn" id="mask-wear-btn" onclick="runWearGarment()" style="background:linear-gradient(135deg,#f472b6,#dc2626);" title="P-Edit multi-image: skip the mask, send person + garment + prompt → P-Edit figures out placement. NSFW-permissive, less precise than Flux Fill, often more natural for full-body lingerie.">Wear via P-Edit</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #2a2a2a;">
+            <div style="font-weight:600;color:#f472b6;font-size:0.85rem;">Garment Reference(s) <span style="font-weight:400;color:#888;">— add multiple angles for better fidelity</span></div>
+            <input type="text" id="mask-garment-url" class="edit-input" placeholder="Paste image URL (front, back, side, worn shot...)" style="flex:1;min-width:280px;">
+            <button class="action-btn" id="mask-add-ref-btn" onclick="addGarmentRef()" style="border-color:#f472b6;color:#f472b6;" title="Add this URL/upload as another reference angle (front, back, side, worn shot). P-Edit uses all of them; Flux Fill auto-collages them.">+ Add Angle</button>
+            <button class="action-btn" onclick="document.getElementById('mask-garment-upload').click()" style="border-color:#f472b6;color:#f472b6;">Upload</button>
+            <input type="file" id="mask-garment-upload" accept="image/*" style="display:none;" onchange="handleGarmentUpload(this)">
+            <button class="action-btn" id="mask-removebg-btn" onclick="removeGarmentBg()" style="border-color:#a3e635;color:#a3e635;" title="Strip background from current/most-recent garment image (BiRefNet)">Remove BG</button>
+            <label style="color:#aaa;font-size:0.8rem;display:flex;align-items:center;gap:4px;">
+              <input type="checkbox" id="mask-auto-removebg" checked style="margin:0;"> auto
+            </label>
+            <button class="action-btn" id="mask-automask-btn" onclick="runAutoMask()" style="border-color:#22d3ee;color:#22d3ee;" title="Grok Vision classifies the garment, then auto-paints the body region where it would go. You can refine with brush/erase.">Auto-mask from Garment</button>
+            <button class="action-btn" id="mask-place-btn" onclick="placeGarmentOverlay()" style="border-color:#f472b6;color:#f472b6;" title="Place the garment image on top so you can drag, resize, and rotate it. Then click Bake → Mask to convert its silhouette into the inpaint mask.">Place Overlay</button>
+            <button class="action-btn" id="mask-bake-btn" onclick="bakeOverlayToMask()" style="display:none;border-color:#10b981;color:#10b981;" title="Convert the placed garment silhouette into a white mask region. You can still refine with brush/erase after baking.">Bake → Mask</button>
+            <button class="action-btn" id="mask-overlay-hide-btn" onclick="hideGarmentOverlay()" style="display:none;border-color:#888;color:#888;">Hide Overlay</button>
+            <label style="color:#aaa;font-size:0.85rem;">Strength
+              <input type="range" id="mask-garment-strength" min="0.1" max="1" step="0.05" value="0.65" oninput="document.getElementById('mask-garment-strength-val').textContent=this.value" style="vertical-align:middle;width:120px;">
+              <span id="mask-garment-strength-val">0.65</span>
+            </label>
+            <img id="mask-garment-preview" style="display:none;height:60px;border-radius:6px;border:1px solid #444;">
+          </div>
+          <div id="mask-garment-strip" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px;padding:8px;background:#0a0a0a;border-radius:8px;">
+            <!-- thumbnails inserted dynamically -->
+          </div>
+          <div style="margin-top:8px;color:#888;font-size:0.8rem;">Flux Fill Pro: permissive, mask-aware. White = repaint. Garment ref steers what gets painted (Redux conditioning) — works for lingerie, fabric, style, pose. Strength: 0.5–0.7 keeps faces/body intact, 0.8+ forces exact garment match.</div>
+        </div>
+      </div>
+
+      <!-- Sandwich edit modal -->
+      <div id="sandwich-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;padding:20px;overflow:auto;">
+        <div style="max-width:680px;margin:60px auto 0;background:#181818;border:1px solid #333;border-radius:12px;padding:22px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:600;color:#f472b6;">Sandwich Edit · clothe → safe-edit → unclothe</div>
+            <button class="action-btn" onclick="closeSandwich()">Close</button>
+          </div>
+          <div style="color:#aaa;font-size:0.85rem;margin-bottom:14px;">P-Edit puts simple clothing on the subject → mainstream editor (Nano Banana or GPT-2) changes the scene → P-Edit removes the clothing. Use this when you want gpt-2/nano-banana quality on an NSFW source.</div>
+          <label style="color:#ccc;font-size:0.85rem;display:block;margin-bottom:6px;">What to edit (scene change)</label>
+          <textarea id="sandwich-edit-prompt" class="setting-textarea" rows="3" placeholder="e.g., change the lighting to warm sunset, replace the comforter with white silk, add a brass lamp on the nightstand"></textarea>
+          <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap;">
+            <label style="color:#aaa;font-size:0.85rem;">Editor:
+              <select id="sandwich-engine" class="edit-engine-select">
+                <option value="nano">Nano Banana (fast)</option>
+                <option value="gpt">GPT Image 2 (highest quality)</option>
+              </select>
+            </label>
+            <label style="color:#aaa;font-size:0.85rem;">Upscaler:
+              <select id="sandwich-upscaler" class="edit-engine-select">
+                <option value="none">None</option>
+                <option value="topaz">Topaz</option>
+                <option value="freepik">Freepik</option>
+              </select>
+            </label>
+          </div>
+          <details style="margin-top:14px;color:#aaa;font-size:0.82rem;">
+            <summary style="cursor:pointer;">Advanced: clothe / unclothe prompts</summary>
+            <label style="display:block;margin-top:8px;">Clothe prompt</label>
+            <textarea id="sandwich-clothe" class="setting-textarea" rows="2">Add a simple plain black tank top and shorts to the subject. Keep everything else identical.</textarea>
+            <label style="display:block;margin-top:8px;">Unclothe prompt</label>
+            <textarea id="sandwich-unclothe" class="setting-textarea" rows="2">Remove the tank top and shorts. Restore the subject's original nude appearance. Keep everything else identical.</textarea>
+          </details>
+          <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:10px;">
+            <button class="action-btn" onclick="closeSandwich()">Cancel</button>
+            <button class="edit-btn" id="sandwich-go-btn" onclick="runSandwich()" style="background:linear-gradient(135deg,#f472b6,#9333ea);">Run sandwich</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Magnific prompt editor -->
       <div class="magnific-editor" id="magnific-editor" style="display:none;">
         <div class="edit-label">Magnific Prompt <span style="font-weight:400;color:#888;">(edit before upscaling)</span></div>
@@ -896,11 +1062,13 @@
         <div class="edit-row">
           <input type="text" id="edit-input" class="edit-input" placeholder="e.g. change to black and white, add more shadow, remove the robe...">
           <button class="enhance-btn" id="edit-enhance-btn" onclick="enhanceEdit()" style="font-size:0.8rem;padding:8px 14px;" title="Grok 4.20 rewrites your edit instruction for maximum impact — adds specific lighting, texture, and technique details">AI</button>
-          <select class="edit-engine-select" id="edit-engine-select" title="Grok: img2img re-gen (can change composition) | Bria: NL edit (preserves composition) | P-Edit: prunaai (safety off) | GPT-Image-2: April 2026 OpenAI model, best quality on safe edits | Smart: auto pick GPT first, fall back to P-Edit">
+          <select class="edit-engine-select" id="edit-engine-select" title="Grok: img2img re-gen | Bria: NL edit | P-Edit: prunaai (safety off) | Nano Banana: Gemini 2.5 Flash | GPT-Image-2: OpenAI | Flux Fill: auto-mask via Grok Vision then Flux Fill Pro inpaints (NSFW-permissive, surgical)">
             <option value="grok">Grok</option>
             <option value="fal">Bria Edit</option>
             <option value="pedit">P-Edit</option>
+            <option value="nano">Nano Banana</option>
             <option value="gpt">GPT Image 2</option>
+            <option value="flux">Flux Fill (auto-mask)</option>
             <option value="smart">Smart (auto)</option>
           </select>
           <button class="edit-btn" id="edit-btn" onclick="editImage()" title="Apply the edit using the selected engine">Edit</button>
@@ -912,6 +1080,13 @@
             <option value="freepik">Freepik Skin</option>
             <option value="none">None (P-Edit only)</option>
           </select>
+        </div>
+        <div class="edit-row" style="margin-top:8px;">
+          <button class="edit-btn" id="surgical-edit-btn" onclick="surgicalEdit()" style="background:linear-gradient(135deg,#0ea5e9,#10b981);border-color:transparent;flex:1;" title="Auto-detect NSFW regions → mask them out → gpt-image-2 edits everything else → composite original NSFW pixels back. Surgical preservation. Falls back to Flux Fill Pro if gpt-image-2 refuses.">🎯 Surgical Edit (preserve subject)</button>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:#888;">
+            <input type="checkbox" id="surgical-upscale-after" />
+            +Topaz
+          </label>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <button class="analyze-btn" id="analyze-btn" onclick="analyzeImage()" title="Sends the current image to the chat panel — your creative director prompt analyzes it and suggests edits as clickable tags">Grok Vision: Suggest Edits</button>
@@ -1081,7 +1256,15 @@ let versionStack = []; // [{url, label}]
 let versionIndex = -1;
 
 localStorage.removeItem('studio-token');
-if (token) { restoreSession(); }
+// On first load, check if auth is even required. If not, skip the gate entirely.
+(async () => {
+  const session = await verifySession(token);
+  if (session.authenticated || session.configured === false) {
+    showApp();
+    return;
+  }
+  if (token) restoreSession();
+})();
 
 async function verifySession(candidate = token) {
   const authHeaders = candidate ? { 'Authorization': `Bearer ${candidate}` } : {};
@@ -1404,23 +1587,29 @@ function addChip(text) {
   event.target.classList.add('used');
 }
 
-function toggleEngine() {
-  const el = document.getElementById('engine-toggle');
+function onEngineChange() {
+  const sel = document.getElementById('engine-select');
+  currentEngine = sel.value;
   const modelEl = document.getElementById('model-toggle');
   const loraEl = document.getElementById('lora-select');
+  // Show/hide context-specific controls per engine
   if (currentEngine === 'grok') {
-    currentEngine = 'fal';
-    el.textContent = 'FAL.AI';
-    el.className = 'engine-toggle fal';
+    modelEl.style.display = '';      // basic/pro toggle
+    loraEl.style.display = 'none';
+  } else if (currentEngine === 'fal') {
     modelEl.style.display = 'none';
-    loraEl.style.display = '';
-  } else {
-    currentEngine = 'grok';
-    el.textContent = 'GROK';
-    el.className = 'engine-toggle grok';
-    modelEl.style.display = '';
+    loraEl.style.display = '';        // LoRA picker
+  } else if (currentEngine === 'gpt') {
+    modelEl.style.display = 'none';
     loraEl.style.display = 'none';
   }
+}
+// Backward compat shim if anything still calls toggleEngine()
+function toggleEngine() {
+  const sel = document.getElementById('engine-select');
+  const order = ['grok', 'fal', 'gpt'];
+  sel.value = order[(order.indexOf(sel.value) + 1) % order.length];
+  onEngineChange();
 }
 
 function toggleModel() {
@@ -1627,18 +1816,30 @@ async function editImage() {
   showImgOverlay(`Editing with ${editEngine.toUpperCase()}...`);
   showEditStatus(`Editing with ${editEngine.toUpperCase()}... "${editPrompt.slice(0, 60)}"`, 'loading');
 
-  // GPT Image 2 and Smart route through /api/smart-edit (different shape)
-  const isSmartEdit = editEngine === 'gpt' || editEngine === 'smart';
+  // GPT Image 2, Nano Banana, and Smart all route through /api/smart-edit
+  const isSmartEdit = editEngine === 'gpt' || editEngine === 'smart' || editEngine === 'nano';
+  const isFluxEdit = editEngine === 'flux';
 
   try {
     let res;
-    if (isSmartEdit) {
+    if (isFluxEdit) {
+      res = await fetch('/api/flux-edit', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({
+          image_url: currentUrl,
+          prompt: editPrompt,
+        })
+      });
+    } else if (isSmartEdit) {
+      const preferModel = editEngine === 'gpt' ? 'gpt'
+                        : editEngine === 'nano' ? 'nano'
+                        : 'auto';
       res = await fetch('/api/smart-edit', {
         method: 'POST', headers: headers(),
         body: JSON.stringify({
           image_url: currentUrl,
           prompt: editPrompt,
-          prefer_model: editEngine === 'gpt' ? 'gpt' : 'auto',
+          prefer_model: preferModel,
           character: selectedChar,
           scene: editPrompt
         })
@@ -1659,6 +1860,7 @@ async function editImage() {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Edit failed');
 
+    const beforeUrl = currentUrl;
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
     const editLabel = editPrompt.slice(0, 40);
@@ -1667,6 +1869,7 @@ async function editImage() {
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
+    showEditStrengthSlider(beforeUrl, currentUrl);
     const usedModel = data.model || data.engine || editEngine;
     const fallbackNote = data.fallback_reason ? ` (fallback: ${data.fallback_reason})` : '';
     showEditStatus(`Edit applied via ${String(usedModel).toUpperCase()}${fallbackNote} (v${versionIndex + 1}/${versionStack.length})`, 'success');
@@ -1675,6 +1878,1090 @@ async function editImage() {
     showEditStatus(`Edit failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Edit';
+  }
+}
+
+async function resizeImage(target) {
+  if (!currentUrl) { toast('No image yet'); return; }
+  const btn = document.getElementById('btn-resize');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Resizing...';
+  showImgOverlay(`Resizing to ${target}px...`);
+  try {
+    const res = await fetch('/api/resize', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, target_size: target })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Resize failed');
+    currentUrl = data.image_url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `resize: ${data.width}x${data.height}`);
+    hideImgOverlay();
+    showEditStatus(`Resized to ${data.width}x${data.height} (${(data.original_bytes/1024/1024).toFixed(1)}MB → ${(data.resized_bytes/1024/1024).toFixed(1)}MB)`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus(`Resize failed: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+// ---------------- Mask painter ----------------
+let maskEraseMode = false;
+let maskDrawing = false;
+let maskLastPt = null;
+
+async function openMaskPainter() {
+  if (!currentUrl) { toast('Generate or upload an image first'); return false; }
+  const overlay = document.getElementById('mask-painter');
+  const bg = document.getElementById('mask-bg');
+  const fg = document.getElementById('mask-fg');
+  overlay.style.display = 'block';
+  // Try CORS-blob fetch first; fall back to direct img load if that fails
+  // (Supabase URLs work directly; only vendor CDNs need the blob path).
+  const tryLoad = async () => {
+    try {
+      return await loadImageNoTaint(currentUrl);
+    } catch (corsErr) {
+      console.warn('blob-fetch failed, trying direct img load:', corsErr.message);
+      return await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = (e) => reject(new Error('direct img load failed'));
+        i.src = currentUrl;
+      });
+    }
+  };
+  try {
+    const img = await tryLoad();
+    const maxW = Math.min(1100, window.innerWidth - 60);
+    const scale = Math.min(1, maxW / img.naturalWidth);
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    bg.width = img.naturalWidth; bg.height = img.naturalHeight;
+    fg.width = img.naturalWidth; fg.height = img.naturalHeight;
+    bg.style.width = w + 'px'; bg.style.height = h + 'px';
+    fg.style.width = w + 'px'; fg.style.height = h + 'px';
+    try {
+      bg.getContext('2d').drawImage(img, 0, 0);
+    } catch (drawErr) {
+      // Cross-origin direct-load images can taint canvas on drawImage. Show
+      // the image visually via CSS background instead, paint stays usable.
+      bg.style.backgroundImage = `url("${currentUrl}")`;
+      bg.style.backgroundSize = 'cover';
+      bg.style.backgroundRepeat = 'no-repeat';
+      console.warn('drawImage tainted, falling back to CSS bg', drawErr);
+    }
+    const ctx = fg.getContext('2d');
+    ctx.clearRect(0, 0, fg.width, fg.height);
+    attachMaskHandlers(fg);
+    return true;
+  } catch (err) {
+    // Keep painter OPEN so user sees what failed, instead of silently closing.
+    toast('Image load failed: ' + err.message + ' — try refreshing or pick a different source');
+    showEditStatus('Mask painter image load failed: ' + err.message, 'error');
+    console.error('openMaskPainter', err, 'currentUrl:', currentUrl);
+    return false;
+  }
+}
+
+function closeMaskPainter() {
+  document.getElementById('mask-painter').style.display = 'none';
+}
+
+function clearMask() {
+  const fg = document.getElementById('mask-fg');
+  fg.getContext('2d').clearRect(0, 0, fg.width, fg.height);
+}
+
+function toggleMaskErase() {
+  maskEraseMode = !maskEraseMode;
+  document.getElementById('mask-erase-btn').textContent = 'Erase: ' + (maskEraseMode ? 'on' : 'off');
+}
+
+function attachMaskHandlers(canvas) {
+  // Always re-wire on each open. Remove prior handlers first to avoid duplicates.
+  const prior = canvas._maskHandlers;
+  if (prior) {
+    canvas.removeEventListener('mousedown', prior.start);
+    canvas.removeEventListener('mousemove', prior.move);
+    window.removeEventListener('mouseup', prior.end);
+    canvas.removeEventListener('touchstart', prior.start);
+    canvas.removeEventListener('touchmove', prior.move);
+    canvas.removeEventListener('touchend', prior.end);
+  }
+  const getPt = (ev) => {
+    const r = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width, sy = canvas.height / r.height;
+    const t = ev.touches ? ev.touches[0] : ev;
+    return { x: (t.clientX - r.left) * sx, y: (t.clientY - r.top) * sy };
+  };
+  const stroke = (a, b) => {
+    const ctx = canvas.getContext('2d');
+    const size = Number(document.getElementById('mask-brush').value);
+    ctx.globalCompositeOperation = maskEraseMode ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = '#ffffff';
+    ctx.fillStyle = '#ffffff';
+    ctx.lineWidth = size;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (a.x === b.x && a.y === b.y) {
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, size / 2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+  };
+  const start = (ev) => {
+    ev.preventDefault();
+    maskDrawing = true;
+    maskLastPt = getPt(ev);
+    stroke(maskLastPt, maskLastPt);
+  };
+  const move = (ev) => {
+    if (!maskDrawing) return;
+    ev.preventDefault();
+    const p = getPt(ev);
+    stroke(maskLastPt, p);
+    maskLastPt = p;
+  };
+  const end = () => { maskDrawing = false; maskLastPt = null; };
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start, { passive: false });
+  canvas.addEventListener('touchmove', move, { passive: false });
+  canvas.addEventListener('touchend', end);
+  canvas._maskHandlers = { start, move, end };
+}
+
+async function runAutoMask() {
+  if (!currentUrl) { toast('Generate or upload an image first'); return; }
+  const garmentUrl = document.getElementById('mask-garment-url').value.trim();
+  const btn = document.getElementById('mask-automask-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Auto-masking...';
+  try {
+    const res = await fetch('/api/auto-mask-garment', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, garment_url: garmentUrl || undefined })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Auto-mask failed');
+    if (!data.mask_b64) { toast('No region detected'); return; }
+
+    const fg = document.getElementById('mask-fg');
+    const ctx = fg.getContext('2d');
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, fg.width, fg.height);
+      ctx.drawImage(img, 0, 0, fg.width, fg.height);
+      toast(`Auto-masked: ${data.garment_type} (${data.regions?.length || 0} region${data.regions?.length === 1 ? '' : 's'}) — refine with brush if needed`);
+    };
+    img.onerror = () => toast('Could not load auto-mask preview');
+    img.src = data.mask_b64;
+  } catch (err) {
+    toast('Auto-mask failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+// ---------------- URL strip (always-visible Supabase URL + copy) ----------------
+function updateUrlStrip() {
+  const strip = document.getElementById('url-strip');
+  const input = document.getElementById('url-strip-input');
+  if (!strip || !input) return;
+  if (currentUrl) {
+    input.value = currentUrl;
+    strip.style.display = 'flex';
+  } else {
+    strip.style.display = 'none';
+  }
+}
+
+function copyUrlStrip() {
+  const input = document.getElementById('url-strip-input');
+  input.select();
+  input.setSelectionRange(0, 99999);
+  navigator.clipboard.writeText(input.value).then(() => {
+    toast('URL copied');
+  }).catch(() => {
+    document.execCommand('copy');
+    toast('URL copied');
+  });
+}
+
+// Hook every place that mutates currentUrl. Wrapping pushVersion so we catch
+// every URL change in one shot.
+const _origPushVersion = window.pushVersion;
+function _patchPushVersion() {
+  if (typeof pushVersion === 'function' && !pushVersion._urlStripPatched) {
+    const orig = pushVersion;
+    window.pushVersion = function(...args) {
+      const r = orig.apply(this, args);
+      updateUrlStrip();
+      return r;
+    };
+    window.pushVersion._urlStripPatched = true;
+  }
+}
+// Also poll: keep the URL strip in sync with currentUrl changes that don't go
+// through pushVersion (uploads, undo/redo, etc.)
+setInterval(() => {
+  const input = document.getElementById('url-strip-input');
+  if (!input) return;
+  if (currentUrl && input.value !== currentUrl) updateUrlStrip();
+  else if (!currentUrl && document.getElementById('url-strip').style.display !== 'none') updateUrlStrip();
+}, 500);
+document.addEventListener('DOMContentLoaded', _patchPushVersion);
+
+// ---------------- Post-edit strength slider ----------------
+// Holds the most recent before/after pair so the user can dial back the edit.
+let editStrengthBefore = '';   // URL of the image before the last edit
+let editStrengthAfter = '';    // URL of the image after the last edit
+let _strengthRenderToken = 0;
+
+function showEditStrengthSlider(beforeUrl, afterUrl) {
+  if (!beforeUrl || !afterUrl || beforeUrl === afterUrl) return;
+  editStrengthBefore = beforeUrl;
+  editStrengthAfter = afterUrl;
+  const bar = document.getElementById('edit-strength-bar');
+  bar.style.display = 'flex';
+  const slider = document.getElementById('edit-strength-slider');
+  slider.value = 100;
+  document.getElementById('edit-strength-val').textContent = '100%';
+}
+
+function closeEditStrength() {
+  document.getElementById('edit-strength-bar').style.display = 'none';
+  editStrengthBefore = '';
+  editStrengthAfter = '';
+}
+
+function resetEditStrength() {
+  const slider = document.getElementById('edit-strength-slider');
+  slider.value = 100;
+  onEditStrengthInput();
+}
+
+let _strengthBakeDebounce = null;
+
+async function onEditStrengthInput() {
+  if (!editStrengthBefore || !editStrengthAfter) return;
+  const slider = document.getElementById('edit-strength-slider');
+  const pct = Number(slider.value);
+  document.getElementById('edit-strength-val').textContent = pct + '%';
+  const alpha = pct / 100;
+  // Render a client-side blend on a canvas so the preview is instant.
+  const myToken = ++_strengthRenderToken;
+  try {
+    const [baseImg, topImg] = await Promise.all([
+      loadImageNoTaint(editStrengthBefore),
+      loadImageNoTaint(editStrengthAfter),
+    ]);
+    if (myToken !== _strengthRenderToken) return; // a newer render started
+    const c = document.createElement('canvas');
+    c.width = baseImg.naturalWidth;
+    c.height = baseImg.naturalHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(baseImg, 0, 0, c.width, c.height);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(topImg, 0, 0, c.width, c.height);
+    ctx.globalAlpha = 1;
+    document.getElementById('result-img').src = c.toDataURL('image/png');
+  } catch (err) {
+    console.error('strength preview', err);
+  }
+
+  // Auto-bake debounced — once user stops moving slider for 1.2s, persist
+  // the partial blend to Supabase so it survives subsequent actions.
+  clearTimeout(_strengthBakeDebounce);
+  _strengthBakeDebounce = setTimeout(() => bakeEditStrengthSilent(), 1200);
+}
+
+// If the strength slider is showing and dirty, bake it before the next action.
+// Called by every action handler that uses currentUrl.
+async function ensureStrengthBaked() {
+  const bar = document.getElementById('edit-strength-bar');
+  if (!bar || bar.style.display === 'none') return;
+  if (!editStrengthBefore || !editStrengthAfter) return;
+  clearTimeout(_strengthBakeDebounce);
+  await bakeEditStrengthSilent();
+}
+
+// Belt-and-suspenders: when user clicks ANYWHERE outside the strength bar
+// while it's open, immediately bake. Don't await — the debounce + handler
+// guards keep us safe.
+document.addEventListener('click', (e) => {
+  const bar = document.getElementById('edit-strength-bar');
+  if (!bar || bar.style.display === 'none') return;
+  if (!editStrengthBefore || !editStrengthAfter) return;
+  if (e.target.closest('#edit-strength-bar')) return;
+  clearTimeout(_strengthBakeDebounce);
+  bakeEditStrengthSilent();
+}, true);
+
+async function bakeEditStrengthSilent() {
+  if (!editStrengthBefore || !editStrengthAfter) return;
+  const slider = document.getElementById('edit-strength-slider');
+  const pct = Number(slider.value);
+  if (pct === 100) {
+    // Nothing to bake — full edit is already currentUrl.
+    closeEditStrength();
+    return;
+  }
+  if (pct === 0) {
+    currentUrl = editStrengthBefore;
+    document.getElementById('result-img').src = currentUrl;
+    updateUrlStrip();
+    closeEditStrength();
+    return;
+  }
+  try {
+    const res = await fetch('/api/blend', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ base_url: editStrengthBefore, top_url: editStrengthAfter, alpha: pct / 100 })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) return;
+    currentUrl = data.image_url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `auto-bake ${pct}%`);
+    updateUrlStrip();
+    showEditStatus(`Auto-baked at ${pct}% — locked in`, 'success');
+    closeEditStrength();
+  } catch (err) {
+    console.error('auto-bake failed', err);
+  }
+}
+
+async function bakeEditStrength() {
+  if (!editStrengthBefore || !editStrengthAfter) return;
+  const pct = Number(document.getElementById('edit-strength-slider').value);
+  const alpha = pct / 100;
+  // Edge cases: 0% = before, 100% = after — no server hop needed
+  if (pct === 100) {
+    currentUrl = editStrengthAfter;
+    document.getElementById('result-img').src = currentUrl;
+    closeEditStrength();
+    return;
+  }
+  if (pct === 0) {
+    currentUrl = editStrengthBefore;
+    document.getElementById('result-img').src = currentUrl;
+    closeEditStrength();
+    return;
+  }
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Baking...'; }
+  showImgOverlay(`Baking edit at ${pct}%...`);
+  try {
+    const res = await fetch('/api/blend', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ base_url: editStrengthBefore, top_url: editStrengthAfter, alpha })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Bake failed');
+    currentUrl = data.image_url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `strength ${pct}%`);
+    closeEditStrength();
+    hideImgOverlay();
+    showEditStatus(`Baked at ${pct}% strength`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Bake failed: ' + err.message, 'error');
+    toast('Bake failed: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Bake'; }
+  }
+}
+
+// ---------------- Garment reference library ----------------
+// garmentRefs    = display URLs (cutouts after bg-strip — used for overlay/preview)
+// garmentRefsRaw = original URLs (pre-strip — used for P-Edit / Flux Fill so the
+//                  models get clean garment-on-bg images, not transparent PNGs).
+let garmentRefs = [];
+let garmentRefsRaw = [];
+
+function renderGarmentStrip() {
+  const strip = document.getElementById('mask-garment-strip');
+  if (!garmentRefs.length) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+  strip.style.display = 'flex';
+  strip.innerHTML = garmentRefs.map((url, i) => `
+    <div style="position:relative;display:inline-block;">
+      <img src="${url}" style="height:80px;border-radius:6px;border:2px solid ${i === 0 ? '#f472b6' : '#444'};display:block;cursor:pointer;" onclick="setPrimaryGarment(${i})" title="${i === 0 ? 'Primary (used by overlay placer)' : 'Click to make primary'}">
+      <button onclick="removeGarmentRef(${i})" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:1px solid #fff;background:#dc2626;color:#fff;font-size:0.75rem;line-height:18px;padding:0;cursor:pointer;">×</button>
+      ${i === 0 ? '<div style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);background:#f472b6;color:#fff;font-size:0.6rem;padding:1px 6px;border-radius:4px;">PRIMARY</div>' : ''}
+    </div>
+  `).join('');
+}
+
+function addGarmentRef() {
+  const url = document.getElementById('mask-garment-url').value.trim();
+  if (!url) { toast('Paste or upload a garment URL first'); return; }
+  if (garmentRefs.includes(url)) { toast('Already added'); return; }
+  garmentRefs.push(url);
+  // If we don't already have a raw entry for this slot, treat the current URL as raw too
+  if (garmentRefsRaw.length < garmentRefs.length) {
+    garmentRefsRaw.push(url);
+  }
+  renderGarmentStrip();
+  toast(`Added angle ${garmentRefs.length}`);
+}
+
+function removeGarmentRef(i) {
+  garmentRefs.splice(i, 1);
+  garmentRefsRaw.splice(i, 1);
+  renderGarmentStrip();
+  if (garmentRefs.length > 0) {
+    document.getElementById('mask-garment-url').value = garmentRefs[0];
+    setGarmentUrl(garmentRefs[0]);
+  }
+}
+
+function setPrimaryGarment(i) {
+  if (i === 0 || i >= garmentRefs.length) return;
+  const [picked] = garmentRefs.splice(i, 1);
+  garmentRefs.unshift(picked);
+  if (i < garmentRefsRaw.length) {
+    const [pickedRaw] = garmentRefsRaw.splice(i, 1);
+    garmentRefsRaw.unshift(pickedRaw);
+  }
+  document.getElementById('mask-garment-url').value = picked;
+  setGarmentUrl(picked);
+  renderGarmentStrip();
+}
+
+// Display refs (cutouts) — used for overlay & visual preview
+function getActiveGarmentRefs() {
+  if (garmentRefs.length) return garmentRefs;
+  const u = document.getElementById('mask-garment-url').value.trim();
+  return u ? [u] : [];
+}
+
+// Raw refs (pre-strip) — used for sending to P-Edit / Flux Fill Redux. Falls
+// back to display URL if no raw is stored (e.g. user pasted a URL with bg-strip off).
+function getActiveGarmentRefsForModel() {
+  const display = getActiveGarmentRefs();
+  if (!display.length) return [];
+  return display.map((u, i) => garmentRefsRaw[i] || u);
+}
+
+// ---------------- Garment overlay (drag / resize / rotate) ----------------
+const garmentXform = { x: 0, y: 0, w: 0, h: 0, rot: 0 };
+let garmentNaturalW = 0, garmentNaturalH = 0;
+let garmentDrag = null;
+
+async function placeGarmentOverlay() {
+  const url = document.getElementById('mask-garment-url').value.trim();
+  if (!url) { toast('Paste or upload a garment URL first'); return; }
+  const overlay = document.getElementById('garment-overlay');
+  const img = document.getElementById('garment-overlay-img');
+  try {
+    // Blob-fetch so it works on any vendor CDN regardless of CORS rules.
+    const probe = await loadImageNoTaint(url);
+    garmentNaturalW = probe.naturalWidth;
+    garmentNaturalH = probe.naturalHeight;
+    img.src = probe.src; // object URL — same source we just verified loads
+    const fg = document.getElementById('mask-fg');
+    const initW = fg.width * 0.35;
+    const initH = initW * (probe.naturalHeight / probe.naturalWidth);
+    garmentXform.w = initW;
+    garmentXform.h = initH;
+    garmentXform.x = (fg.width - initW) / 2;
+    garmentXform.y = (fg.height - initH) / 2;
+    garmentXform.rot = 0;
+    overlay.style.display = 'block';
+    document.getElementById('mask-bake-btn').style.display = '';
+    document.getElementById('mask-overlay-hide-btn').style.display = '';
+    const tb = document.getElementById('stamp-toolbar');
+    if (tb) tb.style.display = 'flex';
+    applyGarmentXform();
+    wireGarmentHandles();
+    toast('Drag to position · corners/edges to resize · cyan dot to rotate · Stamp (direct) or Bake→Mask (AI)');
+  } catch (err) {
+    toast('Could not load garment image: ' + err.message);
+    console.error('placeGarmentOverlay', err);
+  }
+}
+
+function hideGarmentOverlay() {
+  document.getElementById('garment-overlay').style.display = 'none';
+  document.getElementById('mask-bake-btn').style.display = 'none';
+  document.getElementById('mask-overlay-hide-btn').style.display = 'none';
+  const tb = document.getElementById('stamp-toolbar');
+  if (tb) tb.style.display = 'none';
+}
+
+async function stampOverlay() {
+  if (!currentUrl) return;
+  const url = document.getElementById('mask-garment-url').value.trim();
+  if (!url) { toast('Place an asset first'); return; }
+  const blend = document.getElementById('stamp-blend').value || 'overlay';
+  // Use the current xform values from garmentXform — center + size + rotation
+  const cx = garmentXform.x + garmentXform.w / 2;
+  const cy = garmentXform.y + garmentXform.h / 2;
+  const btn = document.getElementById('stamp-go-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Stamping...';
+  showImgOverlay('Stamping asset...');
+  try {
+    const res = await fetch('/api/stamp-asset', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        asset_url: url,
+        x: Math.round(cx),
+        y: Math.round(cy),
+        w: Math.round(garmentXform.w),
+        h: Math.round(garmentXform.h),
+        rotation_rad: garmentXform.rot,
+        blend,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Stamp failed');
+    const beforeUrl = currentUrl;
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `stamp:${blend}`);
+    hideGarmentOverlay();
+    closeMaskPainter();
+    hideImgOverlay();
+    loadHistory();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus(`Stamp applied (${blend})`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    toast('Stamp failed: ' + err.message);
+    showEditStatus('Stamp failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+function applyGarmentXform() {
+  // Convert image-space xform to screen-space CSS based on the stage scale.
+  const fg = document.getElementById('mask-fg');
+  const stageRect = fg.getBoundingClientRect();
+  const scale = stageRect.width / fg.width;
+  const overlay = document.getElementById('garment-overlay');
+  const box = document.getElementById('garment-overlay-box');
+  overlay.style.left = (garmentXform.x * scale) + 'px';
+  overlay.style.top = (garmentXform.y * scale) + 'px';
+  overlay.style.width = (garmentXform.w * scale) + 'px';
+  overlay.style.height = (garmentXform.h * scale) + 'px';
+  box.style.transform = `rotate(${garmentXform.rot}rad)`;
+}
+
+function wireGarmentHandles() {
+  const box = document.getElementById('garment-overlay-box');
+  if (box._wired) return;
+  box._wired = true;
+  const fg = document.getElementById('mask-fg');
+
+  const screenToImage = (clientX, clientY) => {
+    const r = fg.getBoundingClientRect();
+    const sx = fg.width / r.width;
+    return { x: (clientX - r.left) * sx, y: (clientY - r.top) * sx };
+  };
+
+  const onMouseDown = (ev) => {
+    const handle = ev.target.dataset?.handle;
+    const startPt = screenToImage(ev.clientX, ev.clientY);
+    const startXform = { ...garmentXform };
+    if (handle === 'rot') {
+      const cx = startXform.x + startXform.w / 2;
+      const cy = startXform.y + startXform.h / 2;
+      const startAngle = Math.atan2(startPt.y - cy, startPt.x - cx);
+      garmentDrag = { mode: 'rot', startAngle, startRot: startXform.rot, cx, cy };
+    } else if (handle) {
+      garmentDrag = { mode: 'resize', handle, startPt, startXform };
+    } else {
+      garmentDrag = { mode: 'translate', startPt, startXform };
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+  };
+  const onMouseMove = (ev) => {
+    if (!garmentDrag) return;
+    const pt = screenToImage(ev.clientX, ev.clientY);
+    if (garmentDrag.mode === 'translate') {
+      garmentXform.x = garmentDrag.startXform.x + (pt.x - garmentDrag.startPt.x);
+      garmentXform.y = garmentDrag.startXform.y + (pt.y - garmentDrag.startPt.y);
+    } else if (garmentDrag.mode === 'rot') {
+      const a = Math.atan2(pt.y - garmentDrag.cy, pt.x - garmentDrag.cx);
+      garmentXform.rot = garmentDrag.startRot + (a - garmentDrag.startAngle);
+    } else if (garmentDrag.mode === 'resize') {
+      const { handle, startPt, startXform } = garmentDrag;
+      // Compute delta in unrotated frame (rotate the delta by -rot)
+      const cosR = Math.cos(-startXform.rot);
+      const sinR = Math.sin(-startXform.rot);
+      const cx = startXform.x + startXform.w / 2;
+      const cy = startXform.y + startXform.h / 2;
+      const dx = (pt.x - startPt.x) * cosR - (pt.y - startPt.y) * sinR;
+      const dy = (pt.x - startPt.x) * sinR + (pt.y - startPt.y) * cosR;
+      let nx = startXform.x, ny = startXform.y, nw = startXform.w, nh = startXform.h;
+      if (handle.includes('e')) nw = Math.max(20, startXform.w + dx);
+      if (handle.includes('w')) { nw = Math.max(20, startXform.w - dx); nx = startXform.x + (startXform.w - nw); }
+      if (handle.includes('s')) nh = Math.max(20, startXform.h + dy);
+      if (handle.includes('n')) { nh = Math.max(20, startXform.h - dy); ny = startXform.y + (startXform.h - nh); }
+      garmentXform.x = nx; garmentXform.y = ny;
+      garmentXform.w = nw; garmentXform.h = nh;
+    }
+    applyGarmentXform();
+    ev.preventDefault();
+  };
+  const onMouseUp = () => { garmentDrag = null; };
+  box.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('resize', applyGarmentXform);
+}
+
+async function bakeOverlayToMask() {
+  const fg = document.getElementById('mask-fg');
+  const img = document.getElementById('garment-overlay-img');
+  if (!img.src) { toast('No garment placed'); return; }
+  try {
+    // Reload via fetch+blob so we control CORS even if the original tag was tainted.
+    const safeImg = await loadImageNoTaint(img.src);
+    const off = document.createElement('canvas');
+    off.width = fg.width;
+    off.height = fg.height;
+    const ctx = off.getContext('2d');
+    const cx = garmentXform.x + garmentXform.w / 2;
+    const cy = garmentXform.y + garmentXform.h / 2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(garmentXform.rot);
+    ctx.drawImage(safeImg, -garmentXform.w / 2, -garmentXform.h / 2, garmentXform.w, garmentXform.h);
+    ctx.restore();
+
+    let data;
+    try {
+      data = ctx.getImageData(0, 0, off.width, off.height);
+    } catch (corsErr) {
+      throw new Error('Canvas tainted by CORS — re-upload the garment via Upload Garment so it serves with CORS headers.');
+    }
+    for (let i = 0; i < data.data.length; i += 4) {
+      const r = data.data[i], g = data.data[i+1], b = data.data[i+2], a = data.data[i+3];
+      const isNearWhite = r > 240 && g > 240 && b > 240;
+      if (a > 30 && !isNearWhite) {
+        data.data[i] = 255; data.data[i+1] = 255; data.data[i+2] = 255; data.data[i+3] = 255;
+      } else {
+        data.data[i+3] = 0;
+      }
+    }
+    ctx.putImageData(data, 0, 0);
+
+    const dilatePx = Math.round(Math.min(fg.width, fg.height) * 0.012);
+    const fgCtx = fg.getContext('2d');
+    fgCtx.save();
+    fgCtx.filter = `blur(${dilatePx}px)`;
+    fgCtx.globalCompositeOperation = 'source-over';
+    fgCtx.drawImage(off, 0, 0);
+    fgCtx.filter = 'none';
+    let final;
+    try {
+      final = fgCtx.getImageData(0, 0, fg.width, fg.height);
+    } catch (corsErr) {
+      throw new Error('Mask canvas became tainted; refresh and re-upload the garment.');
+    }
+    for (let i = 0; i < final.data.length; i += 4) {
+      if (final.data[i+3] > 30) {
+        final.data[i] = 255; final.data[i+1] = 255; final.data[i+2] = 255; final.data[i+3] = 255;
+      } else {
+        final.data[i+3] = 0;
+      }
+    }
+    fgCtx.putImageData(final, 0, 0);
+    fgCtx.restore();
+    hideGarmentOverlay();
+    toast('Garment baked to mask — refine with brush/erase or hit Inpaint');
+  } catch (err) {
+    toast('Bake failed: ' + err.message);
+    showEditStatus('Bake failed: ' + err.message, 'error');
+    console.error('bakeOverlayToMask', err);
+  }
+}
+
+async function loadImageNoTaint(url) {
+  // Fetch as blob → object URL → Image() avoids CORS-taint problems entirely.
+  const res = await fetch(url, { mode: 'cors' });
+  if (!res.ok) throw new Error('garment fetch ' + res.status);
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  return new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => { URL.revokeObjectURL(objUrl); resolve(i); };
+    i.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('garment image failed to decode')); };
+    i.src = objUrl;
+  });
+}
+
+async function handleGarmentUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const upload = await uploadAsset(file, { folder: 'garments' });
+    if (upload.url) {
+      setGarmentUrl(upload.url);
+      toast('Garment uploaded');
+      if (document.getElementById('mask-auto-removebg').checked) {
+        await removeGarmentBg(true);
+      }
+    }
+  } catch (err) {
+    toast('Garment upload failed: ' + err.message);
+  }
+  input.value = '';
+}
+
+// Set the visible/cutout URL. If `rawUrl` is provided, store it as the raw
+// (pre-strip) version; otherwise treat `url` as both raw and display.
+function setGarmentUrl(url, rawUrl) {
+  document.getElementById('mask-garment-url').value = url;
+  const prev = document.getElementById('mask-garment-preview');
+  prev.src = url;
+  prev.style.display = 'inline-block';
+  const overlayImg = document.getElementById('garment-overlay-img');
+  if (overlayImg.src) overlayImg.src = url;
+  if (garmentRefs.length === 0) {
+    garmentRefs.push(url);
+    garmentRefsRaw.push(rawUrl || url);
+  } else {
+    garmentRefs[0] = url;
+    garmentRefsRaw[0] = rawUrl || garmentRefsRaw[0] || url;
+  }
+  renderGarmentStrip();
+}
+
+async function removeGarmentBg(silent) {
+  // The current URL field holds the "raw" / pre-strip version at this point.
+  // We strip it for visual cutout, but PRESERVE the raw URL so P-Edit and
+  // Flux Fill Redux still get the un-stripped image (which is what they need).
+  const rawUrl = document.getElementById('mask-garment-url').value.trim();
+  if (!rawUrl) { if (!silent) toast('No garment URL'); return; }
+  const btn = document.getElementById('mask-removebg-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Stripping bg...';
+  try {
+    const res = await fetch('/api/remove-bg', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: rawUrl })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Remove BG failed');
+    setGarmentUrl(data.image_url, rawUrl);
+    if (!silent) toast('Background removed');
+  } catch (err) {
+    if (!silent) toast('Remove BG failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+// Auto-process garment URL on paste / Enter / blur — no Upload click required.
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('mask-garment-url');
+  if (!inp || inp._wired) return;
+  inp._wired = true;
+  let lastSeen = inp.value;
+  let processTimer = null;
+  const process = async () => {
+    const url = inp.value.trim();
+    if (!url || url === lastSeen) return;
+    lastSeen = url;
+    if (document.getElementById('mask-auto-removebg').checked) {
+      await removeGarmentBg(true);
+    } else {
+      setGarmentUrl(url);
+    }
+  };
+  inp.addEventListener('paste', () => {
+    // Run shortly after paste so the value is in place
+    setTimeout(process, 50);
+  });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); process(); }
+  });
+  inp.addEventListener('input', () => {
+    // Debounce: process once typing settles for 800ms
+    clearTimeout(processTimer);
+    processTimer = setTimeout(process, 800);
+  });
+  inp.addEventListener('blur', process);
+});
+
+async function runWearGarment() {
+  if (!currentUrl) { toast('Generate or upload an image first'); return; }
+  const refs = getActiveGarmentRefsForModel(); // raw URLs preferred
+  if (!refs.length) { toast('Set a garment image first'); return; }
+  let prompt = document.getElementById('mask-prompt').value.trim();
+  const upscaler = document.getElementById('mask-upscaler').value;
+
+  // Pruna prompt formula: ACTION_VERB + TARGET + PRESERVATION clause.
+  // Trained verbs are add/remove/modify/transform. The trailing "while keeping
+  // ... unchanged" clause is the workhorse — without it P-Edit "improves"
+  // things you didn't ask to change.
+  if (!prompt) {
+    prompt = "Modify the person in image 1: change their clothing to the garment shown in image 2, matching the color, fabric, cut, and texture of the garment reference, while keeping their facial features, hair, body pose, position in frame, the lighting, color grade, and the entire background of image 1 unchanged.";
+    document.getElementById('mask-prompt').value = prompt;
+  }
+
+  const btn = document.getElementById('mask-wear-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'P-Edit running...';
+  showImgOverlay('P-Edit dressing the subject...');
+  showEditStatus(`Wear-garment via P-Edit: "${prompt.slice(0, 80)}"`, 'loading');
+
+  try {
+    const res = await fetch('/api/wear-garment', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        garment_urls: refs,
+        prompt,
+        upscaler,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Wear-garment failed');
+    const beforeUrl = currentUrl;
+    currentUrl = data.image_url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `wear: ${(prompt || 'garment').slice(0, 40)}`);
+    closeMaskPainter();
+    hideImgOverlay();
+    loadHistory();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus(`Garment applied via ${data.model}`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus(`Wear-garment failed: ${err.message}`, 'error');
+    toast('Wear failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+async function autoDescribeGarment() {
+  const garmentUrl = document.getElementById('mask-garment-url').value.trim();
+  if (!garmentUrl) { toast('No garment image set'); return; }
+  const btn = document.getElementById('mask-describe-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Describing...';
+  try {
+    const res = await fetch('/api/describe-garment', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ garment_url: garmentUrl })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Describe failed');
+    document.getElementById('mask-prompt').value = data.prompt;
+    toast('Prompt filled — edit it or hit Inpaint');
+    return data.prompt;
+  } catch (err) {
+    toast('Auto-describe failed: ' + err.message);
+    return null;
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+async function runInpaint() {
+  if (!currentUrl) { toast('No image — generate or upload one first'); return; }
+  let prompt = document.getElementById('mask-prompt').value.trim();
+  const refs = getActiveGarmentRefsForModel(); // raw URLs for Flux Fill Redux
+  const garmentUrl = refs[0] || '';
+  if (!prompt && garmentUrl) {
+    // Auto-describe from the garment ref so user doesn't have to write text
+    showEditStatus('No prompt — auto-describing garment...', 'loading');
+    prompt = await autoDescribeGarment();
+    if (!prompt) prompt = 'wearing this garment, photorealistic skin texture, soft natural lighting';
+  }
+  if (!prompt) {
+    toast('⚠️ Type a prompt or set a garment image so we can auto-describe it');
+    showEditStatus('Inpaint blocked: no prompt and no garment to describe.', 'error');
+    document.getElementById('mask-prompt').focus();
+    return;
+  }
+  const upscaler = document.getElementById('mask-upscaler').value;
+  const garmentStrength = Number(document.getElementById('mask-garment-strength').value);
+  const fg = document.getElementById('mask-fg');
+
+  let maskB64;
+  try {
+    maskB64 = fg.toDataURL('image/png');
+  } catch (err) {
+    toast('Mask canvas tainted — refresh and re-upload garment');
+    showEditStatus('Mask export failed: ' + err.message, 'error');
+    console.error('mask toDataURL', err);
+    return;
+  }
+  // Quick sanity: fail fast if the mask is empty
+  const sample = fg.getContext('2d').getImageData(0, 0, fg.width, fg.height).data;
+  let hasMask = false;
+  for (let i = 3; i < sample.length; i += 4) {
+    if (sample[i] > 0) { hasMask = true; break; }
+  }
+  if (!hasMask) {
+    toast('Mask is empty — paint something or click Bake → Mask first');
+    showEditStatus('Inpaint blocked: nothing painted in the mask.', 'error');
+    return;
+  }
+
+  // Show garment preview if a URL was pasted (not uploaded)
+  if (garmentUrl) {
+    const prev = document.getElementById('mask-garment-preview');
+    if (prev.src !== garmentUrl) { prev.src = garmentUrl; prev.style.display = 'inline-block'; }
+  }
+
+  const btn = document.getElementById('mask-go-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Inpainting...';
+  showImgOverlay(garmentUrl ? 'Flux Fill Pro inpainting + garment ref...' : 'Flux Fill Pro inpainting...');
+  showEditStatus(`Inpaint${garmentUrl ? ' (with garment ref)' : ''}: "${prompt.slice(0, 60)}"`, 'loading');
+
+  try {
+    const res = await fetch('/api/inpaint', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        mask_b64: maskB64,
+        prompt,
+        upscaler,
+        garment_urls: refs.length ? refs : undefined,
+        garment_strength: refs.length ? garmentStrength : undefined,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Inpaint failed');
+    const beforeUrl = currentUrl;
+    currentUrl = data.image_url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `inpaint: ${prompt.slice(0, 40)}`);
+    closeMaskPainter();
+    hideImgOverlay();
+    loadHistory();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus(`Inpainted via ${data.model}`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus(`Inpaint failed: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+// ---------------- Sandwich edit ----------------
+function openSandwich() {
+  if (!currentUrl) { toast('Generate or upload an image first'); return; }
+  document.getElementById('sandwich-modal').style.display = 'block';
+  document.getElementById('sandwich-edit-prompt').value = document.getElementById('edit-input').value || '';
+}
+
+function closeSandwich() {
+  document.getElementById('sandwich-modal').style.display = 'none';
+}
+
+async function runSandwich() {
+  if (!currentUrl) return;
+  const editPrompt = document.getElementById('sandwich-edit-prompt').value.trim();
+  if (!editPrompt) { toast('Describe the scene change'); return; }
+  const editEngine = document.getElementById('sandwich-engine').value;
+  const upscaler = document.getElementById('sandwich-upscaler').value;
+  const clothePrompt = document.getElementById('sandwich-clothe').value.trim();
+  const unclothePrompt = document.getElementById('sandwich-unclothe').value.trim();
+
+  const btn = document.getElementById('sandwich-go-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Running 3-stage sandwich...';
+  showImgOverlay(`Sandwich: clothing → ${editEngine} → unclothing...`);
+  showEditStatus(`Sandwich edit (${editEngine}): "${editPrompt.slice(0, 60)}"`, 'loading');
+
+  try {
+    const res = await fetch('/api/sandwich-edit', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        edit_prompt: editPrompt,
+        edit_engine: editEngine,
+        upscaler,
+        clothe_prompt: clothePrompt,
+        unclothe_prompt: unclothePrompt,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Sandwich failed');
+    const beforeUrl = currentUrl;
+    currentUrl = data.image_url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `sandwich: ${editPrompt.slice(0, 40)}`);
+    closeSandwich();
+    hideImgOverlay();
+    loadHistory();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus(`Sandwich complete via ${data.model}`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus(`Sandwich failed: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+async function surgicalEdit() {
+  if (!currentUrl) { toast('Generate an image first'); return; }
+  const editPrompt = document.getElementById('edit-input').value.trim();
+  if (!editPrompt) { toast('Describe what to change (e.g., "change the comforter to white silk, change the lamp to brass")'); return; }
+
+  const upscaleAfter = document.getElementById('surgical-upscale-after').checked;
+  const btn = document.getElementById('surgical-edit-btn');
+  const originalText = btn.textContent;
+  btn.disabled = true; btn.textContent = '🎯 Detecting + masking + editing...';
+  showImgOverlay('Surgical edit pipeline running...');
+  showEditStatus(`Surgical edit: "${editPrompt.slice(0, 60)}"`, 'loading');
+
+  try {
+    const res = await fetch('/api/surgical-edit', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        prompt: editPrompt,
+        upscale_after: upscaleAfter,
+        character: selectedChar,
+        scene: editPrompt
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Surgical edit failed');
+
+    const beforeUrl = currentUrl;
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `surgical: ${editPrompt.slice(0, 40)}`);
+    document.getElementById('edit-input').value = '';
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    const modelInfo = data.stages?.model || 'unknown';
+    const upscaleNote = data.stages?.upscaled_url ? ' + Topaz' : '';
+    showEditStatus(`Surgical edit done via ${modelInfo}${upscaleNote} (v${versionIndex + 1}/${versionStack.length})`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus(`Surgical edit failed: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = originalText;
   }
 }
 
@@ -1704,6 +2991,7 @@ async function makeNsfw() {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Make-NSFW failed');
 
+    const beforeUrl = currentUrl;
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
     pushVersion(currentUrl, `make-nsfw: ${editPrompt.slice(0, 40)}`);
@@ -1711,6 +2999,7 @@ async function makeNsfw() {
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
+    showEditStrengthSlider(beforeUrl, currentUrl);
     showEditStatus(`Make NSFW + ${data.stages?.upscaler || upscaler} done (v${versionIndex + 1}/${versionStack.length})`, 'success');
   } catch (err) {
     hideImgOverlay();
@@ -1839,6 +3128,201 @@ async function runTopaz() {
     showEditStatus('Topaz failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Topaz';
+  }
+}
+
+// ---------------- Detail Brushes ----------------
+let _detailBrushes = null;       // cached catalog
+let _activeDetailBrush = null;   // brush selected for current paint session
+
+async function openDetailBrushes() {
+  if (!currentUrl) { toast('Generate or upload an image first'); return; }
+  const modal = document.getElementById('detail-brush-modal');
+  modal.style.display = 'block';
+  const list = document.getElementById('detail-brush-list');
+  list.innerHTML = '<div style="color:#888;">Loading...</div>';
+  try {
+    if (!_detailBrushes) {
+      const res = await fetch('/api/detail-brushes', { headers: headers() });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'load failed');
+      _detailBrushes = data.brushes || [];
+    }
+    if (_detailBrushes.length === 0) {
+      list.innerHTML = '<div style="color:#888;">No brushes available yet.</div>';
+      return;
+    }
+    list.innerHTML = _detailBrushes.map(b => `
+      <div onclick="pickDetailBrush('${b.id}')" style="cursor:pointer;background:#0f0f0f;border:1px solid #333;border-radius:8px;padding:12px;transition:border-color 0.15s;" onmouseover="this.style.borderColor='#fbbf24'" onmouseout="this.style.borderColor='#333'">
+        <div style="font-weight:600;color:#fbbf24;font-size:0.9rem;">${b.name}</div>
+        <div style="font-size:0.72rem;color:#888;margin-top:4px;">${b.category} · ${b.intensity_label}</div>
+        <div style="font-size:0.78rem;color:#bbb;margin-top:6px;line-height:1.35;">${b.description}</div>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div style="color:#e08080;">Load failed: ${err.message}</div>`;
+  }
+}
+
+function closeDetailBrushes() {
+  document.getElementById('detail-brush-modal').style.display = 'none';
+}
+
+async function pickDetailBrush(brushId) {
+  const brush = _detailBrushes.find(b => b.id === brushId);
+  if (!brush) return;
+  _activeDetailBrush = brush;
+  closeDetailBrushes();
+  await openMaskPainter();
+  configureMaskPainterForDetailBrush(brush);
+}
+
+function configureMaskPainterForDetailBrush(brush) {
+  // Set brush size to the recommended value
+  const sizeInput = document.getElementById('mask-brush');
+  const sizeVal = document.getElementById('mask-brush-val');
+  if (sizeInput) {
+    sizeInput.value = brush.brush_size_px;
+    if (sizeVal) sizeVal.textContent = brush.brush_size_px;
+  }
+  // Replace the inpaint button label + onclick with the brush-specific action
+  const btn = document.getElementById('mask-go-btn');
+  if (btn) {
+    btn._origText = btn._origText || btn.textContent;
+    btn._origOnclick = btn._origOnclick || btn.onclick;
+    btn.textContent = `Apply: ${brush.name}`;
+    btn.onclick = () => runDetailBrush(brush);
+    btn.style.background = 'linear-gradient(135deg,#fbbf24,#f59e0b)';
+  }
+  // Show a banner at the top of the painter telling the user which brush is loaded
+  const stage = document.getElementById('mask-stage');
+  let banner = document.getElementById('detail-brush-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'detail-brush-banner';
+    banner.style.cssText = 'background:linear-gradient(135deg,#fbbf2422,#f59e0b22);border:1px solid #fbbf24;color:#fbbf24;padding:8px 14px;border-radius:8px;font-size:0.85rem;margin-bottom:10px;font-weight:600;';
+    stage.parentNode.insertBefore(banner, stage);
+  }
+  banner.textContent = `🎯 Painting: ${brush.name} — ${brush.description}`;
+  banner.style.display = 'block';
+  // Hide prompt textbox (brush prompt is hidden)
+  const promptInput = document.getElementById('mask-prompt');
+  if (promptInput) {
+    promptInput._origDisplay = promptInput._origDisplay ?? promptInput.style.display;
+    promptInput.style.display = 'none';
+  }
+}
+
+function teardownDetailBrushPainterMode() {
+  const btn = document.getElementById('mask-go-btn');
+  if (btn && btn._origText) {
+    btn.textContent = btn._origText;
+    btn.onclick = btn._origOnclick;
+    btn.style.background = 'linear-gradient(135deg,#c850c0,#7e22ce)';
+    delete btn._origText;
+    delete btn._origOnclick;
+  }
+  const banner = document.getElementById('detail-brush-banner');
+  if (banner) banner.style.display = 'none';
+  const promptInput = document.getElementById('mask-prompt');
+  if (promptInput && promptInput._origDisplay !== undefined) {
+    promptInput.style.display = promptInput._origDisplay;
+  }
+  _activeDetailBrush = null;
+}
+
+function showPainterError(msg) {
+  const banner = document.getElementById('detail-brush-banner');
+  if (!banner) return;
+  banner.style.background = 'linear-gradient(135deg,#dc262633,#7c1d1d33)';
+  banner.style.borderColor = '#dc2626';
+  banner.style.color = '#fca5a5';
+  banner.textContent = '⚠ ' + msg;
+  banner.style.display = 'block';
+}
+
+async function runDetailBrush(brush) {
+  if (!currentUrl) { toast('No source image'); return; }
+  const fg = document.getElementById('mask-fg');
+  const sample = fg.getContext('2d').getImageData(0, 0, fg.width, fg.height).data;
+  let hasMask = false;
+  for (let i = 3; i < sample.length; i += 4) {
+    if (sample[i] > 0) { hasMask = true; break; }
+  }
+  if (!hasMask) { showPainterError('Paint over the target region first'); return; }
+
+  let maskB64;
+  try {
+    maskB64 = fg.toDataURL('image/png');
+  } catch (err) {
+    showPainterError('Mask export failed');
+    return;
+  }
+
+  const btn = document.getElementById('mask-go-btn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = `Applying ${brush.name}...`;
+  showImgOverlay(`Applying ${brush.name}...`);
+
+  try {
+    const res = await fetch('/api/detail-brush', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        image_url: currentUrl,
+        mask_b64: maskB64,
+        brush_id: brush.id,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Detail brush failed');
+    const beforeUrl = currentUrl;
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, `brush: ${brush.name}`);
+    teardownDetailBrushPainterMode();
+    closeMaskPainter();
+    hideImgOverlay();
+    loadHistory();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus(`${brush.name} applied`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showPainterError(err.message + ' — try a softer brush or repaint a smaller area');
+    showEditStatus(`Detail brush failed: ${err.message}`, 'error');
+    toast('Brush failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+async function runDarkroomSkin(intensity = 'medium') {
+  if (!currentUrl) { toast('Generate or upload an image first'); return; }
+  const btn = document.getElementById('btn-darkroom-skin');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Darkroom Skin...';
+  showImgOverlay('Darkroom Skin pass — house-signature skin enhancement...');
+  showEditStatus('Applying Darkroom Skin v1...', 'loading');
+  try {
+    const res = await fetch('/api/darkroom-skin', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, intensity })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Darkroom Skin failed');
+    const beforeUrl = currentUrl;
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, 'darkroom skin');
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus('Darkroom Skin v1 applied — refine intensity with the strength slider', 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus('Darkroom Skin failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
   }
 }
 
@@ -2520,21 +4004,24 @@ async function runFaceSwap() {
   showEditStatus('Face swap in progress...', 'loading');
 
   try {
+    const engine = document.getElementById('faceswap-engine').value;
     const res = await fetch('/api/face-swap', {
       method: 'POST', headers: headers(),
-      body: JSON.stringify({ base_image_url: currentUrl, face_image_url: faceUrl, character: selectedChar })
+      body: JSON.stringify({ base_image_url: currentUrl, face_image_url: faceUrl, character: selectedChar, engine })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Face swap failed');
 
+    const beforeUrl = currentUrl;
     currentUrl = data.url;
     document.getElementById('result-img').src = currentUrl;
-    pushVersion(currentUrl, 'face-swap');
+    pushVersion(currentUrl, `face-swap (${engine})`);
     resetSendBtns();
     loadHistory();
     hideImgOverlay();
     closeFaceSwap();
-    showEditStatus('Face swapped', 'success');
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus(`Face swapped via ${data.model || engine}`, 'success');
   } catch (err) {
     hideImgOverlay();
     showEditStatus('Face swap failed: ' + err.message, 'error');
