@@ -823,6 +823,13 @@ export async function handleSafeEditRoutes(
     return handleJobsList(url);
   }
 
+  // Crop workspace outpaint — extend canvas via Brush (Flux Fill Pro inpaint)
+  // of the new area. See handleCropOutpaint comment block for shape.
+  if (url.pathname === "/api/crop/outpaint" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handleCropOutpaint(req, deps);
+  }
+
   return null;
 }
 
@@ -947,6 +954,205 @@ async function handleFluxEdit(
     });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
+  }
+}
+
+// /api/crop/outpaint — extend canvas via Brush (Flux Fill Pro inpaint).
+//
+// Takes the original image plus pixel-amounts to extend each side, then:
+//   1. Builds a new canvas (newW × newH) with the original placed at
+//      (left, top) and a neutral grey fill in the extension band.
+//   2. Builds a mask where the extension band is white (inpaint here) and
+//      the original-image rectangle is black (preserve).
+//   3. Calls Flux Fill Pro with the extended image + mask + prompt.
+//   4. Saves the result as a new asset row with edit_action="outpaint" and
+//      parent_id pointing back to the source asset row, so the asset chain
+//      preserves outpainting as a distinct edit step.
+//
+// Body: { image_url: string, extend: { top, right, bottom, left }, prompt? }
+// Response: { ok, url, asset_id?, original_dims, new_dims, extend }
+async function handleCropOutpaint(
+  req: Request,
+  deps: Pick<RouteDeps, "saveGeneration">
+): Promise<Response> {
+  try {
+    const body = await req.json();
+    const imageUrl = String(body.image_url || "");
+    const extend = body.extend || {};
+    const top = Math.max(0, Math.round(Number(extend.top) || 0));
+    const right = Math.max(0, Math.round(Number(extend.right) || 0));
+    const bottom = Math.max(0, Math.round(Number(extend.bottom) || 0));
+    const left = Math.max(0, Math.round(Number(extend.left) || 0));
+    const prompt = String(
+      body.prompt ||
+        "extend the scene naturally, photorealistic, seamless continuation, preserve color and lighting"
+    );
+
+    if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
+    const totalExtend = top + right + bottom + left;
+    if (totalExtend === 0) {
+      return Response.json({ error: "no extension specified" }, { status: 400 });
+    }
+    // Bound how far we'll extend so a misclick can't blow up the request.
+    if (totalExtend > 4096) {
+      return Response.json({ error: "extension too large" }, { status: 400 });
+    }
+
+    const sharp = (await import("sharp")).default;
+    const { uploadToStorage, buildUploadPath } = await import("../supabase");
+
+    // Fetch original
+    const imgResp = await fetch(imageUrl);
+    if (!imgResp.ok) {
+      return Response.json({ error: `image fetch ${imgResp.status}` }, { status: 422 });
+    }
+    const imgBuf = Buffer.from(await imgResp.arrayBuffer());
+    const meta = await sharp(imgBuf).metadata();
+    const w = meta.width || 0;
+    const h = meta.height || 0;
+    if (!w || !h) return Response.json({ error: "invalid image dimensions" }, { status: 422 });
+
+    const newW = w + left + right;
+    const newH = h + top + bottom;
+
+    // Extended canvas: 50% grey background with the original composited in.
+    // (Grey, not transparent, gives the inpaint model a neutral baseline so
+    // the boundary doesn't bleed alpha into the result.)
+    const extendedBuf = await sharp({
+      create: {
+        width: newW,
+        height: newH,
+        channels: 3,
+        background: { r: 128, g: 128, b: 128 },
+      },
+    })
+      .composite([{ input: imgBuf, top, left }])
+      .png()
+      .toBuffer();
+
+    // Mask: white everywhere (extension band), black rectangle covering the
+    // original image bounds (preserve original pixels).
+    const blackRectBuf = await sharp({
+      create: {
+        width: w,
+        height: h,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
+
+    const maskBuf = await sharp({
+      create: {
+        width: newW,
+        height: newH,
+        channels: 3,
+        background: { r: 255, g: 255, b: 255 },
+      },
+    })
+      .composite([{ input: blackRectBuf, top, left }])
+      .png()
+      .toBuffer();
+
+    const extUrl = await uploadBufferToStorage(
+      extendedBuf,
+      "image/png",
+      buildUploadPath,
+      uploadToStorage,
+      "outpaint-ext",
+    );
+    const maskUrl = await uploadBufferToStorage(
+      maskBuf,
+      "image/png",
+      buildUploadPath,
+      uploadToStorage,
+      "outpaint-mask",
+    );
+
+    // Inpaint just the extension band via the existing Brush helper.
+    const editedBuf = await callFluxFillPro({
+      imageUrl: extUrl,
+      maskUrl,
+      prompt,
+    });
+
+    // Same blank-result detector used by other Brush callsites — Flux Fill's
+    // content-mod refusal silently returns a uniform-color placeholder.
+    const isBlank = await isImageBlankOrUniform(editedBuf);
+    if (isBlank) {
+      return Response.json(
+        {
+          ok: false,
+          error:
+            "Outpaint blocked by content filter on this image. Try a different engine or smaller extension.",
+        },
+        { status: 422 },
+      );
+    }
+
+    const resultUrl = await uploadBufferToStorage(
+      editedBuf,
+      "image/png",
+      buildUploadPath,
+      uploadToStorage,
+      "outpaint",
+    );
+
+    try {
+      await deps.saveGeneration({
+        prompt: `[outpaint] ${prompt}`,
+        image_url: resultUrl,
+        engine: "flux-fill-pro-outpaint",
+      } as any);
+    } catch {}
+
+    let assetId: string | null = null;
+    try {
+      const parentId = await (deps as any).lookupAssetIdByUrl?.(imageUrl);
+      assetId = await (deps as any).saveAsset?.({
+        asset_type: "edit",
+        source_url: resultUrl,
+        engine: "flux-fill-pro",
+        edit_action: "outpaint",
+        prompt,
+        parent_id: parentId || null,
+        metadata: {
+          source_url: imageUrl,
+          extended_image_url: extUrl,
+          mask_url: maskUrl,
+          outpaint_extend: { top, right, bottom, left },
+          original_width: w,
+          original_height: h,
+          new_width: newW,
+          new_height: newH,
+        },
+        width: newW,
+        height: newH,
+        tags: ["edit", "outpaint", "brush"],
+      });
+    } catch (e) {
+      console.error("[safe-edit:crop-outpaint] saveAsset failed (non-fatal):", e);
+    }
+
+    // Pre-warm content-profile cache for the new asset.
+    queueBackgroundReanalysis(resultUrl);
+
+    return Response.json({
+      ok: true,
+      url: resultUrl,
+      asset_id: assetId,
+      original_dims: { w, h },
+      new_dims: { w: newW, h: newH },
+      extend: { top, right, bottom, left },
+      mask_url: maskUrl,
+      model: "Brush (outpaint)",
+    });
+  } catch (err: any) {
+    return Response.json(
+      { error: err?.message || "outpaint failed" },
+      { status: 500 },
+    );
   }
 }
 

@@ -387,6 +387,26 @@
     padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 11px;
   }
   .crop-aspect-pill.active { background: #a78bfa; color: #fff; border-color: #a78bfa; }
+  /* Crop / Outpaint mode toggle (darkroom.crop.outpaint-via-brush) — switches
+     the workspace between shrink-only crop and extend-allowed outpainting.
+     In Outpaint mode the frame can be dragged outside the image bounds and
+     the extension band is filled by Brush (Flux Fill Pro inpaint). */
+  .crop-mode-row {
+    display: flex; gap: 4px;
+    padding: 8px 16px;
+    background: #0a0a0a; border-bottom: 1px solid #2a2a2a;
+  }
+  .crop-mode-toggle {
+    background: #1a1a1a; color: #888; border: 1px solid #2a2a2a;
+    padding: 6px 14px; border-radius: 999px; cursor: pointer; font-size: 11px;
+    font-weight: 600;
+  }
+  .crop-mode-toggle.active { background: #a78bfa; color: #fff; border-color: #a78bfa; }
+  /* Outpaint-mode visual cue: orange tint on the frame so users can tell
+     they're extending the canvas, not cropping it. */
+  .crop-workspace.outpaint-mode .crop-frame { border-color: #f97316; }
+  .crop-workspace.outpaint-mode .crop-handle { background: #f97316; }
+  .crop-workspace.outpaint-mode .crop-apply { background: #f97316; }
   /* Smart subject-aware crop (darkroom.crop.smart-subject-aware) — pulls
      subject_count + face_visible from /api/analyze-image and reframes the
      crop. The endpoint doesn't return bounding boxes today, so we use
@@ -2220,6 +2240,11 @@
       <button type="button" class="crop-cancel">Cancel</button>
       <button type="button" class="crop-apply primary-action">Apply</button>
     </div>
+  </div>
+  <!-- Crop / Outpaint mode toggle (darkroom.crop.outpaint-via-brush) -->
+  <div class="crop-mode-row" role="toolbar" aria-label="Crop mode">
+    <button type="button" class="crop-mode-toggle active" id="crop-mode-toggle" data-mode="crop" aria-label="Crop mode — shrink the canvas">✂ Crop</button>
+    <button type="button" class="crop-mode-toggle" id="crop-outpaint-toggle" data-mode="outpaint" aria-label="Outpaint mode — drag handles beyond image bounds to extend the canvas via Brush">↔ Outpaint</button>
   </div>
   <!-- Smart crop row (darkroom.crop.smart-subject-aware) — calls
        /api/analyze-image and reframes the crop using face_visible +
@@ -7532,6 +7557,10 @@ let _cropFrame = { x: 0, y: 0, w: 0, h: 0 };  // image-pixel space
 let _cropAspect = null;  // null = free; else width/height ratio
 let _cropDrag = null;    // active mouse interaction state
 let _cropResizeObs = null;
+// _cropMode: 'crop' (shrink-only — clamp to image bounds) or 'outpaint'
+// (allow frame to extend outside image bounds, those areas become inpaint
+// targets via /api/crop/outpaint). See darkroom.crop.outpaint-via-brush.
+let _cropMode = 'crop';
 
 async function openCropWorkspace(imageUrl) {
   const ws = document.getElementById('crop-workspace');
@@ -7545,6 +7574,8 @@ async function openCropWorkspace(imageUrl) {
     p.classList.toggle('active', p.dataset.ratio === 'free');
   });
   _cropAspect = null;
+  // Default mode: Crop (not Outpaint) every open.
+  setCropMode('crop');
 
   ws.classList.add('active');
   ws.style.display = 'flex';
@@ -7664,6 +7695,20 @@ function _cropClampFrame() {
   const H = _cropImage.naturalHeight || _cropImage.height;
   if (_cropFrame.w < 8) _cropFrame.w = 8;
   if (_cropFrame.h < 8) _cropFrame.h = 8;
+  if (_cropMode === 'outpaint') {
+    // Outpaint mode allows the frame to extend beyond image bounds. Cap each
+    // side's extension at +2048 px to stay inside the server's 4096 budget
+    // (sum of all four sides). 8 px minimum frame still applies.
+    const maxExt = 2048;
+    if (_cropFrame.w > W + 2 * maxExt) _cropFrame.w = W + 2 * maxExt;
+    if (_cropFrame.h > H + 2 * maxExt) _cropFrame.h = H + 2 * maxExt;
+    if (_cropFrame.x < -maxExt) _cropFrame.x = -maxExt;
+    if (_cropFrame.y < -maxExt) _cropFrame.y = -maxExt;
+    if (_cropFrame.x + _cropFrame.w > W + maxExt) _cropFrame.x = W + maxExt - _cropFrame.w;
+    if (_cropFrame.y + _cropFrame.h > H + maxExt) _cropFrame.y = H + maxExt - _cropFrame.h;
+    return;
+  }
+  // Crop mode: hard-clamp inside image bounds.
   if (_cropFrame.w > W) _cropFrame.w = W;
   if (_cropFrame.h > H) _cropFrame.h = H;
   if (_cropFrame.x < 0) _cropFrame.x = 0;
@@ -7671,6 +7716,26 @@ function _cropClampFrame() {
   if (_cropFrame.x + _cropFrame.w > W) _cropFrame.x = W - _cropFrame.w;
   if (_cropFrame.y + _cropFrame.h > H) _cropFrame.y = H - _cropFrame.h;
 }
+
+// Crop / Outpaint mode toggle. In outpaint mode the frame can extend
+// beyond the image bounds; Apply triggers /api/crop/outpaint instead of
+// the regular crop upload.
+function setCropMode(mode) {
+  if (mode !== 'crop' && mode !== 'outpaint') return;
+  _cropMode = mode;
+  const ws = document.getElementById('crop-workspace');
+  if (ws) ws.classList.toggle('outpaint-mode', mode === 'outpaint');
+  document.querySelectorAll('#crop-workspace .crop-mode-toggle').forEach((b) => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  // Re-clamp under the new constraints (going crop → outpaint relaxes,
+  // going outpaint → crop pushes the frame back inside the image).
+  _cropClampFrame();
+  updateCropFrameDom();
+}
+window.setCropMode = setCropMode;
+document.getElementById('crop-mode-toggle')?.addEventListener('click', () => setCropMode('crop'));
+document.getElementById('crop-outpaint-toggle')?.addEventListener('click', () => setCropMode('outpaint'));
 
 // Wire pill clicks once on script load.
 document.querySelectorAll('#crop-workspace .crop-aspect-pill').forEach((p) => {
@@ -7751,13 +7816,17 @@ document.querySelectorAll('#crop-workspace .crop-aspect-pill').forEach((p) => {
           if (_cropDrag.handle === 'bl' || _cropDrag.handle === 'tl') nx = right - nw;
         }
       }
-      // Floor / clamp so the frame stays inside the image and >= 8px.
+      // 8 px minimum width/height — applies in both modes.
       if (nw < 8) { nw = 8; if (_cropDrag.handle === 'tl' || _cropDrag.handle === 'bl') nx = (_cropDrag.fx + _cropDrag.fw) - 8; }
       if (nh < 8) { nh = 8; if (_cropDrag.handle === 'tl' || _cropDrag.handle === 'tr') ny = (_cropDrag.fy + _cropDrag.fh) - 8; }
-      if (nx < 0) { nw += nx; nx = 0; }
-      if (ny < 0) { nh += ny; ny = 0; }
-      if (nx + nw > W) nw = W - nx;
-      if (ny + nh > H) nh = H - ny;
+      // In Crop mode the frame must stay inside the image. In Outpaint mode
+      // the frame can extend outside — those areas become inpaint targets.
+      if (_cropMode === 'crop') {
+        if (nx < 0) { nw += nx; nx = 0; }
+        if (ny < 0) { nh += ny; ny = 0; }
+        if (nx + nw > W) nw = W - nx;
+        if (ny + nh > H) nh = H - ny;
+      }
       _cropFrame = { x: nx, y: ny, w: nw, h: nh };
       _cropClampFrame();
     }
@@ -7825,6 +7894,7 @@ function closeCropWorkspace() {
   const ws = document.getElementById('crop-workspace');
   if (ws) {
     ws.classList.remove('active');
+    ws.classList.remove('outpaint-mode');
     ws.style.display = 'none';
     ws.setAttribute('aria-hidden', 'true');
   }
@@ -7832,12 +7902,75 @@ function closeCropWorkspace() {
   if (frame) frame.style.display = 'none';
   _cropImage = null;
   _cropDrag = null;
+  _cropMode = 'crop';
+}
+
+// Outpaint apply — extension band beyond image bounds is filled by Brush
+// (Flux Fill Pro inpaint) via /api/crop/outpaint. The new asset row is
+// committed server-side with edit_action="outpaint".
+async function applyOutpaint() {
+  if (!_cropImage) return;
+  const W = _cropImage.naturalWidth || _cropImage.width;
+  const H = _cropImage.naturalHeight || _cropImage.height;
+  const extend = {
+    top: Math.max(0, Math.round(-_cropFrame.y)),
+    left: Math.max(0, Math.round(-_cropFrame.x)),
+    right: Math.max(0, Math.round((_cropFrame.x + _cropFrame.w) - W)),
+    bottom: Math.max(0, Math.round((_cropFrame.y + _cropFrame.h) - H)),
+  };
+  if (extend.top + extend.right + extend.bottom + extend.left === 0) {
+    if (typeof toast === 'function') toast('No extension — drag the handles beyond the image bounds first');
+    return;
+  }
+  const sourceUrl = (typeof currentUrl === 'string' && currentUrl) ? currentUrl : null;
+  if (!sourceUrl) {
+    if (typeof toast === 'function') toast('No source URL for outpaint');
+    return;
+  }
+  const applyBtn = document.querySelector('#crop-workspace .crop-apply');
+  if (applyBtn) applyBtn.disabled = true;
+  if (typeof toast === 'function') toast('Outpainting…');
+  try {
+    const hdrs = (typeof headers === 'function') ? headers() : {};
+    const resp = await fetch('/api/crop/outpaint', {
+      method: 'POST',
+      headers: { ...hdrs, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_url: sourceUrl, extend }),
+    });
+    let data = {};
+    try { data = await resp.json(); } catch {}
+    if (!resp.ok || !data.url) {
+      throw new Error(data.error || resp.statusText || 'outpaint failed');
+    }
+    closeCropWorkspace();
+    if (typeof pushVersion === 'function') {
+      pushVersion(data.url, 'outpaint');
+    } else if (typeof setCurrentUrl === 'function') {
+      setCurrentUrl(data.url);
+    } else {
+      try { currentUrl = data.url; } catch {}
+      const rimg = document.getElementById('result-img');
+      if (rimg) rimg.src = data.url;
+    }
+    if (typeof toast === 'function') toast('Outpaint applied');
+  } catch (err) {
+    console.error('applyOutpaint error', err);
+    if (typeof toast === 'function') toast('Outpaint failed: ' + (err?.message || err));
+  } finally {
+    if (applyBtn) applyBtn.disabled = false;
+  }
 }
 
 document.querySelector('#crop-workspace .crop-cancel')?.addEventListener('click', closeCropWorkspace);
-document.querySelector('#crop-workspace .crop-apply')?.addEventListener('click', applyCrop);
+// Apply button dispatches by mode: outpaint when frame is extended past
+// image bounds, otherwise the standard crop-and-upload.
+document.querySelector('#crop-workspace .crop-apply')?.addEventListener('click', () => {
+  if (_cropMode === 'outpaint') return applyOutpaint();
+  return applyCrop();
+});
 window.openCropWorkspace = openCropWorkspace;
 window.closeCropWorkspace = closeCropWorkspace;
+window.applyOutpaint = applyOutpaint;
 
 // --- Smart subject-aware crop (darkroom.crop.smart-subject-aware) ---
 // /api/analyze-image returns { nudity_level, face_visible, scene_type,
