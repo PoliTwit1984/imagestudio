@@ -778,6 +778,7 @@
         <button class="action-btn" id="btn-topaz" onclick="openTopazSettings()" style="border-color:#00bcd4;color:#00bcd4;" title="Develop — face enhancement + skin texture + upscale. Click to adjust settings.">Develop</button>
         <button class="action-btn" id="btn-enhancor" onclick="runEnhancor()" style="border-color:#ec4899;color:#ec4899;" title="Skin — body skin enhance, level 65, face locked. Good for realistic skin texture on nudes where Develop/Reveal blur out.">Skin</button>
         <button class="action-btn" id="btn-darkroom-skin" onclick="runDarkroomSkin()" style="border-color:#c9842b;color:#c9842b;" title="Darkroom Skin v1 — house-signature skin pass. Pore-level realism with subsurface scattering and natural imperfection. Preserves face, pose, clothing, and background.">Darkroom Skin</button>
+        <button class="action-btn" id="btn-darkroom-glow" onclick="runDarkroomPreset('darkroom-glow')" style="border-color:#e8a46b;color:#e8a46b;" title="Darkroom Glow — boudoir warmth, soft golden highlights with subtle bloom and gentle halation. Color-grade only; preserves face, pose, wardrobe, composition.">Darkroom Glow</button>
         <button class="action-btn" id="btn-detail-brush" onclick="openDetailBrushes()" style="border-color:#fbbf24;color:#fbbf24;" title="Detail Brushes — surgical NSFW-permissive region edits. Pick a brush, paint the area, apply.">Detail Brush</button>
         <button class="action-btn" id="btn-faceswap" onclick="openFaceSwap()" style="border-color:#a855f7;color:#a855f7;" title="Lock — pixel-precise face graft. Pick a character face or upload any photo, swaps onto the current image. No content filter.">Face Swap</button>
         <button class="action-btn tg" id="btn-tg" onclick="sendTelegram()" title="Send image to Telegram (Manifesto Talk group)">Telegram</button>
@@ -3723,6 +3724,41 @@ async function runDarkroomSkin(intensity = 'medium') {
     showEditStatus('Darkroom Skin failed: ' + err.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+// Apply a Darkroom LUT/aesthetic preset by slug. Server-side hidden prompt.
+// Glow has a dedicated button; the rest are reachable only by API call today.
+async function runDarkroomPreset(slug, intensity = 'medium') {
+  if (!currentUrl) { toast('Generate or upload an image first'); return; }
+  const btnId = `btn-${slug}`;
+  const btn = document.getElementById(btnId);
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  const label = slug.replace(/^darkroom-/, '').replace(/-/g, ' ');
+  showImgOverlay(`Applying Darkroom ${label}...`);
+  showEditStatus(`Applying Darkroom ${label}...`, 'loading');
+  try {
+    const res = await fetch(`/api/preset/${slug}`, {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ image_url: currentUrl, intensity })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || `${slug} failed`);
+    const beforeUrl = currentUrl;
+    currentUrl = data.url;
+    document.getElementById('result-img').src = currentUrl;
+    pushVersion(currentUrl, data.name || slug);
+    resetSendBtns();
+    loadHistory();
+    hideImgOverlay();
+    showEditStrengthSlider(beforeUrl, currentUrl);
+    showEditStatus(`${data.name || slug} applied — refine with the strength slider`, 'success');
+  } catch (err) {
+    hideImgOverlay();
+    showEditStatus(`${slug} failed: ${err.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
   }
 }
 

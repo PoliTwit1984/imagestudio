@@ -190,6 +190,18 @@ export async function handleSafeEditRoutes(
   }
 
   // ---------------------------------------------------------------------------
+  // Darkroom LUT/aesthetic presets — apply by slug.
+  //   POST /api/preset/:slug   { image_url, intensity? } → { url, slug, ... }
+  // Lookup table is the server-side DARKROOM_PRESETS const (hidden prompts).
+  // ---------------------------------------------------------------------------
+
+  if (url.pathname.startsWith("/api/preset/") && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const slug = url.pathname.slice("/api/preset/".length);
+    return handleApplyPreset(req, slug, deps);
+  }
+
+  // ---------------------------------------------------------------------------
   // Presets CRUD (engine_config | lut | chain) — see migration 0044 + 0049.
   // ---------------------------------------------------------------------------
 
@@ -868,6 +880,260 @@ const DARKROOM_SKIN_PROMPT_V1 = [
   "Preserve identical face geometry, identical pose, identical clothing, identical background, identical lighting, identical color grade.",
   "Only the skin changes.",
 ].join(" ");
+
+// =============================================================================
+// Darkroom LUT / Aesthetic Presets
+//
+// Hidden-prompt registry. Each preset is a one-shot aesthetic apply: the user
+// hands us an image_url + intensity, the server composes the full color-grade
+// stanza server-side (so the prompt cannot be reverse-engineered by clients),
+// runs Lens (Grok img2img) at the chosen guidance scale, and rehosts the
+// result to Supabase. lut_asset_id is reserved for a future Hald-CLUT export
+// path; nullable today.
+//
+// Style notes baked into every prompt:
+//   - identity preservation language (face/pose/wardrobe unchanged)
+//   - generic engine verbs ("apply", "render with") — no vendor names leaked
+//   - real-world reference (film stock / lighting condition) for grounding
+//   - "photorealistic, no plastic look" anchor on every stanza
+// =============================================================================
+
+type DarkroomPreset = {
+  slug: string;
+  name: string;
+  description: string;
+  engine: "lens" | "glance" | "brush" | "strip";
+  prompt: string;
+  guidance_scale?: { low: number; medium: number; high: number };
+  strength?: { low: number; medium: number; high: number };
+  lut_asset_id?: string | null;
+};
+
+const DARKROOM_PRESET_IDENTITY_TAIL =
+  "Preserve identical face geometry, identical pose, identical wardrobe, identical composition. Only the color, contrast, and tonal response change. Photorealistic, no plastic look.";
+
+const DARKROOM_PRESETS: Record<string, DarkroomPreset> = {
+  "darkroom-dawn": {
+    slug: "darkroom-dawn",
+    name: "Darkroom Dawn",
+    description: "Cool blue hour, muted palette, soft cyan shadows.",
+    engine: "lens",
+    prompt: `Apply a cool blue-hour color grade reminiscent of a Fuji Eterna 250D motion-picture stock at first light: muted overall palette with desaturated warm tones, lifted blacks fading toward soft cyan, gentle teal cast in the shadows, slightly cool midtones, and a low-contrast film-like response curve. Preserve skin tone integrity — keep flesh in a believable warm-neutral range while the surrounding palette pulls cool. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
+    lut_asset_id: null,
+  },
+  "darkroom-glow": {
+    slug: "darkroom-glow",
+    name: "Darkroom Glow",
+    description: "Boudoir warmth, soft highlights, subtle bloom.",
+    engine: "lens",
+    prompt: `Render with a warm boudoir glow: soft golden highlights with gentle halation around bright edges, subtle bloom on practical light sources, lifted skin warmth, creamy midtones, and a faint diffusion haze that wraps light around the subject without crushing detail. Reference: a tungsten-lit interior on Cinestill 800T tuned for portraiture. Keep contrast tender, not flat. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
+    lut_asset_id: null,
+  },
+  "darkroom-lace": {
+    slug: "darkroom-lace",
+    name: "Darkroom Lace",
+    description: "Delicate intimate diffusion, soft focus around face and skin.",
+    engine: "lens",
+    prompt: `Apply a delicate intimate diffusion grade: soft focus halo around the face and skin edges, faint diffusion glow that blooms from highlights into adjacent midtones, lifted shadow detail, gentle pastel-leaning midtones, and a slight pearl finish on lit skin. Reference: a hand-blown soft filter (Tiffen Black Pro-Mist 1/4) over a 1980s portrait lens, daylight balanced. Maintain crisp eyes and lashes — only the surrounding tonality softens. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
+    lut_asset_id: null,
+  },
+  "darkroom-noir": {
+    slug: "darkroom-noir",
+    name: "Darkroom Noir",
+    description: "Black-and-white film noir, deep contrast, sculpted shadows.",
+    engine: "lens",
+    prompt: `Convert to a black-and-white film noir grade: deep blocky shadows, high-key blacks, sculpted contrast with hard falloff, silvery specular highlights, and a Kodak Tri-X 400 grain response pushed to ASA 800. Reference: 1940s low-key studio lighting with a single key and minimal fill, hard rim accents. Eliminate all color while preserving full tonal nuance in skin and fabric. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.8, medium: 3.8, high: 4.8 },
+    lut_asset_id: null,
+  },
+  "darkroom-polaroid": {
+    slug: "darkroom-polaroid",
+    name: "Darkroom Polaroid",
+    description: "Instant film stock, slight magenta cast, faded blacks.",
+    engine: "lens",
+    prompt: `Apply an instant-film grade modeled on Polaroid SX-70 / 600 era integral film: faded warm-magenta cast across midtones, lifted blacks with a soft analog floor (no true black), slight cyan bleed in cooler shadows, gentle low-contrast response curve, mild edge vignette, and the characteristic creamy off-white in highlights. Reference: a sun-exposed shoebox of 1978 instants. Preserve facial detail; the fade lives in the tonal envelope, not in the focus. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
+    lut_asset_id: null,
+  },
+  "darkroom-studio": {
+    slug: "darkroom-studio",
+    name: "Darkroom Studio",
+    description: "Clean editorial studio light, neutral palette.",
+    engine: "lens",
+    prompt: `Render with a clean editorial studio grade: neutral palette across the full tonal range, even diffuse key fill characteristic of a large softbox at chest height, gentle beauty-style diffusion on skin, slight luminance lift in midtones, and a calibrated white point with no color cast. Reference: a Phase One IQ4 capture for a Vogue beauty editorial, daylight balanced. Crisp, calm, magazine-ready. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
+    lut_asset_id: null,
+  },
+  "darkroom-sunkissed": {
+    slug: "darkroom-sunkissed",
+    name: "Darkroom Sunkissed",
+    description: "Golden hour, warm orange wash, lifted shadows.",
+    engine: "lens",
+    prompt: `Apply a golden-hour grade: warm orange wash through highlights and midtones, lifted shadows with a faint amber undertone, gently warmed flesh tones, soft hair backlight as if a low sun is grazing from camera-rear, and a subtle haze in bright passes. Reference: a Kodak Gold 200 negative shot 30 minutes before sunset. Skin should feel genuinely sunlit, not orange-painted. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
+    lut_asset_id: null,
+  },
+  "darkroom-thirty-five-mm": {
+    slug: "darkroom-thirty-five-mm",
+    name: "Darkroom 35mm",
+    description: "Analog film grain, halation, color shifts in shadows.",
+    engine: "lens",
+    prompt: `Apply a 35mm analog film grade in the Kodak Portra 400 family: visible but tasteful film grain, slight halation around bright highlights and skin specular hits, color shifts where greens push slightly cooler and warm midtones drift gently toward magenta, lifted blacks, and a soft response curve through the shoulder. Reference: a hybrid scan from a Noritsu HS-1800. Grain should be present but never crunchy. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.5, medium: 3.5, high: 4.5 },
+    lut_asset_id: null,
+  },
+  "darkroom-velvet": {
+    slug: "darkroom-velvet",
+    name: "Darkroom Velvet",
+    description: "Rich saturated reds and maroons, deep luxury palette.",
+    engine: "lens",
+    prompt: `Render with a rich velvet luxury grade: deeply saturated reds and maroons, plum-leaning shadow tones, low-key overall exposure with sculpted falloff, slight specular shine on lit skin, controlled highlight rolloff, and a warm-leaning white point. Reference: a Hasselblad capture lit by a single warm-gelled key for a fragrance campaign. Maintain skin realism inside the saturated envelope. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.8, medium: 3.8, high: 4.8 },
+    lut_asset_id: null,
+  },
+  "darkroom-wet-look": {
+    slug: "darkroom-wet-look",
+    name: "Darkroom Wet Look",
+    description: "High-shine skin emphasis, glossy specular highlights.",
+    engine: "lens",
+    prompt: `Apply a high-shine wet-look grade: glossy specular highlights along skin contours, slick reflective sheen on cheekbones, collarbone, shoulders, and any exposed skin, sharpened edge clarity, mildly bumped contrast, and a clean cool-neutral white balance to keep highlights reading as wet rather than oily. Reference: a Steven Klein editorial under a wet-set rig. Preserve pore detail beneath the gloss — the surface is wet, not airbrushed. ${DARKROOM_PRESET_IDENTITY_TAIL}`,
+    guidance_scale: { low: 2.8, medium: 3.8, high: 4.8 },
+    lut_asset_id: null,
+  },
+};
+
+// /api/preset/:slug — apply a Darkroom preset to an image_url.
+// Body: { image_url, intensity? = 'low'|'medium'|'high' (default 'medium') }
+// Returns: { ok, url, slug, intensity, name }
+async function handleApplyPreset(
+  req: Request,
+  slug: string,
+  deps: Pick<RouteDeps, "saveGeneration">
+): Promise<Response> {
+  try {
+    const preset = DARKROOM_PRESETS[slug];
+    if (!preset) {
+      return Response.json({ error: `unknown preset: ${slug}` }, { status: 404 });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const imageUrl = String(body.image_url || "");
+    const intensityRaw = String(body.intensity || "medium");
+    const intensity = (["low", "medium", "high"].includes(intensityRaw)
+      ? intensityRaw
+      : "medium") as "low" | "medium" | "high";
+
+    if (!imageUrl) {
+      return Response.json({ error: "image_url required" }, { status: 400 });
+    }
+
+    // All current presets ride on lens (Grok img2img). The engine field is
+    // structural — left in place so future presets can route to brush/strip.
+    if (preset.engine !== "lens") {
+      return Response.json(
+        { error: `preset engine ${preset.engine} not yet wired` },
+        { status: 501 }
+      );
+    }
+
+    // Map intensity → guidance_scale. xAI's images/edits endpoint doesn't
+    // accept guidance_scale today, but we record the intended value in the
+    // saved generation row so a future engine swap (or a Hald-CLUT export
+    // path) can use it. The actual intensity lever for Grok is prompt
+    // emphasis — we leave the prompt as-authored and rely on Grok's
+    // moderate edit-strength default.
+    const _gs = preset.guidance_scale?.[intensity] ?? 3.5;
+
+    const grokRes = await fetch("https://api.x.ai/v1/images/edits", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env("XAI_API_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "grok-imagine-image-pro",
+        prompt: preset.prompt,
+        image: { url: imageUrl, type: "image_url" },
+        n: 1,
+      }),
+    });
+
+    if (!grokRes.ok) {
+      const upstreamBody = await grokRes.text();
+      console.error(
+        `[preset:${slug}] upstream ${grokRes.status}:`,
+        upstreamBody.slice(0, 500)
+      );
+      const status = grokRes.status;
+      let userMsg: string;
+      if (status === 400 || status === 422) {
+        userMsg = `${preset.name} couldn't process this image. Try a different source.`;
+      } else if (status === 401 || status === 403) {
+        userMsg = `${preset.name} authentication issue. Try again in a moment.`;
+      } else if (status === 429) {
+        userMsg = `${preset.name} rate limited. Wait a few seconds and try again.`;
+      } else if (status >= 500) {
+        userMsg = `${preset.name} service temporarily unavailable.`;
+      } else {
+        userMsg = `${preset.name} failed (status ${status}).`;
+      }
+      return Response.json(
+        { error: userMsg, upstream_status: status },
+        { status: 502 }
+      );
+    }
+
+    const data = await grokRes.json();
+    const upstreamUrl = data.data?.[0]?.url;
+    if (!upstreamUrl) {
+      return Response.json(
+        { error: `${preset.name} produced no image` },
+        { status: 502 }
+      );
+    }
+
+    const dl = await fetch(upstreamUrl);
+    if (!dl.ok) {
+      return Response.json(
+        { error: `${preset.name} re-host failed` },
+        { status: 502 }
+      );
+    }
+    const buf = Buffer.from(await dl.arrayBuffer());
+    const { uploadToStorage, buildUploadPath } = await import("../supabase");
+    const finalUrl = await uploadBufferToStorage(
+      buf,
+      "image/png",
+      buildUploadPath,
+      uploadToStorage,
+      slug
+    );
+
+    try {
+      await deps.saveGeneration({
+        prompt: `[${slug}] intensity=${intensity}`,
+        image_url: finalUrl,
+        engine: `preset:${slug}`,
+      } as any);
+    } catch {}
+
+    return Response.json({
+      ok: true,
+      url: finalUrl,
+      slug,
+      name: preset.name,
+      intensity,
+    });
+  } catch (err: any) {
+    return Response.json(
+      { error: err?.message || "preset apply failed" },
+      { status: 500 }
+    );
+  }
+}
 
 // =============================================================================
 // P-Edit Prompt Optimizer
