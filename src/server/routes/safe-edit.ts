@@ -1328,6 +1328,33 @@ async function handleRemoveBg(req: Request): Promise<Response> {
     const imageUrl = String(body.image_url || "");
     if (!imageUrl) return Response.json({ error: "image_url required" }, { status: 400 });
 
+    // Short-circuit: if the source image already has non-uniform alpha
+    // (i.e. it's already cut out / has real transparency), skip BiRefNet.
+    try {
+      const probe = await fetch(imageUrl);
+      if (probe.ok) {
+        const probeBuf = Buffer.from(await probe.arrayBuffer());
+        const sharp = (await import("sharp")).default;
+        const meta = await sharp(probeBuf).metadata();
+        if (meta.hasAlpha) {
+          // Sample alpha channel — if min < 250, the image has real transparency
+          // (not just edge anti-aliasing on an otherwise opaque PNG).
+          const alphaStats = await sharp(probeBuf).extractChannel("alpha").stats();
+          const alphaChannel = alphaStats.channels[0];
+          if (alphaChannel && alphaChannel.min < 250) {
+            return Response.json({
+              ok: true,
+              image_url: imageUrl,
+              skipped: true,
+              reason: "already has transparency",
+            });
+          }
+        }
+      }
+    } catch {
+      // Probe failure is non-fatal — fall through to BiRefNet.
+    }
+
     const res = await fetch("https://fal.run/fal-ai/birefnet/v2", {
       method: "POST",
       headers: {
