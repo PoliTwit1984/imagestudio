@@ -1,6 +1,6 @@
 import { checkAuth } from "../auth";
 import { env, SUPABASE_URL } from "../config";
-import { supaHeaders } from "../supabase";
+import { encodeFilterValue, supaHeaders } from "../supabase";
 import type { RouteDeps } from "./types";
 
 // =============================================================================
@@ -182,6 +182,38 @@ export async function handleSafeEditRoutes(
         lock:   { sfw: "likely", nsfw_topless: "likely" },
       },
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Presets CRUD (engine_config | lut | chain) — see migration 0044 + 0049.
+  // ---------------------------------------------------------------------------
+
+  if (url.pathname === "/api/presets" && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePresetsList(url);
+  }
+
+  if (url.pathname === "/api/presets" && req.method === "POST") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePresetsCreate(req);
+  }
+
+  if (url.pathname.startsWith("/api/presets/") && req.method === "GET") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const slug = url.pathname.slice("/api/presets/".length);
+    return handlePresetsGetBySlug(slug);
+  }
+
+  if (url.pathname.startsWith("/api/presets/") && req.method === "PATCH") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const id = url.pathname.slice("/api/presets/".length);
+    return handlePresetsPatch(req, id);
+  }
+
+  if (url.pathname.startsWith("/api/presets/") && req.method === "DELETE") {
+    if (!checkAuth(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    const id = url.pathname.slice("/api/presets/".length);
+    return handlePresetsSoftDelete(id);
   }
 
   return null;
@@ -2901,4 +2933,366 @@ async function uploadBase64ToSupabase(b64: string): Promise<string> {
   const filename = `smart-edit-${Date.now()}.png`;
   const path = buildUploadPath("uploads", filename, "image/png");
   return uploadToStorage(path, bytes.buffer as ArrayBuffer, "image/png");
+}
+
+// =============================================================================
+// Presets — CRUD endpoints over the `presets` table (migration 0044 + 0049).
+//
+// Three preset_types share the table:
+//   - engine_config : engine + prompt template + tuned params bundle
+//   - lut           : Hald-CLUT PNG reference (color grade)
+//   - chain         : saved multi-stage chain definition
+//
+// All routes auth-gated upstream via checkAuth. Reads default to live
+// (archived = false). Slug is the canonical lookup key for GET-by-id.
+// Soft-delete via DELETE; physical deletion is intentionally not supported.
+// =============================================================================
+
+const VALID_PRESET_TYPES = new Set(["engine_config", "lut", "chain"]);
+
+// Fields a caller may PATCH. is_system, slug, and preset_type are immutable
+// post-creation by design (the slug is the URL key; preset_type changes the
+// shape of every other column; is_system is provenance and shouldn't flip).
+const PRESET_PATCH_ALLOWED = new Set([
+  "name",
+  "description",
+  "engine",
+  "config",
+  "lut_asset_id",
+  "lut_intensity_default",
+  "lut_format",
+  "sample_before_asset_id",
+  "sample_after_asset_id",
+  "source_provenance",
+  "chain_definition",
+  "tags",
+  "category",
+  "featured",
+]);
+
+async function handlePresetsList(url: URL): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const filters: string[] = [];
+    const presetType = url.searchParams.get("preset_type");
+    if (presetType) {
+      if (!VALID_PRESET_TYPES.has(presetType)) {
+        return Response.json(
+          { error: "invalid preset_type", field: "preset_type" },
+          { status: 400 }
+        );
+      }
+      filters.push(`preset_type=eq.${encodeFilterValue(presetType)}`);
+    }
+
+    const category = url.searchParams.get("category");
+    if (category) {
+      filters.push(`category=eq.${encodeFilterValue(category)}`);
+    }
+
+    const featured = url.searchParams.get("featured");
+    if (featured === "true") {
+      filters.push("featured=eq.true");
+    } else if (featured === "false") {
+      filters.push("featured=eq.false");
+    }
+
+    // archived defaults to false (live only) unless explicitly set to true/all.
+    const archivedParam = url.searchParams.get("archived");
+    if (archivedParam === "true") {
+      filters.push("archived=eq.true");
+    } else if (archivedParam !== "all") {
+      filters.push("archived=eq.false");
+    }
+
+    filters.push("order=created_at.desc");
+    const qs = filters.join("&");
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/presets?${qs}`, {
+      headers: supaHeaders(),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return Response.json(
+        { error: "presets_list_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const items = await res.json();
+    return Response.json({
+      items: Array.isArray(items) ? items : [],
+      count: Array.isArray(items) ? items.length : 0,
+    });
+  } catch (err: any) {
+    return Response.json(
+      { error: "presets_list_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handlePresetsGetBySlug(slug: string): Promise<Response> {
+  try {
+    if (!slug) {
+      return Response.json({ error: "slug required", field: "slug" }, { status: 400 });
+    }
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/presets?slug=eq.${encodeFilterValue(slug)}&limit=1`,
+      { headers: supaHeaders() }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return Response.json(
+        { error: "presets_get_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return Response.json({ error: "not_found", slug }, { status: 404 });
+    }
+    return Response.json(rows[0]);
+  } catch (err: any) {
+    return Response.json(
+      { error: "presets_get_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handlePresetsCreate(req: Request): Promise<Response> {
+  try {
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const body: any = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const slug = typeof body.slug === "string" ? body.slug.trim() : "";
+    const presetType = typeof body.preset_type === "string" ? body.preset_type.trim() : "";
+
+    if (!name) return Response.json({ error: "name required", field: "name" }, { status: 400 });
+    if (!slug) return Response.json({ error: "slug required", field: "slug" }, { status: 400 });
+    if (!presetType) {
+      return Response.json(
+        { error: "preset_type required", field: "preset_type" },
+        { status: 400 }
+      );
+    }
+    if (!VALID_PRESET_TYPES.has(presetType)) {
+      return Response.json(
+        {
+          error: "preset_type must be one of: engine_config, lut, chain",
+          field: "preset_type",
+        },
+        { status: 400 }
+      );
+    }
+
+    const now = new Date().toISOString();
+    const row: Record<string, any> = {
+      name,
+      slug,
+      preset_type: presetType,
+      is_system: false,
+      created_by: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    if (typeof body.description === "string") row.description = body.description;
+    if (typeof body.engine === "string") row.engine = body.engine;
+    if (body.config && typeof body.config === "object") row.config = body.config;
+    if (typeof body.lut_asset_id === "string") row.lut_asset_id = body.lut_asset_id;
+    if (typeof body.lut_format === "string") row.lut_format = body.lut_format;
+    if (typeof body.lut_intensity_default === "number") {
+      row.lut_intensity_default = body.lut_intensity_default;
+    }
+    if (typeof body.sample_before_asset_id === "string") {
+      row.sample_before_asset_id = body.sample_before_asset_id;
+    }
+    if (typeof body.sample_after_asset_id === "string") {
+      row.sample_after_asset_id = body.sample_after_asset_id;
+    }
+    if (body.source_provenance && typeof body.source_provenance === "object") {
+      row.source_provenance = body.source_provenance;
+    }
+    if (body.chain_definition && typeof body.chain_definition === "object") {
+      row.chain_definition = body.chain_definition;
+    }
+    if (Array.isArray(body.tags)) {
+      row.tags = body.tags.filter((t: any) => typeof t === "string");
+    }
+    if (typeof body.category === "string") row.category = body.category;
+    if (typeof body.featured === "boolean") row.featured = body.featured;
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/presets`, {
+      method: "POST",
+      headers: supaHeaders(),
+      body: JSON.stringify(row),
+    });
+
+    if (res.status === 409) {
+      return Response.json(
+        { error: "slug_conflict", field: "slug", slug },
+        { status: 409 }
+      );
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      // PostgREST returns 23505 (unique_violation) on conflicting slugs even
+      // without Prefer: resolution headers — surface that as 409 too.
+      if (errText.includes("23505") || /duplicate key/i.test(errText)) {
+        return Response.json(
+          { error: "slug_conflict", field: "slug", slug },
+          { status: 409 }
+        );
+      }
+      return Response.json(
+        { error: "presets_create_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const created = await res.json();
+    const out = Array.isArray(created) ? created[0] : created;
+    return Response.json(out, { status: 201 });
+  } catch (err: any) {
+    return Response.json(
+      { error: "presets_create_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handlePresetsPatch(req: Request, id: string): Promise<Response> {
+  try {
+    if (!id) {
+      return Response.json({ error: "id required", field: "id" }, { status: 400 });
+    }
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const body: any = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return Response.json({ error: "invalid_json_body" }, { status: 400 });
+    }
+
+    const updates: Record<string, any> = { updated_at: new Date().toISOString() };
+    for (const [key, value] of Object.entries(body)) {
+      if (PRESET_PATCH_ALLOWED.has(key)) {
+        updates[key] = value;
+      }
+    }
+
+    // Reject attempts to PATCH immutable columns explicitly so callers get a
+    // clear error rather than a silent no-op.
+    if (
+      "is_system" in body ||
+      "slug" in body ||
+      "preset_type" in body ||
+      "id" in body ||
+      "created_at" in body ||
+      "created_by" in body
+    ) {
+      return Response.json(
+        {
+          error: "immutable_field",
+          detail: "is_system, slug, preset_type, id, created_at, created_by cannot be patched",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (Object.keys(updates).length <= 1) {
+      return Response.json({ error: "no_mutable_fields_provided" }, { status: 400 });
+    }
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/presets?id=eq.${encodeFilterValue(id)}`,
+      {
+        method: "PATCH",
+        headers: supaHeaders(),
+        body: JSON.stringify(updates),
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return Response.json(
+        { error: "presets_patch_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return Response.json({ error: "not_found", id }, { status: 404 });
+    }
+    return Response.json(rows[0]);
+  } catch (err: any) {
+    return Response.json(
+      { error: "presets_patch_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
+}
+
+async function handlePresetsSoftDelete(id: string): Promise<Response> {
+  try {
+    if (!id) {
+      return Response.json({ error: "id required", field: "id" }, { status: 400 });
+    }
+    if (!SUPABASE_URL) {
+      return Response.json({ error: "supabase_unconfigured" }, { status: 500 });
+    }
+
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/presets?id=eq.${encodeFilterValue(id)}`,
+      {
+        method: "PATCH",
+        headers: supaHeaders(),
+        body: JSON.stringify({
+          archived: true,
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return Response.json(
+        { error: "presets_delete_failed", detail: errText },
+        { status: 500 }
+      );
+    }
+
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return Response.json({ error: "not_found", id }, { status: 404 });
+    }
+    return Response.json({ ok: true, id });
+  } catch (err: any) {
+    return Response.json(
+      { error: "presets_delete_error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
+  }
 }
