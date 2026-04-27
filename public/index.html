@@ -8263,6 +8263,9 @@ async function setComposePoseRef(urlOrFile) {
     if (preview) { preview.style.display = 'none'; preview.src = ''; }
     if (urlInput) urlInput.value = '';
     if (fileInput) fileInput.value = '';
+    // Clear the auto-fill flag so a fresh ref later can re-fill cleanly.
+    const promptEl = document.getElementById('scene');
+    if (promptEl?.dataset.poseRefAutoFilled) delete promptEl.dataset.poseRefAutoFilled;
     return;
   }
 
@@ -8290,12 +8293,57 @@ async function setComposePoseRef(urlOrFile) {
     preview.src = _composePoseRefUrl;
     preview.style.display = 'block';
   }
+
+  // Auto-analyze the pose ref via Grok Vision and pre-fill the prompt textarea.
+  // User can edit afterward; clicking Generate without typing now Just Works.
+  void autofillPromptFromPoseRef(_composePoseRefUrl);
+}
+
+async function autofillPromptFromPoseRef(refUrl) {
+  if (!refUrl) return;
+  const promptEl = document.getElementById('scene') || document.querySelector('textarea[data-prompt]') || document.querySelector('#prompt') || document.querySelector('.prompt-input');
+  if (!promptEl) return;
+
+  // Don't clobber a prompt the user has been typing.
+  const existing = (promptEl.value || '').trim();
+  if (existing && !promptEl.dataset.poseRefAutoFilled) return;
+
+  const status = document.getElementById('compose-pose-ref-preview');
+  try {
+    const resp = await fetch('/api/analyze-pose', {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_url: refUrl }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      if (typeof toast === 'function') toast('Pose analyze failed: ' + (data.error || resp.statusText));
+      return;
+    }
+    const suggestion = data.prompt || data.suggestion || data.description || data.scene || '';
+    if (!suggestion) return;
+    promptEl.value = suggestion;
+    promptEl.dataset.poseRefAutoFilled = '1';
+    promptEl.dispatchEvent(new Event('input', { bubbles: true }));
+    if (typeof toast === 'function') toast('Prompt auto-filled from pose — edit if you want');
+  } catch (e) {
+    if (typeof toast === 'function') toast('Pose analyze error: ' + e.message);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   const urlInput = document.getElementById('compose-pose-ref-url');
   const fileInput = document.getElementById('compose-pose-ref-file');
   const clearBtn = document.getElementById('compose-pose-ref-clear');
+  // If the user types in the prompt textarea, mark it as user-owned so future
+  // pose-ref auto-fills won't clobber their edits.
+  const sceneEl = document.getElementById('scene');
+  if (sceneEl) {
+    sceneEl.addEventListener('input', (e) => {
+      if (!e.isTrusted) return; // ignore the synthetic dispatch from autofill
+      if (sceneEl.dataset.poseRefAutoFilled) delete sceneEl.dataset.poseRefAutoFilled;
+    });
+  }
   if (urlInput) {
     urlInput.addEventListener('change', (e) => {
       if (e.target.value) setComposePoseRef(e.target.value);
