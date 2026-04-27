@@ -1422,6 +1422,19 @@
 
     <textarea id="scene" data-mode="compose" placeholder="Build your prompt below, or just type freestyle and hit AI Enhance..."></textarea>
 
+    <div class="compose-pose-ref" data-mode="compose" style="margin-top:8px;margin-bottom:8px;">
+      <details>
+        <summary style="cursor:pointer;color:#888;font-size:12px;">+ Optional Pose Reference</summary>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
+          <input id="compose-pose-ref-url" type="text" placeholder="Pose reference image URL"
+            style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #2a2a2a;padding:4px 8px;border-radius:3px;font-size:12px;" />
+          <input id="compose-pose-ref-file" type="file" accept="image/*" style="font-size:11px;" />
+          <button id="compose-pose-ref-clear" style="background:#1a1a1a;color:#888;border:1px solid #2a2a2a;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:11px;">Clear</button>
+        </div>
+        <img id="compose-pose-ref-preview" alt="" style="max-width:120px;max-height:120px;display:none;border-radius:4px;margin-top:6px;" />
+      </details>
+    </div>
+
     <div class="enhance-row" data-mode="compose">
       <button class="enhance-btn" id="enhance-btn" onclick="enhancePrompt()" aria-label="AI rewrites your prompt for maximum photorealism — adds lighting, camera, skin texture, film stock details">AI Enhance</button>
       <span class="enhance-hint">AI rewrites your prompt for max realism</span>
@@ -1590,8 +1603,7 @@
       <button class="gen-btn" id="gen-btn" onclick="generate()" aria-label="Generate image from your prompt using the selected engine and settings">Generate</button>
       <button class="pose-btn" onclick="uploadImage()" style="border-color:#22c55e;color:#22c55e;" aria-label="Upload your own image to edit, enhance, face swap, etc.">Upload Image</button>
       <input type="file" id="upload-input-main" accept="image/*" style="display:none;" onchange="handleUpload(this)">
-      <button class="pose-btn" onclick="openPoseRef()" aria-label="Upload a reference photo to copy the pose — AI vision analyzes the body position and feeds it into generation">Pose Ref</button>
-      <button class="pose-btn" onclick="openPinterest()" style="border-color:#e60023;color:#e60023;" aria-label="Search Pinterest for pose references — find the pose you want, click to use it">Pinterest</button>
+      <button class="pose-btn" onclick="openPinterest()" style="border-color:#e60023;color:#e60023;" aria-label="Search Pinterest for pose references — find the pose you want, then it appears as your Optional Pose Reference">Pinterest</button>
       <select class="edit-engine-select" id="engine-select" style="font-size:0.78rem;padding:7px 10px;min-width:120px;" aria-label="Lens: img2img face-locked re-imagine | Flux LoRA: zero filter, character LoRA | Eye: highest fidelity, refuses NSFW" onchange="onEngineChange()">
         <option value="grok">Lens (img2img)</option>
         <option value="fal">Flux LoRA</option>
@@ -1633,36 +1645,6 @@
       </div>
       <div id="pinterest-results" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:400px;overflow-y:auto;"></div>
       <div id="pinterest-status" style="font-size:0.72rem;color:#555;margin-top:6px;text-align:center;"></div>
-    </div>
-
-    <!-- Pose reference panel -->
-    <div class="pose-panel" id="pose-panel" data-mode="compose" style="display:none;">
-      <div class="edit-label">Pose Reference <span style="font-weight:400;color:#888;">— upload any image, AI vision analyzes the pose</span></div>
-      <div style="display:flex;gap:12px;align-items:flex-start;">
-        <div style="flex:1;">
-          <input type="file" id="pose-upload" accept="image/*" style="font-size:0.8rem;color:#888;margin-bottom:8px;">
-          <div style="color:#555;font-size:0.72rem;">Or paste a URL:</div>
-          <div style="display:flex;gap:6px;margin-top:4px;">
-            <input type="text" id="pose-url-input" class="edit-input" placeholder="https://..." style="font-size:0.8rem;flex:1;">
-            <button class="action-btn" onclick="analyzePoseFromUrl()" style="border-color:#06b6d4;color:#06b6d4;white-space:nowrap;font-size:0.75rem;">Analyze</button>
-          </div>
-        </div>
-        <img id="pose-preview" src="" style="max-height:120px;border-radius:8px;display:none;">
-      </div>
-      <div id="pose-analysis-status" style="color:#06b6d4;font-size:0.78rem;margin-top:6px;display:none;"></div>
-      <div style="margin-top:8px;">
-        <div style="color:#888;font-size:0.75rem;">Pose description + scene (AI fills this, you can edit):</div>
-        <textarea id="pose-scene" class="setting-textarea" rows="3" style="min-height:60px;font-size:0.82rem;margin-top:4px;" placeholder="AI will describe the pose here after you upload an image..."></textarea>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-        <div style="color:#888;font-size:0.75rem;">Pose strength:</div>
-        <input type="range" id="pose-strength" min="0.3" max="0.9" step="0.05" value="0.55" style="flex:1;">
-        <span id="pose-strength-val" style="color:#06b6d4;font-size:0.8rem;font-weight:600;">0.55</span>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:10px;">
-        <button class="edit-btn" id="pose-go" onclick="runPoseGenerate()" style="background:linear-gradient(135deg,#06b6d4,#0891b2);">Generate with Pose</button>
-        <button class="action-btn" onclick="closePoseRef()">Cancel</button>
-      </div>
     </div>
 
     <div class="error" id="error"></div>
@@ -4567,9 +4549,19 @@ async function generate() {
   resetSendBtns();
 
   try {
+    const genBody = {
+      character: selectedChar,
+      scene,
+      model: currentModel,
+      engine: currentEngine,
+      lora: currentLora,
+      aspect_ratio: document.getElementById('aspect-select').value,
+      polish: getPolish(),
+    };
+    if (_composePoseRefUrl) genBody.pose_ref_url = _composePoseRefUrl;
     const res = await fetch('/api/generate', {
       method: 'POST', headers: headers(),
-      body: JSON.stringify({ character: selectedChar, scene, model: currentModel, engine: currentEngine, lora: currentLora, aspect_ratio: document.getElementById('aspect-select').value, polish: getPolish() })
+      body: JSON.stringify(genBody),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Failed');
@@ -7549,22 +7541,20 @@ async function searchPinterest() {
       status.textContent = data.message || 'No results — try different keywords';
     }
   } catch (err) {
-    status.textContent = 'Search failed — paste a Pinterest URL in Pose Ref instead';
+    status.textContent = 'Search failed — paste a Pinterest URL into Optional Pose Reference instead';
   } finally {
     btn.disabled = false; btn.textContent = 'Search';
   }
 }
 
 function usePinterestPose(imageUrl) {
-  // Close Pinterest, open Pose Ref with this URL pre-filled
+  // Close Pinterest, feed the compose-tab Optional Pose Reference field.
   closePinterest();
-  openPoseRef();
-  document.getElementById('pose-url-input').value = imageUrl;
-  // Show preview
-  const preview = document.getElementById('pose-preview');
-  preview.src = imageUrl;
-  preview.style.display = 'block';
-  toast('Pose selected — click Analyze or Generate with Pose');
+  if (typeof setComposePoseRef === 'function') setComposePoseRef(imageUrl);
+  // Open the details panel so the user can see the preview / clear it.
+  const details = document.querySelector('.compose-pose-ref details');
+  if (details) details.open = true;
+  toast('Pose reference set — Generate to use it');
 }
 
 // Handle Enter key in Pinterest search
@@ -8255,162 +8245,74 @@ function cropConfirm() {
   }, 'image/jpeg', 0.92);
 }
 
-// --- Pose Reference ---
+// --- Compose-tab Optional Pose Reference ---
+//
+// Replaces the legacy standalone Pose Ref modal + button. Pose reference is now
+// folded into the Compose tab as an optional, additive input — the URL flows
+// into /api/generate as `pose_ref_url` (set in generate()). File uploads go
+// through /api/uploads first to get a durable URL before being attached.
 
-function openPoseRef() {
-  document.getElementById('pose-panel').style.display = 'block';
-  document.getElementById('pose-upload').value = '';
-  document.getElementById('pose-url-input').value = '';
-  document.getElementById('pose-scene').value = document.getElementById('scene').value || '';
-  document.getElementById('pose-preview').style.display = 'none';
+let _composePoseRefUrl = null;
+
+async function setComposePoseRef(urlOrFile) {
+  if (!urlOrFile) {
+    _composePoseRefUrl = null;
+    const preview = document.getElementById('compose-pose-ref-preview');
+    const urlInput = document.getElementById('compose-pose-ref-url');
+    const fileInput = document.getElementById('compose-pose-ref-file');
+    if (preview) { preview.style.display = 'none'; preview.src = ''; }
+    if (urlInput) urlInput.value = '';
+    if (fileInput) fileInput.value = '';
+    return;
+  }
+
+  if (urlOrFile instanceof File) {
+    const form = new FormData();
+    form.append('file', urlOrFile);
+    form.append('folder', 'uploads');
+    try {
+      const upResp = await fetch('/api/uploads', { method: 'POST', headers: headers(), body: form });
+      const upData = await upResp.json();
+      if (!upResp.ok) throw new Error(upData.error || 'upload failed');
+      _composePoseRefUrl = upData.url;
+    } catch (e) {
+      if (typeof toast === 'function') toast('Pose ref upload failed: ' + e.message);
+      return;
+    }
+  } else {
+    _composePoseRefUrl = String(urlOrFile);
+  }
+
+  const urlInput = document.getElementById('compose-pose-ref-url');
+  const preview = document.getElementById('compose-pose-ref-preview');
+  if (urlInput) urlInput.value = _composePoseRefUrl;
+  if (preview) {
+    preview.src = _composePoseRefUrl;
+    preview.style.display = 'block';
+  }
 }
 
-function closePoseRef() {
-  document.getElementById('pose-panel').style.display = 'none';
-}
-
-// Auto-analyze pose when file uploaded — with crop tool
 document.addEventListener('DOMContentLoaded', () => {
-  const poseUpload = document.getElementById('pose-upload');
-  if (poseUpload) {
-    poseUpload.addEventListener('change', async e => {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      // Open crop tool first
-      const objectUrl = URL.createObjectURL(file);
-      openCropTool(objectUrl, async (croppedBlob) => {
-        const preview = document.getElementById('pose-preview');
-        preview.src = URL.createObjectURL(croppedBlob);
-        preview.style.display = 'block';
-
-        const ts = Date.now();
-        const statusEl = document.getElementById('pose-analysis-status');
-        statusEl.textContent = 'Uploading cropped image & analyzing pose...';
-        statusEl.style.display = 'block';
-        statusEl.style.color = '#06b6d4';
-
-        try {
-          const upload = await uploadAsset(croppedBlob, {
-            folder: 'poses',
-            filename: `pose-${ts}.jpeg`
-          });
-          const poseUrl = upload.url;
-          document.getElementById('pose-url-input').value = poseUrl;
-
-          statusEl.textContent = 'AI analyzing pose...';
-          const res = await fetch('/api/analyze-pose', {
-            method: 'POST', headers: headers(),
-            body: JSON.stringify({ pose_image_url: poseUrl })
-          });
-          const data = await res.json();
-          if (data.ok) {
-            document.getElementById('pose-scene').value = data.poseDescription;
-            statusEl.textContent = 'Pose analyzed — edit the description below if needed';
-            statusEl.style.color = '#50c878';
-          } else throw new Error(data.error);
-        } catch (err) {
-          statusEl.textContent = 'Analysis failed: ' + err.message;
-          statusEl.style.color = '#e08080';
-        }
-      });
+  const urlInput = document.getElementById('compose-pose-ref-url');
+  const fileInput = document.getElementById('compose-pose-ref-file');
+  const clearBtn = document.getElementById('compose-pose-ref-clear');
+  if (urlInput) {
+    urlInput.addEventListener('change', (e) => {
+      if (e.target.value) setComposePoseRef(e.target.value);
+      else setComposePoseRef(null);
     });
   }
-  const strengthSlider = document.getElementById('pose-strength');
-  if (strengthSlider) {
-    strengthSlider.addEventListener('input', e => {
-      document.getElementById('pose-strength-val').textContent = e.target.value;
+  if (fileInput) {
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) setComposePoseRef(e.target.files[0]);
     });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => setComposePoseRef(null));
   }
 });
 
-async function analyzePoseFromUrl() {
-  const url = document.getElementById('pose-url-input').value.trim();
-  if (!url) { toast('Enter a URL first'); return; }
-  const preview = document.getElementById('pose-preview');
-  preview.src = url;
-  preview.style.display = 'block';
-  const statusEl = document.getElementById('pose-analysis-status');
-  statusEl.textContent = 'AI analyzing pose...';
-  statusEl.style.display = 'block';
-  statusEl.style.color = '#06b6d4';
-
-  try {
-    const res = await fetch('/api/analyze-pose', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({ pose_image_url: url })
-    });
-    const data = await res.json();
-    if (data.ok) {
-      document.getElementById('pose-scene').value = data.poseDescription;
-      statusEl.textContent = 'Pose analyzed — edit below if needed';
-      statusEl.style.color = '#50c878';
-    } else throw new Error(data.error);
-  } catch (err) {
-    statusEl.textContent = 'Analysis failed: ' + err.message;
-    statusEl.style.color = '#e08080';
-  }
-}
-
-async function runPoseGenerate() {
-  const fileInput = document.getElementById('pose-upload');
-  const urlInput = document.getElementById('pose-url-input').value.trim();
-  const scene = document.getElementById('pose-scene').value.trim();
-  const strength = parseFloat(document.getElementById('pose-strength').value);
-
-  let poseUrl = urlInput;
-
-  // Upload file to Supabase if provided
-  if (fileInput.files[0] && !poseUrl) {
-    try {
-      const upload = await uploadAsset(fileInput.files[0], { folder: 'poses' });
-      poseUrl = upload.url;
-    } catch (err) {
-      toast('Pose upload failed: ' + err.message);
-      return;
-    }
-  }
-
-  // Or use current generated image as pose ref
-  if (!poseUrl && currentUrl) poseUrl = currentUrl;
-  if (!poseUrl) { toast('Upload a pose image or enter a URL'); return; }
-  if (!scene) { toast('Describe what to generate in this pose'); return; }
-
-  const btn = document.getElementById('pose-go');
-  btn.disabled = true; btn.textContent = 'Generating...';
-  showImgOverlay('Generating with pose reference...');
-  showEditStatus('Generating with pose lock...', 'loading');
-
-  try {
-    const res = await fetch('/api/pose-generate', {
-      method: 'POST', headers: headers(),
-      body: JSON.stringify({
-        pose_image_url: poseUrl,
-        scene,
-        strength,
-        lora: currentLora,
-        character: selectedChar
-      })
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Pose generate failed');
-
-    currentUrl = data.url;
-    document.getElementById('result-img').src = currentUrl;
-    document.getElementById('result').classList.add('active');
-    pushVersion(currentUrl, `pose: ${scene.slice(0, 40)}`);
-    resetSendBtns();
-    loadHistory();
-    hideImgOverlay();
-    closePoseRef();
-    showEditStatus(`Generated with pose reference (strength ${strength})`, 'success');
-  } catch (err) {
-    hideImgOverlay();
-    showEditStatus('Pose generate failed: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Generate with Pose';
-  }
-}
+window._getComposePoseRefUrl = () => _composePoseRefUrl;
 
 // --- Face Swap ---
 let selectedFaceUrl = '';
